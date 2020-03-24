@@ -6,11 +6,11 @@ import tempfile
 import os
 from pathlib import Path
 
-def run(*command, capture=False):
+def run(*command, capture=False, cwd=None):
     command = list(map(str, command))
     print(f'CMD:  {" ".join(command)}')
     stdout = subprocess.PIPE if capture else None 
-    result = subprocess.run(command, stdout=stdout)
+    result = subprocess.run(command, stdout=stdout, cwd=cwd)
     result.check_returncode()
     if capture:
         return result.stdout.decode('utf-8')
@@ -20,7 +20,7 @@ def git(*command, capture=False):
     return run('git', '-C', GIT_DIR, *command, capture=capture)
 
 def step(title):
-    print('-' * 80)
+    print('=' * 80)
     print(title)
     print('-' * 80)
 
@@ -59,8 +59,12 @@ for branch in BRANCHES:
             '--exclude=*', '--recursive', 
             '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
     turbolizer_dir = branch_dir / 'turbolizer'
-    if turbolizer_dir.exists and !(turbolizer_dir / 'build').exist
-        print(f'{turbolizer_dir / "build"} does not exist, check the README for building!')
-
-   
+    if (turbolizer_dir / 'package.json').exists() \
+            and not (turbolizer_dir / 'build').exists():
+        try:
+            step(f'Building turbolizer: {turbolizer_dir}')
+            run('npm', 'i', cwd=turbolizer_dir)
+            run('npm', 'run-script', 'build', cwd=turbolizer_dir)
+        except Exception as e:
+            print(f'Error occured: {e}')
 
