@@ -8,7 +8,7 @@ from pathlib import Path
 
 def run(*command, capture=False):
     command = list(map(str, command))
-    print(f'Running:  {" ".join(command)}')
+    print(f'CMD:  {" ".join(command)}')
     stdout = subprocess.PIPE if capture else None 
     result = subprocess.run(command, stdout=stdout)
     result.check_returncode()
@@ -37,7 +37,7 @@ git('fetch', '--all')
 
 
 step('List branches')
-BRANCHES = git('branch', '--all', '--list', '*lkgr', capture=True).split()
+BRANCHES = git('branch', '--all', '--list', '*lkgr', '--format=%(refname)', capture=True).split()
 BRANCHES = list(map(lambda ref: ref.split('/')[-1], BRANCHES))
 print(BRANCHES)
 
