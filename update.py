@@ -58,4 +58,9 @@ for branch in BRANCHES:
     run('rsync', '--itemize-changes', f'--include-from={WHITELIST}',
             '--exclude=*', '--recursive', 
             '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
+    turbolizer_dir = branch_dir / 'turbolizer'
+    if turbolizer_dir.exists and !(turbolizer_dir / 'build').exist
+        print(f'{turbolizer_dir / "build"} does not exist, check the README for building!')
+
+   
 
