@@ -76,4 +76,5 @@ for branch in BRANCHES:
                 run('npm', 'run-script', 'build', cwd=turbolizer_dir)
             except Exception as e:
                 print(f'Error occured: {e}')
+    git('add', branch_dir)
 
