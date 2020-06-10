@@ -6,6 +6,13 @@ import tempfile
 import os
 from pathlib import Path
 
+
+DESTINATION = Path(__file__).parent
+WHITELIST = DESTINATION  / 'WHITELIST.txt'
+TOOLS_GIT = DESTINATION
+V8_GIT = DESTINATION  / '.v8'
+
+
 def run(*command, capture=False, cwd=None):
     command = list(map(str, command))
     print(f'CMD:  {" ".join(command)}')
@@ -16,8 +23,8 @@ def run(*command, capture=False, cwd=None):
         return result.stdout.decode('utf-8')
     return None
 
-def git(*command, capture=False):
-    return run('git', '-C', GIT_DIR, *command, capture=capture)
+def git(*command, capture=False, repository=V8_GIT):
+    return run('git', '-C', repository, *command, capture=capture)
 
 def step(title):
     print('=' * 80)
@@ -25,14 +32,9 @@ def step(title):
     print('-' * 80)
 
 
-DESTINATION = Path(__file__).parent
-WHITELIST = DESTINATION  / 'WHITELIST.txt'
-GIT_DIR = DESTINATION  / '.v8'
-
-
-step(f'Update V8 checkout in: {GIT_DIR}')
-if not GIT_DIR.exists():
-    run('git', 'clone', 'https://chromium.googlesource.com/v8/v8.git', GIT_DIR)
+step(f'Update V8 checkout in: {V8_GIT}')
+if not V8_GIT.exists():
+    run('git', 'clone', 'https://chromium.googlesource.com/v8/v8.git', V8_GIT)
 git('fetch', '--all')
 
 
@@ -61,7 +63,7 @@ for branch in BRANCHES:
     branch_dir.mkdir(exist_ok=True)
     git('switch', '--force', '--detach', f'remotes/origin/{branch}')
     git('clean', '--force', '-d')
-    source = GIT_DIR / 'tools'
+    source = V8_GIT / 'tools'
     run('rsync', '--itemize-changes', f'--include-from={WHITELIST}',
             '--exclude=*', '--recursive', 
             '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
@@ -76,5 +78,5 @@ for branch in BRANCHES:
                 run('npm', 'run-script', 'build', cwd=turbolizer_dir)
             except Exception as e:
                 print(f'Error occured: {e}')
-    git('add', branch_dir)
+    git('add', branch_dir, repository=TOOLS_GIT)
 

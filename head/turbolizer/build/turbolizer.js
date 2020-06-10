@@ -85,6 +85,13 @@
   function interpolate(val, max, start, end) {
       return start + (end - start) * (val / max);
   }
+  function createElement(tag, cls, content) {
+      const el = document.createElement(tag);
+      el.className = cls;
+      if (content != undefined)
+          el.innerText = content;
+      return el;
+  }
 
   // Copyright 2019 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -190,6 +197,19 @@
   function sourcePositionValid(l) {
       return (typeof l.scriptOffset !== undefined
           && typeof l.inliningId !== undefined) || typeof l.bytecodePosition != undefined;
+  }
+  class Interval {
+      constructor(numbers) {
+          this.start = numbers[0];
+          this.end = numbers[1];
+      }
+  }
+  class RegisterAllocation {
+      constructor(registerAllocation) {
+          this.fixedDoubleLiveRanges = new Map(Object.entries(registerAllocation.fixed_double_live_ranges));
+          this.fixedLiveRanges = new Map(Object.entries(registerAllocation.fixed_live_ranges));
+          this.liveRanges = new Map(Object.entries(registerAllocation.live_ranges));
+      }
   }
   class SourceResolver {
       constructor() {
@@ -747,7 +767,9 @@
           return phase;
       }
       parseSequence(phase) {
-          phase.sequence = { blocks: phase.blocks };
+          phase.sequence = { blocks: phase.blocks,
+              register_allocation: phase.register_allocation ? new RegisterAllocation(phase.register_allocation)
+                  : undefined };
           return phase;
       }
   }
@@ -838,6 +860,9 @@
   const GENERATED_PANE_ID = 'right';
   const DISASSEMBLY_COLLAPSE_ID = 'disassembly-shrink';
   const DISASSEMBLY_EXPAND_ID = 'disassembly-expand';
+  const RANGES_PANE_ID = "ranges";
+  const RANGES_COLLAPSE_ID = "ranges-shrink";
+  const RANGES_EXPAND_ID = "ranges-expand";
   const UNICODE_BLOCK = '&#9611;';
   const PROF_COLS = [
       { perc: 0, col: { r: 255, g: 255, b: 255 } },
@@ -5730,8 +5755,6 @@
   var saturday = weekday(6);
 
   var sundays = sunday.range;
-  var mondays = monday.range;
-  var thursdays = thursday.range;
 
   var month = newInterval(function(date) {
     date.setDate(1);
@@ -5821,8 +5844,6 @@
   var utcSaturday = utcWeekday(6);
 
   var utcSundays = utcSunday.range;
-  var utcMondays = utcMonday.range;
-  var utcThursdays = utcThursday.range;
 
   var utcMonth = newInterval(function(date) {
     date.setUTCDate(1);
@@ -9212,6 +9233,776 @@
       }
   }
 
+  // Copyright 2020 the V8 project authors. All rights reserved.
+  class Constants {
+  }
+  // Determines how many rows each div group holds for the purposes of
+  // hiding by syncHidden.
+  Constants.ROW_GROUP_SIZE = 20;
+  Constants.POSITIONS_PER_INSTRUCTION = 4;
+  Constants.FIXED_REGISTER_LABEL_WIDTH = 6;
+  Constants.INTERVAL_TEXT_FOR_NONE = "none";
+  Constants.INTERVAL_TEXT_FOR_CONST = "const";
+  Constants.INTERVAL_TEXT_FOR_STACK = "stack:";
+  // This class holds references to the HTMLElements that represent each cell.
+  class Grid {
+      constructor() {
+          this.elements = [];
+      }
+      setRow(row, elementsRow) {
+          this.elements[row] = elementsRow;
+      }
+      getCell(row, column) {
+          return this.elements[row][column];
+      }
+      getInterval(row, column) {
+          // The cell is within an inner wrapper div which is within the interval div.
+          return this.getCell(row, column).parentElement.parentElement;
+      }
+  }
+  // This class is used as a wrapper to hide the switch between the
+  // two different Grid objects used, one for each phase,
+  // before and after register allocation.
+  class GridAccessor {
+      constructor(sequenceView) {
+          this.sequenceView = sequenceView;
+          this.grids = new Map();
+      }
+      currentGrid() {
+          return this.grids.get(this.sequenceView.currentPhaseIndex);
+      }
+      getAnyGrid() {
+          return this.grids.values().next().value;
+      }
+      hasGrid() {
+          return this.grids.has(this.sequenceView.currentPhaseIndex);
+      }
+      addGrid(grid) {
+          if (this.hasGrid())
+              console.warn("Overwriting existing Grid.");
+          this.grids.set(this.sequenceView.currentPhaseIndex, grid);
+      }
+      getCell(row, column) {
+          return this.currentGrid().getCell(row, column);
+      }
+      getInterval(row, column) {
+          return this.currentGrid().getInterval(row, column);
+      }
+  }
+  // This class is used as a wrapper to access the interval HTMLElements
+  class IntervalElementsAccessor {
+      constructor(sequenceView) {
+          this.sequenceView = sequenceView;
+          this.map = new Map();
+      }
+      currentIntervals() {
+          const intervals = this.map.get(this.sequenceView.currentPhaseIndex);
+          if (intervals == undefined) {
+              this.map.set(this.sequenceView.currentPhaseIndex, new Array());
+              return this.currentIntervals();
+          }
+          return intervals;
+      }
+      addInterval(interval) {
+          this.currentIntervals().push(interval);
+      }
+      forEachInterval(callback) {
+          for (const phase of this.map.keys()) {
+              for (const interval of this.map.get(phase)) {
+                  callback(phase, interval);
+              }
+          }
+      }
+  }
+  // A simple class used to hold two Range objects. This is used to allow the two fixed register live
+  // ranges of normal and deferred to be easily combined into a single row.
+  class RangePair {
+      constructor(ranges) {
+          this.ranges = ranges;
+      }
+      forEachRange(callback) {
+          this.ranges.forEach((range) => { if (range)
+              callback(range); });
+      }
+  }
+  // A number of css variables regarding dimensions of HTMLElements are required by RangeView.
+  class CSSVariables {
+      constructor() {
+          const getNumberValue = varName => {
+              return parseFloat(getComputedStyle(document.body)
+                  .getPropertyValue(varName).match(/[+-]?\d+(\.\d+)?/g)[0]);
+          };
+          this.positionWidth = getNumberValue("--range-position-width");
+          this.blockBorderWidth = getNumberValue("--range-block-border");
+      }
+  }
+  // Store the required data from the blocks JSON.
+  class BlocksData {
+      constructor(blocks) {
+          this.blockBorders = new Set();
+          this.blockInstructionCountMap = new Map();
+          for (const block of blocks) {
+              this.blockInstructionCountMap.set(block.id, block.instructions.length);
+              const maxInstructionInBlock = block.instructions[block.instructions.length - 1].id;
+              this.blockBorders.add(maxInstructionInBlock);
+          }
+      }
+      isInstructionBorder(position) {
+          return ((position + 1) % Constants.POSITIONS_PER_INSTRUCTION) == 0;
+      }
+      isBlockBorder(position) {
+          return this.isInstructionBorder(position)
+              && this.blockBorders.has(Math.floor(position / Constants.POSITIONS_PER_INSTRUCTION));
+      }
+  }
+  class Divs {
+      constructor() {
+          this.container = document.getElementById("ranges");
+          this.resizerBar = document.getElementById("resizer-ranges");
+          this.snapper = document.getElementById("show-hide-ranges");
+          this.content = document.createElement("div");
+          this.content.appendChild(this.elementForTitle());
+          this.showOnLoad = document.createElement("div");
+          this.showOnLoad.style.visibility = "hidden";
+          this.content.appendChild(this.showOnLoad);
+          this.xAxisLabel = createElement("div", "range-header-label-x");
+          this.xAxisLabel.innerText = "Blocks, Instructions, and Positions";
+          this.showOnLoad.appendChild(this.xAxisLabel);
+          this.yAxisLabel = createElement("div", "range-header-label-y");
+          this.yAxisLabel.innerText = "Registers";
+          this.showOnLoad.appendChild(this.yAxisLabel);
+          this.registerHeaders = createElement("div", "range-register-labels");
+          this.registers = createElement("div", "range-registers");
+          this.registerHeaders.appendChild(this.registers);
+      }
+      elementForTitle() {
+          const titleEl = createElement("div", "range-title-div");
+          const titleBar = createElement("div", "range-title");
+          titleBar.appendChild(createElement("div", "", "Live Ranges"));
+          const titleHelp = createElement("div", "range-title-help", "?");
+          titleHelp.title = "Each row represents a single TopLevelLiveRange (or two if deferred exists)."
+              + "\nEach interval belongs to a LiveRange contained within that row's TopLevelLiveRange."
+              + "\nAn interval is identified by i, the index of the LiveRange within the TopLevelLiveRange,"
+              + "\nand j, the index of the interval within the LiveRange, to give i:j.";
+          titleEl.appendChild(titleBar);
+          titleEl.appendChild(titleHelp);
+          return titleEl;
+      }
+  }
+  class Helper {
+      static virtualRegisterName(registerIndex) {
+          return "v" + registerIndex;
+      }
+      static fixedRegisterName(range) {
+          return range.child_ranges[0].op.text;
+      }
+      static getPositionElementsFromInterval(interval) {
+          return interval.children[1].children;
+      }
+      static forEachFixedRange(source, row, callback) {
+          const forEachRangeInMap = (rangeMap) => {
+              // There are two fixed live ranges for each register, one for normal, another for deferred.
+              // These are combined into a single row.
+              const fixedRegisterMap = new Map();
+              for (const [registerIndex, range] of rangeMap) {
+                  const registerName = this.fixedRegisterName(range);
+                  if (fixedRegisterMap.has(registerName)) {
+                      const entry = fixedRegisterMap.get(registerName);
+                      entry.ranges[1] = range;
+                      // Only use the deferred register index if no normal index exists.
+                      if (!range.is_deferred) {
+                          entry.registerIndex = parseInt(registerIndex, 10);
+                      }
+                  }
+                  else {
+                      fixedRegisterMap.set(registerName, { ranges: [range, undefined],
+                          registerIndex: parseInt(registerIndex, 10) });
+                  }
+              }
+              // Sort the registers by number.
+              const sortedMap = new Map([...fixedRegisterMap.entries()].sort(([nameA, _], [nameB, __]) => {
+                  // Larger numbers create longer strings.
+                  if (nameA.length > nameB.length)
+                      return 1;
+                  if (nameA.length < nameB.length)
+                      return -1;
+                  // Sort lexicographically if same length.
+                  if (nameA > nameB)
+                      return 1;
+                  if (nameA < nameB)
+                      return -1;
+                  return 0;
+              }));
+              for (const [registerName, { ranges, registerIndex }] of sortedMap) {
+                  callback("" + (-registerIndex - 1), row, registerName, new RangePair(ranges));
+                  ++row;
+              }
+          };
+          forEachRangeInMap(source.fixedLiveRanges);
+          forEachRangeInMap(source.fixedDoubleLiveRanges);
+          return row;
+      }
+  }
+  class RowConstructor {
+      constructor(view) {
+          this.view = view;
+      }
+      // Constructs the row of HTMLElements for grid while providing a callback for each position
+      // depending on whether that position is the start of an interval or not.
+      // RangePair is used to allow the two fixed register live ranges of normal and deferred to be
+      // easily combined into a single row.
+      construct(grid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval) {
+          const positionArray = new Array(this.view.numPositions);
+          // Construct all of the new intervals.
+          const intervalMap = this.elementsForIntervals(registerIndex, ranges);
+          for (let position = 0; position < this.view.numPositions; ++position) {
+              const interval = intervalMap.get(position);
+              if (interval == undefined) {
+                  positionArray[position] = getElementForEmptyPosition(position);
+              }
+              else {
+                  callbackForInterval(position, interval);
+                  this.view.intervalsAccessor.addInterval(interval);
+                  const intervalPositionElements = Helper.getPositionElementsFromInterval(interval);
+                  for (let j = 0; j < intervalPositionElements.length; ++j) {
+                      // Point positionsArray to the new elements.
+                      positionArray[position + j] = intervalPositionElements[j];
+                  }
+                  position += intervalPositionElements.length - 1;
+              }
+          }
+          grid.setRow(row, positionArray);
+          ranges.forEachRange((range) => this.setUses(grid, row, range));
+      }
+      // This is the main function used to build new intervals.
+      // Returns a map of LifeTimePositions to intervals.
+      elementsForIntervals(registerIndex, ranges) {
+          const intervalMap = new Map();
+          let tooltip = "";
+          ranges.forEachRange((range) => {
+              for (const childRange of range.child_ranges) {
+                  switch (childRange.type) {
+                      case "none":
+                          tooltip = Constants.INTERVAL_TEXT_FOR_NONE;
+                          break;
+                      case "spill_range":
+                          tooltip = Constants.INTERVAL_TEXT_FOR_STACK + registerIndex;
+                          break;
+                      default:
+                          if (childRange.op.type == "constant") {
+                              tooltip = Constants.INTERVAL_TEXT_FOR_CONST;
+                          }
+                          else {
+                              if (childRange.op.text) {
+                                  tooltip = childRange.op.text;
+                              }
+                              else {
+                                  tooltip = childRange.op;
+                              }
+                          }
+                          break;
+                  }
+                  childRange.intervals.forEach((intervalNums, index) => {
+                      const interval = new Interval(intervalNums);
+                      const intervalEl = this.elementForInterval(childRange, interval, tooltip, index, range.is_deferred);
+                      intervalMap.set(interval.start, intervalEl);
+                  });
+              }
+          });
+          return intervalMap;
+      }
+      elementForInterval(childRange, interval, tooltip, index, isDeferred) {
+          const intervalEl = createElement("div", "range-interval");
+          const title = childRange.id + ":" + index + " " + tooltip;
+          intervalEl.setAttribute("title", isDeferred ? "deferred: " + title : title);
+          this.setIntervalColor(intervalEl, tooltip);
+          const intervalInnerWrapper = createElement("div", "range-interval-wrapper");
+          intervalEl.style.gridColumn = (interval.start + 1) + " / " + (interval.end + 1);
+          intervalInnerWrapper.style.gridTemplateColumns = "repeat(" + (interval.end - interval.start)
+              + ",calc(" + this.view.cssVariables.positionWidth + "ch + "
+              + this.view.cssVariables.blockBorderWidth + "px)";
+          const intervalTextEl = this.elementForIntervalString(tooltip, interval.end - interval.start);
+          intervalEl.appendChild(intervalTextEl);
+          for (let i = interval.start; i < interval.end; ++i) {
+              const classes = "range-position range-interval-position range-empty"
+                  + (this.view.blocksData.isBlockBorder(i) ? " range-block-border" :
+                      this.view.blocksData.isInstructionBorder(i) ? " range-instr-border" : "");
+              const positionEl = createElement("div", classes, "_");
+              positionEl.style.gridColumn = (i - interval.start + 1) + "";
+              intervalInnerWrapper.appendChild(positionEl);
+          }
+          intervalEl.appendChild(intervalInnerWrapper);
+          return intervalEl;
+      }
+      setIntervalColor(interval, tooltip) {
+          if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_NONE))
+              return;
+          if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_STACK + "-")) {
+              interval.style.backgroundColor = "rgb(250, 158, 168)";
+          }
+          else if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_STACK)) {
+              interval.style.backgroundColor = "rgb(250, 158, 100)";
+          }
+          else if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_CONST)) {
+              interval.style.backgroundColor = "rgb(153, 158, 230)";
+          }
+          else {
+              interval.style.backgroundColor = "rgb(153, 220, 168)";
+          }
+      }
+      elementForIntervalString(tooltip, numCells) {
+          const spanEl = createElement("span", "range-interval-text");
+          this.setIntervalString(spanEl, tooltip, numCells);
+          return spanEl;
+      }
+      // Each interval displays a string of information about it.
+      setIntervalString(spanEl, tooltip, numCells) {
+          const spacePerCell = this.view.cssVariables.positionWidth;
+          // One character space is removed to accommodate for padding.
+          const spaceAvailable = (numCells * spacePerCell) - 0.5;
+          let str = tooltip + "";
+          const length = tooltip.length;
+          spanEl.style.width = null;
+          let paddingLeft = null;
+          // Add padding if possible
+          if (length <= spaceAvailable) {
+              paddingLeft = (length == spaceAvailable) ? "0.5ch" : "1ch";
+          }
+          else {
+              str = "";
+          }
+          spanEl.style.paddingTop = null;
+          spanEl.style.paddingLeft = paddingLeft;
+          spanEl.innerHTML = str;
+      }
+      setUses(grid, row, range) {
+          for (const liveRange of range.child_ranges) {
+              if (liveRange.uses) {
+                  for (const use of liveRange.uses) {
+                      grid.getCell(row, use).classList.toggle("range-use", true);
+                  }
+              }
+          }
+      }
+  }
+  class RangeViewConstructor {
+      constructor(rangeView) {
+          this.view = rangeView;
+      }
+      construct() {
+          this.gridTemplateColumns = "repeat(" + this.view.numPositions
+              + ",calc(" + this.view.cssVariables.positionWidth + "ch + "
+              + this.view.cssVariables.blockBorderWidth + "px)";
+          this.grid = new Grid();
+          this.view.gridAccessor.addGrid(this.grid);
+          this.view.divs.wholeHeader = this.elementForHeader();
+          this.view.divs.showOnLoad.appendChild(this.view.divs.wholeHeader);
+          const gridContainer = document.createElement("div");
+          this.view.divs.grid = this.elementForGrid();
+          this.view.divs.yAxis = createElement("div", "range-y-axis");
+          this.view.divs.yAxis.appendChild(this.view.divs.registerHeaders);
+          this.view.divs.yAxis.onscroll = () => {
+              this.view.scrollHandler.syncScroll(ToSync.TOP, this.view.divs.yAxis, this.view.divs.grid);
+              this.view.scrollHandler.saveScroll();
+          };
+          gridContainer.appendChild(this.view.divs.yAxis);
+          gridContainer.appendChild(this.view.divs.grid);
+          this.view.divs.showOnLoad.appendChild(gridContainer);
+          this.resetGroups();
+          let row = 0;
+          row = this.addVirtualRanges(row);
+          this.addFixedRanges(row);
+      }
+      // The following three functions are for constructing the groups which the rows are contained
+      // within and which make up the grid. This is so as to allow groups of rows to easily be displayed
+      // and hidden for performance reasons. As rows are constructed, they are added to the currentGroup
+      // div. Each row in currentGroup is matched with an equivalent placeholder row in
+      // currentPlaceholderGroup that will be shown when currentGroup is hidden so as to maintain the
+      // dimensions and scroll positions of the grid.
+      resetGroups() {
+          this.currentGroup = createElement("div", "range-positions-group range-hidden");
+          this.currentPlaceholderGroup = createElement("div", "range-positions-group");
+      }
+      appendGroupsToGrid() {
+          this.view.divs.grid.appendChild(this.currentPlaceholderGroup);
+          this.view.divs.grid.appendChild(this.currentGroup);
+      }
+      addRowToGroup(row, rowEl) {
+          this.currentGroup.appendChild(rowEl);
+          this.currentPlaceholderGroup
+              .appendChild(createElement("div", "range-positions range-positions-placeholder", "_"));
+          if ((row + 1) % Constants.ROW_GROUP_SIZE == 0) {
+              this.appendGroupsToGrid();
+              this.resetGroups();
+          }
+      }
+      addVirtualRanges(row) {
+          const source = this.view.sequenceView.sequence.register_allocation;
+          for (const [registerIndex, range] of source.liveRanges) {
+              const registerName = Helper.virtualRegisterName(registerIndex);
+              const registerEl = this.elementForVirtualRegister(registerName);
+              this.addRowToGroup(row, this.elementForRow(row, registerIndex, new RangePair([range, undefined])));
+              this.view.divs.registers.appendChild(registerEl);
+              ++row;
+          }
+          return row;
+      }
+      addFixedRanges(row) {
+          row = Helper.forEachFixedRange(this.view.sequenceView.sequence.register_allocation, row, (registerIndex, row, registerName, ranges) => {
+              const registerEl = this.elementForFixedRegister(registerName);
+              this.addRowToGroup(row, this.elementForRow(row, registerIndex, ranges));
+              this.view.divs.registers.appendChild(registerEl);
+          });
+          if (row % Constants.ROW_GROUP_SIZE != 0) {
+              this.appendGroupsToGrid();
+          }
+      }
+      // Each row of positions and intervals associated with a register is contained in a single
+      // HTMLElement. RangePair is used to allow the two fixed register live ranges of normal and
+      // deferred to be easily combined into a single row.
+      elementForRow(row, registerIndex, ranges) {
+          const rowEl = createElement("div", "range-positions");
+          rowEl.style.gridTemplateColumns = this.gridTemplateColumns;
+          const getElementForEmptyPosition = (position) => {
+              const blockBorder = this.view.blocksData.isBlockBorder(position);
+              const classes = "range-position range-empty "
+                  + (blockBorder ? "range-block-border" :
+                      this.view.blocksData.isInstructionBorder(position) ? "range-instr-border"
+                          : "range-position-border");
+              const positionEl = createElement("div", classes, "_");
+              positionEl.style.gridColumn = (position + 1) + "";
+              rowEl.appendChild(positionEl);
+              return positionEl;
+          };
+          const callbackForInterval = (_, interval) => {
+              rowEl.appendChild(interval);
+          };
+          this.view.rowConstructor.construct(this.grid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval);
+          return rowEl;
+      }
+      elementForVirtualRegister(registerName) {
+          const regEl = createElement("div", "range-reg", registerName);
+          regEl.setAttribute("title", registerName);
+          return regEl;
+      }
+      elementForFixedRegister(registerName) {
+          let text = registerName;
+          const span = "".padEnd(Constants.FIXED_REGISTER_LABEL_WIDTH - text.length, "_");
+          text = "HW - <span class='range-transparent'>" + span + "</span>" + text;
+          const regEl = createElement("div", "range-reg");
+          regEl.innerHTML = text;
+          regEl.setAttribute("title", registerName);
+          return regEl;
+      }
+      // The header element contains the three headers for the LifeTimePosition axis.
+      elementForHeader() {
+          const headerEl = createElement("div", "range-header");
+          this.view.divs.positionHeaders = createElement("div", "range-position-labels");
+          this.view.divs.positionHeaders.appendChild(this.elementForBlockHeader());
+          this.view.divs.positionHeaders.appendChild(this.elementForInstructionHeader());
+          this.view.divs.positionHeaders.appendChild(this.elementForPositionHeader());
+          headerEl.appendChild(this.view.divs.positionHeaders);
+          headerEl.onscroll = () => {
+              this.view.scrollHandler.syncScroll(ToSync.LEFT, this.view.divs.wholeHeader, this.view.divs.grid);
+              this.view.scrollHandler.saveScroll();
+          };
+          return headerEl;
+      }
+      // The LifeTimePosition axis shows three headers, for positions, instructions, and blocks.
+      elementForBlockHeader() {
+          const headerEl = createElement("div", "range-block-ids");
+          headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
+          const elementForBlockIndex = (index, firstInstruction, instrCount) => {
+              const str = "B" + index;
+              const element = createElement("div", "range-block-id range-header-element range-block-border", str);
+              element.setAttribute("title", str);
+              const firstGridCol = (firstInstruction * Constants.POSITIONS_PER_INSTRUCTION) + 1;
+              const lastGridCol = firstGridCol + (instrCount * Constants.POSITIONS_PER_INSTRUCTION);
+              element.style.gridColumn = firstGridCol + " / " + lastGridCol;
+              return element;
+          };
+          let blockIndex = 0;
+          for (let i = 0; i < this.view.sequenceView.numInstructions;) {
+              const instrCount = this.view.blocksData.blockInstructionCountMap.get(blockIndex);
+              headerEl.appendChild(elementForBlockIndex(blockIndex, i, instrCount));
+              ++blockIndex;
+              i += instrCount;
+          }
+          return headerEl;
+      }
+      elementForInstructionHeader() {
+          const headerEl = createElement("div", "range-instruction-ids");
+          headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
+          const elementForInstructionIndex = (index, isBlockBorder) => {
+              const classes = "range-instruction-id range-header-element "
+                  + (isBlockBorder ? "range-block-border" : "range-instr-border");
+              const element = createElement("div", classes, "" + index);
+              element.setAttribute("title", "" + index);
+              const firstGridCol = (index * Constants.POSITIONS_PER_INSTRUCTION) + 1;
+              element.style.gridColumn = firstGridCol + " / "
+                  + (firstGridCol + Constants.POSITIONS_PER_INSTRUCTION);
+              return element;
+          };
+          for (let i = 0; i < this.view.sequenceView.numInstructions; ++i) {
+              const blockBorder = this.view.blocksData.blockBorders.has(i);
+              headerEl.appendChild(elementForInstructionIndex(i, blockBorder));
+          }
+          return headerEl;
+      }
+      elementForPositionHeader() {
+          const headerEl = createElement("div", "range-positions range-positions-header");
+          headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
+          const elementForPositionIndex = (index, isBlockBorder) => {
+              const classes = "range-position range-header-element " +
+                  (isBlockBorder ? "range-block-border"
+                      : this.view.blocksData.isInstructionBorder(index) ? "range-instr-border"
+                          : "range-position-border");
+              const element = createElement("div", classes, "" + index);
+              element.setAttribute("title", "" + index);
+              return element;
+          };
+          for (let i = 0; i < this.view.numPositions; ++i) {
+              headerEl.appendChild(elementForPositionIndex(i, this.view.blocksData.isBlockBorder(i)));
+          }
+          return headerEl;
+      }
+      elementForGrid() {
+          const gridEl = createElement("div", "range-grid");
+          gridEl.onscroll = () => {
+              this.view.scrollHandler.syncScroll(ToSync.TOP, this.view.divs.grid, this.view.divs.yAxis);
+              this.view.scrollHandler.syncScroll(ToSync.LEFT, this.view.divs.grid, this.view.divs.wholeHeader);
+              this.view.scrollHandler.saveScroll();
+          };
+          return gridEl;
+      }
+  }
+  // Handles the work required when the phase is changed.
+  // Between before and after register allocation for example.
+  class PhaseChangeHandler {
+      constructor(view) {
+          this.view = view;
+      }
+      // Called when the phase view is switched between before and after register allocation.
+      phaseChange() {
+          if (!this.view.gridAccessor.hasGrid()) {
+              // If this phase view has not been seen yet then the intervals need to be constructed.
+              this.addNewIntervals();
+          }
+          // Show all intervals pertaining to the current phase view.
+          this.view.intervalsAccessor.forEachInterval((phase, interval) => {
+              interval.classList.toggle("range-hidden", phase != this.view.sequenceView.currentPhaseIndex);
+          });
+      }
+      addNewIntervals() {
+          // All Grids should point to the same HTMLElement for empty cells in the grid,
+          // so as to avoid duplication. The current Grid is used to retrieve these elements.
+          const currentGrid = this.view.gridAccessor.getAnyGrid();
+          const newGrid = new Grid();
+          this.view.gridAccessor.addGrid(newGrid);
+          const source = this.view.sequenceView.sequence.register_allocation;
+          let row = 0;
+          for (const [registerIndex, range] of source.liveRanges) {
+              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, new RangePair([range, undefined]));
+              ++row;
+          }
+          Helper.forEachFixedRange(this.view.sequenceView.sequence.register_allocation, row, (registerIndex, row, _, ranges) => {
+              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges);
+          });
+      }
+      addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges) {
+          const numReplacements = new Map();
+          const getElementForEmptyPosition = (position) => {
+              return currentGrid.getCell(row, position);
+          };
+          // Inserts new interval beside existing intervals.
+          const callbackForInterval = (position, interval) => {
+              // Overlapping intervals are placed beside each other and the relevant ones displayed.
+              let currentInterval = currentGrid.getInterval(row, position);
+              // The number of intervals already inserted is tracked so that the inserted intervals
+              // are ordered correctly.
+              const intervalsAlreadyInserted = numReplacements.get(currentInterval);
+              numReplacements.set(currentInterval, intervalsAlreadyInserted ? intervalsAlreadyInserted + 1
+                  : 1);
+              if (intervalsAlreadyInserted) {
+                  for (let j = 0; j < intervalsAlreadyInserted; ++j) {
+                      currentInterval = currentInterval.nextElementSibling;
+                  }
+              }
+              interval.classList.add("range-hidden");
+              currentInterval.insertAdjacentElement('afterend', interval);
+          };
+          this.view.rowConstructor.construct(newGrid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval);
+      }
+  }
+  var ToSync;
+  (function (ToSync) {
+      ToSync[ToSync["LEFT"] = 0] = "LEFT";
+      ToSync[ToSync["TOP"] = 1] = "TOP";
+  })(ToSync || (ToSync = {}));
+  // Handles saving and syncing the scroll positions of the grid.
+  class ScrollHandler {
+      constructor(divs) {
+          this.divs = divs;
+      }
+      // This function is used to hide the rows which are not currently in view and
+      // so reduce the performance cost of things like hit tests and scrolling.
+      syncHidden() {
+          const getOffset = (rowEl, placeholderRowEl, isHidden) => {
+              return isHidden ? placeholderRowEl.offsetTop : rowEl.offsetTop;
+          };
+          const toHide = new Array();
+          const sampleCell = this.divs.registers.children[1];
+          const buffer = 2 * sampleCell.clientHeight;
+          const min = this.divs.grid.offsetTop + this.divs.grid.scrollTop - buffer;
+          const max = min + this.divs.grid.clientHeight + buffer;
+          // The rows are grouped by being contained within a group div. This is so as to allow
+          // groups of rows to easily be displayed and hidden with less of a performance cost.
+          // Each row in the mainGroup div is matched with an equivalent placeholder row in
+          // the placeholderGroup div that will be shown when mainGroup is hidden so as to maintain
+          // the dimensions and scroll positions of the grid.
+          const rangeGroups = this.divs.grid.children;
+          for (let i = 1; i < rangeGroups.length; i += 2) {
+              const mainGroup = rangeGroups[i];
+              const placeholderGroup = rangeGroups[i - 1];
+              const isHidden = mainGroup.classList.contains("range-hidden");
+              // The offsets are used to calculate whether the group is in view.
+              const offsetMin = getOffset(mainGroup.firstChild, placeholderGroup.firstChild, isHidden);
+              const offsetMax = getOffset(mainGroup.lastChild, placeholderGroup.lastChild, isHidden);
+              if (offsetMax > min && offsetMin < max) {
+                  if (isHidden) {
+                      // Show the rows, hide the placeholders.
+                      mainGroup.classList.toggle("range-hidden", false);
+                      placeholderGroup.classList.toggle("range-hidden", true);
+                  }
+              }
+              else if (!isHidden) {
+                  // Only hide the rows once the new rows are shown so that scrollLeft is not lost.
+                  toHide.push([mainGroup, placeholderGroup]);
+              }
+          }
+          for (const [mainGroup, placeholderGroup] of toHide) {
+              // Hide the rows, show the placeholders.
+              mainGroup.classList.toggle("range-hidden", true);
+              placeholderGroup.classList.toggle("range-hidden", false);
+          }
+      }
+      // This function is required to keep the axes labels in line with the grid
+      // content when scrolling.
+      syncScroll(toSync, source, target) {
+          // Continually delay timeout until scrolling has stopped.
+          toSync == ToSync.TOP ? clearTimeout(this.scrollTopTimeout)
+              : clearTimeout(this.scrollLeftTimeout);
+          if (target.onscroll) {
+              if (toSync == ToSync.TOP)
+                  this.scrollTopFunc = target.onscroll;
+              else
+                  this.scrollLeftFunc = target.onscroll;
+          }
+          // Clear onscroll to prevent the target syncing back with the source.
+          target.onscroll = null;
+          if (toSync == ToSync.TOP)
+              target.scrollTop = source.scrollTop;
+          else
+              target.scrollLeft = source.scrollLeft;
+          // Only show / hide the grid content once scrolling has stopped.
+          if (toSync == ToSync.TOP) {
+              this.scrollTopTimeout = setTimeout(() => {
+                  target.onscroll = this.scrollTopFunc;
+                  this.syncHidden();
+              }, 500);
+          }
+          else {
+              this.scrollLeftTimeout = setTimeout(() => {
+                  target.onscroll = this.scrollLeftFunc;
+                  this.syncHidden();
+              }, 500);
+          }
+      }
+      saveScroll() {
+          this.scrollLeft = this.divs.grid.scrollLeft;
+          this.scrollTop = this.divs.grid.scrollTop;
+      }
+      restoreScroll() {
+          if (this.scrollLeft) {
+              this.divs.grid.scrollLeft = this.scrollLeft;
+              this.divs.grid.scrollTop = this.scrollTop;
+          }
+      }
+  }
+  // RangeView displays the live range data as passed in by SequenceView.
+  // The data is displayed in a grid format, with the fixed and virtual registers
+  // along one axis, and the LifeTimePositions along the other. Each LifeTimePosition
+  // is part of an Instruction in SequenceView, which itself is part of an Instruction
+  // Block. The live ranges are displayed as intervals, each belonging to a register,
+  // and spanning across a certain range of LifeTimePositions.
+  // When the phase being displayed changes between before register allocation and
+  // after register allocation, only the intervals need to be changed.
+  class RangeView {
+      constructor(sequence) {
+          this.initialized = false;
+          this.isShown = false;
+          this.sequenceView = sequence;
+      }
+      initializeContent(blocks) {
+          if (!this.initialized) {
+              this.gridAccessor = new GridAccessor(this.sequenceView);
+              this.intervalsAccessor = new IntervalElementsAccessor(this.sequenceView);
+              this.cssVariables = new CSSVariables();
+              this.blocksData = new BlocksData(blocks);
+              this.divs = new Divs();
+              this.scrollHandler = new ScrollHandler(this.divs);
+              this.numPositions = this.sequenceView.numInstructions * Constants.POSITIONS_PER_INSTRUCTION;
+              this.rowConstructor = new RowConstructor(this);
+              const constructor = new RangeViewConstructor(this);
+              constructor.construct();
+              this.phaseChangeHandler = new PhaseChangeHandler(this);
+              this.initialized = true;
+          }
+          else {
+              // If the RangeView has already been initialized then the phase must have
+              // been changed.
+              this.phaseChangeHandler.phaseChange();
+          }
+      }
+      show() {
+          if (!this.isShown) {
+              this.isShown = true;
+              this.divs.container.appendChild(this.divs.content);
+              this.divs.resizerBar.style.visibility = "visible";
+              this.divs.container.style.visibility = "visible";
+              this.divs.snapper.style.visibility = "visible";
+              // Dispatch a resize event to ensure that the
+              // panel is shown.
+              window.dispatchEvent(new Event('resize'));
+              setTimeout(() => {
+                  this.scrollHandler.restoreScroll();
+                  this.scrollHandler.syncHidden();
+                  this.divs.showOnLoad.style.visibility = "visible";
+              }, 100);
+          }
+      }
+      hide() {
+          if (this.initialized) {
+              this.isShown = false;
+              this.divs.container.removeChild(this.divs.content);
+              this.divs.resizerBar.style.visibility = "hidden";
+              this.divs.container.style.visibility = "hidden";
+              this.divs.snapper.style.visibility = "hidden";
+              this.divs.showOnLoad.style.visibility = "hidden";
+          }
+          else {
+              window.document.getElementById('ranges').style.visibility = "hidden";
+          }
+          // Dispatch a resize event to ensure that the
+          // panel is hidden.
+          window.dispatchEvent(new Event('resize'));
+      }
+      onresize() {
+          if (this.isShown)
+              this.scrollHandler.syncHidden();
+      }
+  }
+
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SequenceView extends TextView {
       createViewElement() {
@@ -9223,6 +10014,12 @@
       }
       constructor(parentId, broker) {
           super(parentId, broker);
+          this.numInstructions = 0;
+          this.phaseIndexes = new Set();
+          this.isShown = false;
+          this.showRangeView = false;
+          this.rangeView = null;
+          this.toggleRangeViewEl = this.elementForToggleRangeView();
       }
       attachSelection(s) {
           const view = this;
@@ -9239,11 +10036,39 @@
           this.blockSelection.clear();
           return this.selection.detachSelection();
       }
+      show() {
+          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
+          if (!this.isShown) {
+              this.isShown = true;
+              this.phaseIndexes.add(this.currentPhaseIndex);
+              this.container.appendChild(this.divNode);
+              this.container.getElementsByClassName("graph-toolbox")[0].appendChild(this.toggleRangeViewEl);
+          }
+          if (this.showRangeView)
+              this.rangeView.show();
+      }
+      hide() {
+          // A single SequenceView object is used for two phases (i.e before and after
+          // register allocation), tracking the indexes lets the redundant hides and
+          // shows be avoided when switching between the two.
+          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
+          if (!this.phaseIndexes.has(this.currentPhaseIndex)) {
+              this.isShown = false;
+              this.container.removeChild(this.divNode);
+              this.container.getElementsByClassName("graph-toolbox")[0].removeChild(this.toggleRangeViewEl);
+              if (this.showRangeView)
+                  this.rangeView.hide();
+          }
+      }
+      onresize() {
+          if (this.showRangeView)
+              this.rangeView.onresize();
+      }
       initializeContent(data, rememberedSelection) {
           this.divNode.innerHTML = '';
           this.sequence = data.sequence;
           this.searchInfo = [];
-          this.divNode.addEventListener('click', (e) => {
+          this.divNode.onclick = (e) => {
               if (!(e.target instanceof HTMLElement))
                   return;
               const instructionId = Number.parseInt(e.target.dataset.instructionId, 10);
@@ -9252,26 +10077,18 @@
               if (!e.shiftKey)
                   this.broker.broadcastClear(null);
               this.broker.broadcastInstructionSelect(null, [instructionId], true);
-          });
+          };
+          this.phaseSelect = document.getElementById('phase-select');
+          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
           this.addBlocks(this.sequence.blocks);
+          const lastBlock = this.sequence.blocks[this.sequence.blocks.length - 1];
+          this.numInstructions = lastBlock.instructions[lastBlock.instructions.length - 1].id + 1;
+          this.addRangeView();
           this.attachSelection(rememberedSelection);
           this.show();
       }
       elementForBlock(block) {
           const view = this;
-          function createElement(tag, cls, content) {
-              const el = document.createElement(tag);
-              if (isIterable(cls)) {
-                  for (const c of cls)
-                      el.classList.add(c);
-              }
-              else {
-                  el.classList.add(cls);
-              }
-              if (content != undefined)
-                  el.innerHTML = content;
-              return el;
-          }
           function mkLinkHandler(id, handler) {
               return function (e) {
                   e.stopPropagation();
@@ -9287,16 +10104,31 @@
           function mkOperandLinkHandler(text) {
               return mkLinkHandler(text, view.selectionHandler);
           }
-          function elementForOperand(operand, searchInfo) {
-              const text = operand.text;
-              const operandEl = createElement("div", ["parameter", "tag", "clickable", operand.type], text);
-              if (operand.tooltip) {
-                  operandEl.setAttribute("title", operand.tooltip);
-              }
-              operandEl.onclick = mkOperandLinkHandler(text);
+          function elementForOperandWithSpan(span, text, searchInfo, isVirtual) {
+              const selectionText = isVirtual ? "virt_" + text : text;
+              span.onclick = mkOperandLinkHandler(selectionText);
               searchInfo.push(text);
-              view.addHtmlElementForNodeId(text, operandEl);
-              return operandEl;
+              view.addHtmlElementForNodeId(selectionText, span);
+              const container = createElement("div", "");
+              container.appendChild(span);
+              return container;
+          }
+          function elementForOperand(operand, searchInfo) {
+              let isVirtual = false;
+              let className = "parameter tag clickable " + operand.type;
+              if (operand.text[0] == 'v' && !(operand.tooltip && operand.tooltip.includes("Float"))) {
+                  isVirtual = true;
+                  className += " virtual-reg";
+              }
+              const span = createElement("span", className, operand.text);
+              if (operand.tooltip) {
+                  span.setAttribute("title", operand.tooltip);
+              }
+              return elementForOperandWithSpan(span, operand.text, searchInfo, isVirtual);
+          }
+          function elementForPhiOperand(text, searchInfo) {
+              const span = createElement("span", "parameter tag clickable virtual-reg", text);
+              return elementForOperandWithSpan(span, text, searchInfo, true);
           }
           function elementForInstruction(instruction, searchInfo) {
               const instNodeEl = createElement("div", "instruction-node");
@@ -9314,7 +10146,7 @@
               const gapEl = createElement("div", "gap", "gap");
               let hasGaps = false;
               for (const gap of instruction.gaps) {
-                  const moves = createElement("div", ["comma-sep-list", "gap-move"]);
+                  const moves = createElement("div", "comma-sep-list gap-move");
                   for (const move of gap) {
                       hasGaps = true;
                       const moveEl = createElement("div", "move");
@@ -9334,7 +10166,7 @@
               const instEl = createElement("div", "instruction");
               instContentsEl.appendChild(instEl);
               if (instruction.outputs.length > 0) {
-                  const outputs = createElement("div", ["comma-sep-list", "input-output-list"]);
+                  const outputs = createElement("div", "comma-sep-list input-output-list");
                   for (const output of instruction.outputs) {
                       const outputEl = elementForOperand(output, searchInfo);
                       outputs.appendChild(outputEl);
@@ -9343,7 +10175,7 @@
                   const assignEl = createElement("div", "assign", "=");
                   instEl.appendChild(assignEl);
               }
-              let text = instruction.opcode + instruction.flags;
+              const text = instruction.opcode + instruction.flags;
               const instLabel = createElement("div", "node-label", text);
               if (instruction.opcode == "ArchNop" && instruction.outputs.length == 1 && instruction.outputs[0].tooltip) {
                   instLabel.innerText = instruction.outputs[0].tooltip;
@@ -9352,7 +10184,7 @@
               view.addHtmlElementForNodeId(text, instLabel);
               instEl.appendChild(instLabel);
               if (instruction.inputs.length > 0) {
-                  const inputs = createElement("div", ["comma-sep-list", "input-output-list"]);
+                  const inputs = createElement("div", "comma-sep-list input-output-list");
                   for (const input of instruction.inputs) {
                       const inputEl = elementForOperand(input, searchInfo);
                       inputs.appendChild(inputEl);
@@ -9360,7 +10192,7 @@
                   instEl.appendChild(inputs);
               }
               if (instruction.temps.length > 0) {
-                  const temps = createElement("div", ["comma-sep-list", "input-output-list", "temps"]);
+                  const temps = createElement("div", "comma-sep-list input-output-list temps");
                   for (const temp of instruction.temps) {
                       const tempEl = elementForOperand(temp, searchInfo);
                       temps.appendChild(tempEl);
@@ -9371,12 +10203,12 @@
           }
           const sequenceBlock = createElement("div", "schedule-block");
           sequenceBlock.classList.toggle("deferred", block.deferred);
-          const blockId = createElement("div", ["block-id", "com", "clickable"], block.id);
+          const blockId = createElement("div", "block-id com clickable", block.id);
           blockId.onclick = mkBlockLinkHandler(block.id);
           sequenceBlock.appendChild(blockId);
-          const blockPred = createElement("div", ["predecessor-list", "block-list", "comma-sep-list"]);
+          const blockPred = createElement("div", "predecessor-list block-list comma-sep-list");
           for (const pred of block.predecessors) {
-              const predEl = createElement("div", ["block-id", "com", "clickable"], pred);
+              const predEl = createElement("div", "block-id com clickable", pred);
               predEl.onclick = mkBlockLinkHandler(pred);
               blockPred.appendChild(predEl);
           }
@@ -9396,7 +10228,7 @@
               const assignEl = createElement("div", "assign", "=");
               phiEl.appendChild(assignEl);
               for (const input of phi.operands) {
-                  const inputEl = createElement("div", ["parameter", "tag", "clickable"], input);
+                  const inputEl = elementForPhiOperand(input, this.searchInfo);
                   phiEl.appendChild(inputEl);
               }
           }
@@ -9405,9 +10237,9 @@
               instructions.appendChild(elementForInstruction(instruction, this.searchInfo));
           }
           sequenceBlock.appendChild(instructions);
-          const blockSucc = createElement("div", ["successor-list", "block-list", "comma-sep-list"]);
+          const blockSucc = createElement("div", "successor-list block-list comma-sep-list");
           for (const succ of block.successors) {
-              const succEl = createElement("div", ["block-id", "com", "clickable"], succ);
+              const succEl = createElement("div", "block-id com clickable", succ);
               succEl.onclick = mkBlockLinkHandler(succ);
               blockSucc.appendChild(succEl);
           }
@@ -9421,6 +10253,61 @@
               const blockEl = this.elementForBlock(block);
               this.divNode.appendChild(blockEl);
           }
+      }
+      addRangeView() {
+          const preventRangeView = reason => {
+              const toggleRangesInput = this.toggleRangeViewEl.firstChild;
+              if (this.rangeView) {
+                  toggleRangesInput.checked = false;
+                  this.toggleRangeView(toggleRangesInput);
+              }
+              toggleRangesInput.disabled = true;
+              this.toggleRangeViewEl.style.textDecoration = "line-through";
+              this.toggleRangeViewEl.setAttribute("title", reason);
+          };
+          if (this.sequence.register_allocation) {
+              if (!this.rangeView) {
+                  this.rangeView = new RangeView(this);
+              }
+              const source = this.sequence.register_allocation;
+              if (source.fixedLiveRanges.size == 0 && source.liveRanges.size == 0) {
+                  preventRangeView("No live ranges to show");
+              }
+              else if (this.numInstructions >= 249) {
+                  // This is due to the css grid-column being limited to 1000 columns.
+                  // Performance issues would otherwise impose some limit.
+                  // TODO(george.wort@arm.com): Allow the user to specify an instruction range
+                  //                            to display that spans less than 249 instructions.
+                  preventRangeView("Live range display is only supported for sequences with less than 249 instructions");
+              }
+              if (this.showRangeView) {
+                  this.rangeView.initializeContent(this.sequence.blocks);
+              }
+          }
+          else {
+              preventRangeView("No live range data provided");
+          }
+      }
+      elementForToggleRangeView() {
+          const toggleRangeViewEl = createElement("label", "", "show live ranges");
+          const toggleRangesInput = createElement("input", "range-toggle-show");
+          toggleRangesInput.setAttribute("type", "checkbox");
+          toggleRangesInput.oninput = () => this.toggleRangeView(toggleRangesInput);
+          toggleRangeViewEl.insertBefore(toggleRangesInput, toggleRangeViewEl.firstChild);
+          return toggleRangeViewEl;
+      }
+      toggleRangeView(toggleRangesInput) {
+          toggleRangesInput.disabled = true;
+          this.showRangeView = toggleRangesInput.checked;
+          if (this.showRangeView) {
+              this.rangeView.initializeContent(this.sequence.blocks);
+              this.rangeView.show();
+          }
+          else {
+              this.rangeView.hide();
+          }
+          window.dispatchEvent(new Event('resize'));
+          toggleRangesInput.disabled = false;
       }
       searchInputAction(searchBar, e) {
           e.stopPropagation();
@@ -9458,6 +10345,10 @@
           pane.setAttribute("tabindex", "1");
           pane.className = "viewpane";
           return pane;
+      }
+      hide() {
+          this.hideCurrentPhase();
+          super.hide();
       }
       constructor(id, selectionBroker, sourceResolver) {
           super(id);
@@ -9505,7 +10396,9 @@
           };
       }
       show() {
-          super.show();
+          // Insert before is used so that the display is inserted before the
+          // resizer for the RangeView.
+          this.container.insertBefore(this.divNode, this.container.firstChild);
           this.initializeSelect();
           const lastPhaseIndex = +window.sessionStorage.getItem("lastSelectedPhase");
           const initialPhaseIndex = this.sourceResolver.repairPhaseId(lastPhaseIndex);
@@ -9905,6 +10798,8 @@
           this.sourceCollapse = document.getElementById(SOURCE_COLLAPSE_ID);
           this.disassemblyExpand = document.getElementById(DISASSEMBLY_EXPAND_ID);
           this.disassemblyCollapse = document.getElementById(DISASSEMBLY_COLLAPSE_ID);
+          this.rangesExpand = document.getElementById(RANGES_EXPAND_ID);
+          this.rangesCollapse = document.getElementById(RANGES_COLLAPSE_ID);
           document.getElementById("show-hide-source").addEventListener("click", () => {
               this.resizer.resizerLeft.classed("snapped", !this.resizer.resizerLeft.classed("snapped"));
               this.setSourceExpanded(!this.sourceExpand.classList.contains("invisible"));
@@ -9915,12 +10810,19 @@
               this.setDisassemblyExpanded(!this.disassemblyExpand.classList.contains("invisible"));
               this.resizer.updatePanes();
           });
+          document.getElementById("show-hide-ranges").addEventListener("click", () => {
+              this.resizer.resizerRanges.classed("snapped", !this.resizer.resizerRanges.classed("snapped"));
+              this.setRangesExpanded(!this.rangesExpand.classList.contains("invisible"));
+              this.resizer.updatePanes();
+          });
       }
       restoreExpandedState() {
           this.resizer.resizerLeft.classed("snapped", window.sessionStorage.getItem("expandedState-source") == "false");
           this.resizer.resizerRight.classed("snapped", window.sessionStorage.getItem("expandedState-disassembly") == "false");
+          this.resizer.resizerRanges.classed("snapped", window.sessionStorage.getItem("expandedState-ranges") == "false");
           this.setSourceExpanded(this.getLastExpandedState("source", true));
           this.setDisassemblyExpanded(this.getLastExpandedState("disassembly", true));
+          this.setRangesExpanded(this.getLastExpandedState("ranges", true));
       }
       getLastExpandedState(type, defaultState) {
           const state = window.sessionStorage.getItem("expandedState-" + type);
@@ -9932,6 +10834,7 @@
           window.sessionStorage.setItem("expandedState-source", `${isSourceExpanded}`);
           this.sourceExpand.classList.toggle("invisible", isSourceExpanded);
           this.sourceCollapse.classList.toggle("invisible", !isSourceExpanded);
+          document.getElementById("show-hide-ranges").style.marginLeft = isSourceExpanded ? null : "40px";
       }
       setSourceExpanded(isSourceExpanded) {
           this.sourceUpdate(isSourceExpanded);
@@ -9946,18 +10849,34 @@
           this.disassemblyUpdate(isDisassemblyExpanded);
           this.resizer.updateRightWidth();
       }
+      rangesUpdate(isRangesExpanded) {
+          window.sessionStorage.setItem("expandedState-ranges", `${isRangesExpanded}`);
+          this.rangesExpand.classList.toggle("invisible", isRangesExpanded);
+          this.rangesCollapse.classList.toggle("invisible", !isRangesExpanded);
+      }
+      setRangesExpanded(isRangesExpanded) {
+          this.rangesUpdate(isRangesExpanded);
+          this.resizer.updateRanges();
+      }
   }
   class Resizer {
-      constructor(panesUpdatedCallback, deadWidth) {
+      constructor(panesUpdatedCallback, deadWidth, deadHeight) {
           this.SOURCE_PANE_DEFAULT_PERCENT = 1 / 4;
           this.DISASSEMBLY_PANE_DEFAULT_PERCENT = 3 / 4;
+          this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
+          this.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
+          this.RESIZER_SIZE = document.getElementById("resizer-ranges").offsetHeight;
           const resizer = this;
           resizer.panesUpdatedCallback = panesUpdatedCallback;
           resizer.deadWidth = deadWidth;
+          resizer.deadHeight = deadHeight;
           resizer.left = document.getElementById(SOURCE_PANE_ID);
           resizer.right = document.getElementById(GENERATED_PANE_ID);
+          resizer.ranges = document.getElementById(RANGES_PANE_ID);
+          resizer.middle = document.getElementById("middle");
           resizer.resizerLeft = select('#resizer-left');
           resizer.resizerRight = select('#resizer-right');
+          resizer.resizerRanges = select('#resizer-ranges');
           // Set default sizes, if they weren't set.
           if (window.sessionStorage.getItem("source-pane-percent") === null) {
               window.sessionStorage.setItem("source-pane-percent", `${this.SOURCE_PANE_DEFAULT_PERCENT}`);
@@ -9965,7 +10884,10 @@
           if (window.sessionStorage.getItem("disassembly-pane-percent") === null) {
               window.sessionStorage.setItem("disassembly-pane-percent", `${this.DISASSEMBLY_PANE_DEFAULT_PERCENT}`);
           }
-          this.updateWidths();
+          if (window.sessionStorage.getItem("ranges-pane-height-percent") === null) {
+              window.sessionStorage.setItem("ranges-pane-height-percent", `${this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT}`);
+          }
+          this.updateSizes();
           const dragResizeLeft = drag()
               .on('drag', function () {
               const x = mouse(this.parentElement)[0];
@@ -10017,8 +10939,33 @@
               resizer.resizerRight.classed("dragged", false);
           });
           resizer.resizerRight.call(dragResizeRight);
+          const dragResizeRanges = drag()
+              .on('drag', function () {
+              const y = mouse(this.parentElement)[1];
+              resizer.sepRangesHeight = Math.max(100, Math.min(y, window.innerHeight) - resizer.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE);
+              resizer.updatePanes();
+          })
+              .on('start', function () {
+              resizer.resizerRanges.classed("dragged", true);
+          })
+              .on('end', function () {
+              // If the panel is close enough to the bottom, treat it as if it was pulled all the way to the bottom.
+              const y = mouse(this.parentElement)[1];
+              if (y >= (window.innerHeight - deadHeight)) {
+                  resizer.sepRangesHeight = window.innerHeight;
+                  resizer.updatePanes();
+              }
+              // Snap if dragged all the way to the bottom.
+              resizer.resizerRanges.classed("snapped", resizer.sepRangesHeight >= window.innerHeight - 1);
+              if (!resizer.isRangesSnapped()) {
+                  window.sessionStorage.setItem("ranges-pane-height-percent", `${resizer.sepRangesHeight / window.innerHeight}`);
+              }
+              resizer.snapper.setRangesExpanded(!resizer.isRangesSnapped());
+              resizer.resizerRanges.classed("dragged", false);
+          });
+          resizer.resizerRanges.call(dragResizeRanges);
           window.onresize = function () {
-              resizer.updateWidths();
+              resizer.updateSizes();
               resizer.updatePanes();
           };
           resizer.snapper = new Snapper(resizer);
@@ -10030,12 +10977,62 @@
       isRightSnapped() {
           return this.resizerRight.classed("snapped");
       }
+      isRangesSnapped() {
+          return this.resizerRanges.classed("snapped");
+      }
+      updateRangesPane() {
+          const clientHeight = window.innerHeight;
+          const rangesIsHidden = this.ranges.style.visibility == "hidden";
+          let resizerSize = this.RESIZER_SIZE;
+          if (rangesIsHidden) {
+              resizerSize = 0;
+              this.sepRangesHeight = clientHeight;
+          }
+          const rangeHeight = clientHeight - this.sepRangesHeight;
+          this.ranges.style.height = rangeHeight + 'px';
+          const panelWidth = this.sepRight - this.sepLeft - (2 * resizerSize);
+          this.ranges.style.width = panelWidth + 'px';
+          const multiview = document.getElementById("multiview");
+          if (multiview && multiview.style) {
+              multiview.style.height = (this.sepRangesHeight - resizerSize) + 'px';
+              multiview.style.width = panelWidth + 'px';
+          }
+          // Resize the range grid and labels.
+          const rangeGrid = this.ranges.getElementsByClassName("range-grid")[0];
+          if (rangeGrid) {
+              const yAxis = this.ranges.getElementsByClassName("range-y-axis")[0];
+              const rangeHeader = this.ranges.getElementsByClassName("range-header")[0];
+              const gridWidth = panelWidth - yAxis.clientWidth;
+              rangeGrid.style.width = Math.floor(gridWidth - 1) + 'px';
+              // Take live ranges' right scrollbar into account.
+              rangeHeader.style.width = (gridWidth - rangeGrid.offsetWidth + rangeGrid.clientWidth - 1) + 'px';
+              // Set resizer to horizontal.
+              this.resizerRanges.style('width', panelWidth + 'px');
+              const rangeTitle = this.ranges.getElementsByClassName("range-title-div")[0];
+              const rangeHeaderLabel = this.ranges.getElementsByClassName("range-header-label-x")[0];
+              const gridHeight = rangeHeight - rangeHeader.clientHeight - rangeTitle.clientHeight - rangeHeaderLabel.clientHeight;
+              rangeGrid.style.height = gridHeight + 'px';
+              // Take live ranges' bottom scrollbar into account.
+              yAxis.style.height = (gridHeight - rangeGrid.offsetHeight + rangeGrid.clientHeight) + 'px';
+          }
+          this.resizerRanges.style('ranges', this.ranges.style.height);
+      }
       updatePanes() {
           this.left.style.width = this.sepLeft + 'px';
           this.resizerLeft.style('left', this.sepLeft + 'px');
           this.right.style.width = (document.body.getBoundingClientRect().width - this.sepRight) + 'px';
           this.resizerRight.style('right', (document.body.getBoundingClientRect().width - this.sepRight - 1) + 'px');
+          this.updateRangesPane();
           this.panesUpdatedCallback();
+      }
+      updateRanges() {
+          if (this.isRangesSnapped()) {
+              this.sepRangesHeight = window.innerHeight;
+          }
+          else {
+              const sepRangesHeight = window.sessionStorage.getItem("ranges-pane-height-percent");
+              this.sepRangesHeight = window.innerHeight * Number.parseFloat(sepRangesHeight);
+          }
       }
       updateLeftWidth() {
           if (this.isLeftSnapped()) {
@@ -10055,9 +11052,10 @@
               this.sepRight = document.body.getBoundingClientRect().width * Number.parseFloat(sepRight);
           }
       }
-      updateWidths() {
+      updateSizes() {
           this.updateLeftWidth();
           this.updateRightWidth();
+          this.updateRanges();
       }
   }
 
@@ -10082,7 +11080,7 @@
       let sourceViews = [];
       let selectionBroker = null;
       let sourceResolver = null;
-      const resizer = new Resizer(panesUpdatedCallback, 75);
+      const resizer = new Resizer(panesUpdatedCallback, 75, 75);
       const sourceTabsContainer = document.getElementById(SOURCE_PANE_ID);
       const sourceTabs = new Tabs(sourceTabsContainer);
       sourceTabs.addTab("&#x2b;").classList.add("last-tab", "persistent-tab");
@@ -10112,6 +11110,9 @@
               if (multiview)
                   multiview.hide();
               multiview = null;
+              document.getElementById("ranges").innerHTML = '';
+              document.getElementById('ranges').style.visibility = "hidden";
+              document.getElementById('show-hide-ranges').style.visibility = "hidden";
               if (disassemblyView)
                   disassemblyView.hide();
               sourceViews = [];
