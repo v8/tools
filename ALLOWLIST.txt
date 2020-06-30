@@ -6,8 +6,8 @@
 *.html
 *.js
 callstats
-heap-stats
-heap-stats/**
+*-stats
+*-stats/**
 profview
 profview/**
 profviz

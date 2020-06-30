@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 DESTINATION = Path(__file__).parent
-WHITELIST = DESTINATION  / 'WHITELIST.txt'
+ALLOWLIST = DESTINATION  / 'ALLOWLIST.txt'
 TOOLS_GIT = DESTINATION
 V8_GIT = DESTINATION  / '.v8'
 
@@ -64,7 +64,7 @@ for branch in BRANCHES:
     git('switch', '--force', '--detach', f'remotes/origin/{branch}')
     git('clean', '--force', '-d')
     source = V8_GIT / 'tools'
-    run('rsync', '--itemize-changes', f'--include-from={WHITELIST}',
+    run('rsync', '--itemize-changes', f'--include-from={ALLOWLIST}',
             '--exclude=*', '--recursive', 
             '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
     turbolizer_dir = branch_dir / 'turbolizer'
