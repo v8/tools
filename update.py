@@ -80,3 +80,17 @@ for branch in BRANCHES:
                 print(f'Error occured: {e}')
     git('add', branch_dir, repository=TOOLS_GIT)
 
+
+step("Update versions.txt")
+versions_file = DESTINATION / 'versions.txt'
+with open(versions_file, mode='w') as f:
+    versions = list(DESTINATION.glob('v*'))
+    versions.sort()
+    # write all but the last filename (=versions.txt)
+    for version_dir in versions[:-1]:
+        f.write(version_dir.name)
+        f.write('\n')
+
+git('add', versions_file, repository=TOOLS_GIT)
+
+
