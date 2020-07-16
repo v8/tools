@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-'use strict';
-// const kChunkHeight = 250;
-// const kChunkWidth = 10;
+import {kChunkWidth, kChunkHeight} from './map-processor.mjs';
 
 class State {
   constructor(mapPanelId, timelinePanelId) {
@@ -14,6 +12,15 @@ class State {
     this._chunks = undefined;
     this._view = new View(this, mapPanelId, timelinePanelId);
     this._navigation = new Navigation(this, this.view);
+  }
+  set filteredEntries(value) {
+    this._filteredEntries = value;
+    if (this._filteredEntries) {
+      //TODO(zcankara) update timeline view
+    }
+  }
+  get filteredEntries() {
+    return this._filteredEntries;
   }
   get timeline() {
     return this._timeline
@@ -199,8 +206,9 @@ class View {
     setInterval(this.updateOverviewWindow(timelinePanelId), 50);
     this.backgroundCanvas = document.createElement('canvas');
     this.transitionView =
-        new TransitionView(state, this.mapPanel_.transitionViewSelect);
+        new TransitionView(state, this.mapPanel_.transitionView);
     this.isLocked = false;
+    this._filteredEntries = [];
   }
   get chunks() {
     return this.state.chunks
@@ -223,12 +231,12 @@ class View {
       details += '\nSource location: ' + this.map.filePosition;
       details += '\n' + this.map.description;
     }
-    this.mapPanel_.mapDetailsSelect.innerText = details;
+    this.mapPanel_.mapDetails.innerText = details;
     this.transitionView.showMap(this.map);
   }
 
   updateTimeline() {
-    let chunksNode = this.timelinePanel_.timelineChunksSelect;
+    let chunksNode = this.timelinePanel_.timelineChunks;
     removeAllChildren(chunksNode);
     let chunks = this.chunks;
     let max = chunks.max(each => each.size());
@@ -347,15 +355,14 @@ class View {
     node.style.backgroundImage = 'url(' + imageData + ')';
   }
 
-  updateOverviewWindow(timelinePanelId) {
-    let indicator = this.timelinePanel_.timelineOverviewIndicatorSelect;
+  updateOverviewWindow() {
+    let indicator = this.timelinePanel_.timelineOverviewIndicator;
     let totalIndicatorWidth =
-        this.timelinePanel_.timelineOverviewSelect.offsetWidth;
-    let div = this.timelinePanel_.timelineSelect;
+        this.timelinePanel_.timelineOverview.offsetWidth;
+    let div = this.timelinePanel_.timeline;
     let timelineTotalWidth =
-        this.timelinePanel_.timelineCanvasSelect.offsetWidth;
-    let factor = this.timelinePanel_.timelineOverviewSelect.offsetWidth /
-        timelineTotalWidth;
+        this.timelinePanel_.timelineCanvas.offsetWidth;
+    let factor = totalIndicatorWidth / timelineTotalWidth;
     let width = div.offsetWidth * factor;
     let left = div.scrollLeft * factor;
     indicator.style.width = width + 'px';
@@ -369,39 +376,39 @@ class View {
     canvas.height = height;
     canvas.width = window.innerWidth;
     let ctx = canvas.getContext('2d');
-
     let chunks = this.state.timeline.chunkSizes(canvas.width * kFactor);
     let max = chunks.max();
 
     ctx.clearRect(0, 0, canvas.width, height);
-    ctx.strokeStyle = 'black';
-    ctx.fillStyle = 'black';
+    ctx.fillStyle = 'white';
     ctx.beginPath();
     ctx.moveTo(0, height);
     for (let i = 0; i < chunks.length; i++) {
       ctx.lineTo(i / kFactor, height - chunks[i] / max * height);
     }
     ctx.lineTo(chunks.length, height);
+    ctx.strokeStyle = 'white';
     ctx.stroke();
     ctx.closePath();
     ctx.fill();
     let imageData = canvas.toDataURL('image/webp', 0.2);
-    this.timelinePanel_.timelineOverviewSelect.style.backgroundImage =
+    this.timelinePanel_.timelineOverview.style.backgroundImage =
         'url(' + imageData + ')';
   }
 
   redraw() {
-    let canvas = this.timelinePanel_.timelineCanvasSelect;
+    let canvas = this.timelinePanel_.timelineCanvas;
     canvas.width = (this.chunks.length + 1) * kChunkWidth;
     canvas.height = kChunkHeight;
     let ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, kChunkHeight);
     if (!this.state.map) return;
+    //TODO(zcankara) Redraw the IC events on canvas.
     this.drawEdges(ctx);
   }
 
   setMapStyle(map, ctx) {
-    ctx.fillStyle = map.edge && map.edge.from ? 'black' : 'green';
+    ctx.fillStyle = map.edge && map.edge.from ? 'white' : '#aedc6e';
   }
 
   setEdgeStyle(edge, ctx) {
@@ -427,6 +434,7 @@ class View {
     ctx.beginPath();
     this.setMapStyle(map, ctx);
     ctx.arc(x, y, 6, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'white';
     ctx.stroke();
   }
 
@@ -488,6 +496,7 @@ class View {
       ctx.lineTo(xTo, yTo);
     }
     if (!showLabel) {
+      ctx.strokeStyle = 'white';
       ctx.stroke();
     } else {
       let centerX, centerY;
@@ -498,10 +507,12 @@ class View {
         centerX = xTo;
         centerY = yTo;
       }
+      ctx.strokeStyle = 'white';
       ctx.moveTo(centerX, centerY);
       ctx.lineTo(centerX + offsetX, centerY - labelOffset);
       ctx.stroke();
       ctx.textAlign = 'left';
+      ctx.fillStyle = 'white';
       ctx.fillText(
           edge.toString(), centerX + offsetX + 2, centerY - labelOffset)
     }
@@ -576,7 +587,7 @@ class TransitionView {
 
   addMapNode(map) {
     let node = div('map');
-    if (map.edge) node.classList.add(map.edge.getColor());
+    if (map.edge) node.style.backgroundColor = map.edge.getColor();
     node.map = map;
     node.addEventListener('click', () => this.selectMap(map));
     if (map.children.length > 1) {
@@ -603,8 +614,9 @@ class TransitionView {
   }
 
   addTransitionEdge(map) {
-    let classes = ['transitionEdge', map.edge.getColor()];
+    let classes = ['transitionEdge'];
     let edge = div(classes);
+    edge.style.backgroundColor = map.edge.getColor();
     let labelNode = div('transitionLabel');
     labelNode.innerText = map.edge.toString();
     edge.appendChild(labelNode);
@@ -661,40 +673,26 @@ class TransitionView {
 function transitionTypeToColor(type) {
   switch (type) {
     case 'new':
-      return 'green';
+      // green
+      return '#aedc6e';
     case 'Normalize':
-      return 'violet';
+      // violet
+      return '#d26edc';
     case 'SlowToFast':
-      return 'orange';
+      // orange
+      return '#dc9b6e';
     case 'InitialMap':
-      return 'yellow';
+      // yellow
+      return '#EEFF41';
     case 'Transition':
-      return 'black';
+      // pink/violet (primary)
+      return '#9B6EDC';
     case 'ReplaceDescriptors':
-      return 'red';
+      // red
+      return '#dc6eae';
   }
-  return 'black';
+  // pink/violet (primary)
+  return '#9B6EDC';
 }
 
-//  ======================= histogram ==========
-Object.defineProperty(Edge.prototype, 'getColor', { value:function() {
-  return transitionTypeToColor(this.type);
-}});
-
-define(Array.prototype, "histogram", function(mapFn) {
-  let histogram = [];
-  for (let i = 0; i < this.length; i++) {
-    let value = this[i];
-    let index = Math.round(mapFn(value))
-    let bucket = histogram[index];
-    if (bucket !== undefined) {
-      bucket.push(value);
-    } else {
-      histogram[index] = [value];
-    }
-  }
-  for (let i = 0; i < histogram.length; i++) {
-    histogram[i] = histogram[i] || [];
-  }
-  return histogram;
-});
+export { State, div, table, tr, td};
