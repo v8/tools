@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 import {kChunkWidth, kChunkHeight} from './map-processor.mjs';
+import {div, removeAllChildren, $} from './helper.mjs';
+
+
 
 class State {
   constructor(mapPanelId, timelinePanelId) {
@@ -11,6 +14,8 @@ class State {
     this._timeline = undefined;
     this._chunks = undefined;
     this._view = new View(this, mapPanelId, timelinePanelId);
+    //TODO(zcankara) Depreciate the view
+    this.mapPanel_ = $(mapPanelId);
     this._navigation = new Navigation(this, this.view);
   }
   set filteredEntries(value) {
@@ -29,7 +34,7 @@ class State {
     this._timeline = value;
     this.updateChunks();
     this.view.updateTimeline();
-    this.view.updateStats();
+    this.mapPanel_.updateStats(this.timeline);
   }
   get chunks() {
     return this._chunks
@@ -41,6 +46,9 @@ class State {
     this._nofChunks = count;
     this.updateChunks();
     this.view.updateTimeline();
+  }
+  get mapPanel() {
+    return this.mapPanel_;
   }
   get view() {
     return this._view
@@ -54,7 +62,7 @@ class State {
   set map(value) {
     this._map = value;
     this._navigation.updateUrl();
-    this.view.updateMapDetails();
+    this.mapPanel_.showMap(this.map);
     this.view.redraw();
   }
   updateChunks() {
@@ -66,60 +74,6 @@ class State {
       map: this.map.id, time: this.map.time
     }
   }
-}
-
-// =========================================================================
-// DOM Helper
-function $(id) {
-  return document.querySelector(id)
-}
-
-function removeAllChildren(node) {
-  while (node.lastChild) {
-    node.removeChild(node.lastChild);
-  }
-}
-
-function selectOption(select, match) {
-  let options = select.options;
-  for (let i = 0; i < options.length; i++) {
-    if (match(i, options[i])) {
-      select.selectedIndex = i;
-      return;
-    }
-  }
-}
-
-function div(classes) {
-  let node = document.createElement('div');
-  if (classes !== void 0) {
-    if (typeof classes === 'string') {
-      node.classList.add(classes);
-    } else {
-      classes.forEach(cls => node.classList.add(cls));
-    }
-  }
-  return node;
-}
-
-function table(className) {
-  let node = document.createElement('table')
-  if (className) node.classList.add(className)
-  return node;
-}
-
-function td(textOrNode) {
-  let node = document.createElement('td');
-  if (typeof textOrNode === 'object') {
-    node.appendChild(textOrNode);
-  } else {
-    node.innerText = textOrNode;
-  }
-  return node;
-}
-
-function tr() {
-  return document.createElement('tr');
 }
 
 class Navigation {
@@ -203,10 +157,10 @@ class View {
     this.mapPanel_ = $(mapPanelId);
     this.timelinePanel_ = $(timelinePanelId);
     this.state = state;
-    setInterval(this.updateOverviewWindow(timelinePanelId), 50);
-    this.backgroundCanvas = document.createElement('canvas');
-    this.transitionView =
-        new TransitionView(state, this.mapPanel_.transitionView);
+    setInterval(this.timelinePanel_.updateOverviewWindow(), 50);
+    this.timelinePanel_.createBackgroundCanvas();
+    this.mapPanel_.transitionView = state;
+
     this.isLocked = false;
     this._filteredEntries = [];
   }
@@ -218,21 +172,6 @@ class View {
   }
   get map() {
     return this.state.map
-  }
-
-  updateStats() {
-    this.mapPanel_.timeline = this.state.timeline;
-  }
-
-  updateMapDetails() {
-    let details = '';
-    if (this.map) {
-      details += 'ID: ' + this.map.id;
-      details += '\nSource location: ' + this.map.filePosition;
-      details += '\n' + this.map.description;
-    }
-    this.mapPanel_.mapDetails.innerText = details;
-    this.transitionView.showMap(this.map);
   }
 
   updateTimeline() {
@@ -269,7 +208,8 @@ class View {
       chunk.markers.forEach(marker => addTimestamp(marker.time, marker.name));
     }
 
-    this.asyncSetTimelineChunkBackground(backgroundTodo)
+
+    this.timelinePanel_.asyncSetTimelineChunkBackground(backgroundTodo)
 
     // Put a time marker roughly every 20 chunks.
     let expected = duration / chunks.length * 20;
@@ -286,6 +226,7 @@ class View {
     this.drawOverview();
     this.redraw();
   }
+
 
   handleChunkMouseMove(event) {
     if (this.isLocked) return false;
@@ -306,73 +247,14 @@ class View {
     this.isLocked = true;
     let chunk = event.target.chunk;
     if (!chunk) return;
-    this.transitionView.showMaps(chunk.getUniqueTransitions());
-  }
-
-  asyncSetTimelineChunkBackground(backgroundTodo) {
-    const kIncrement = 100;
-    let start = 0;
-    let delay = 1;
-    while (start < backgroundTodo.length) {
-      let end = Math.min(start + kIncrement, backgroundTodo.length);
-      setTimeout((from, to) => {
-        for (let i = from; i < to; i++) {
-          let [chunk, node] = backgroundTodo[i];
-          this.setTimelineChunkBackground(chunk, node);
-        }
-      }, delay++, start, end);
-      start = end;
-    }
-  }
-
-  setTimelineChunkBackground(chunk, node) {
-    // Render the types of transitions as bar charts
-    const kHeight = chunk.height;
-    const kWidth = 1;
-    this.backgroundCanvas.width = kWidth;
-    this.backgroundCanvas.height = kHeight;
-    let ctx = this.backgroundCanvas.getContext('2d');
-    ctx.clearRect(0, 0, kWidth, kHeight);
-    let y = 0;
-    let total = chunk.size();
-    let type, count;
-    if (true) {
-      chunk.getTransitionBreakdown().forEach(([type, count]) => {
-        ctx.fillStyle = transitionTypeToColor(type);
-        let height = count / total * kHeight;
-        ctx.fillRect(0, y, kWidth, y + height);
-        y += height;
-      });
-    } else {
-      chunk.items.forEach(map => {
-        ctx.fillStyle = transitionTypeToColor(map.getType());
-        let y = chunk.yOffset(map);
-        ctx.fillRect(0, y, kWidth, y + 1);
-      });
-    }
-
-    let imageData = this.backgroundCanvas.toDataURL('image/webp', 0.2);
-    node.style.backgroundImage = 'url(' + imageData + ')';
-  }
-
-  updateOverviewWindow() {
-    let indicator = this.timelinePanel_.timelineOverviewIndicator;
-    let totalIndicatorWidth =
-        this.timelinePanel_.timelineOverview.offsetWidth;
-    let div = this.timelinePanel_.timeline;
-    let timelineTotalWidth =
-        this.timelinePanel_.timelineCanvas.offsetWidth;
-    let factor = totalIndicatorWidth / timelineTotalWidth;
-    let width = div.offsetWidth * factor;
-    let left = div.scrollLeft * factor;
-    indicator.style.width = width + 'px';
-    indicator.style.left = left + 'px';
+    this.mapPanel_.showMaps(chunk.getUniqueTransitions());
   }
 
   drawOverview() {
     const height = 50;
     const kFactor = 2;
-    let canvas = this.backgroundCanvas;
+    //let canvas = this.backgroundCanvas;
+    let canvas = this.timelinePanel_.backgroundCanvas;
     canvas.height = height;
     canvas.width = window.innerWidth;
     let ctx = canvas.getContext('2d');
@@ -534,165 +416,4 @@ class View {
   }
 }
 
-class TransitionView {
-  constructor(state, node) {
-    this.state = state;
-    this.container = node;
-    this.currentNode = node;
-    this.currentMap = undefined;
-  }
-
-  selectMap(map) {
-    this.currentMap = map;
-    this.state.map = map;
-  }
-
-  showMap(map) {
-    if (this.currentMap === map) return;
-    this.currentMap = map;
-    this._showMaps([map]);
-  }
-
-  showMaps(list, name) {
-    this.state.view.isLocked = true;
-    this._showMaps(list);
-  }
-
-  _showMaps(list, name) {
-    // Hide the container to avoid any layouts.
-    this.container.style.display = 'none';
-    removeAllChildren(this.container);
-    list.forEach(map => this.addMapAndParentTransitions(map));
-    this.container.style.display = ''
-  }
-
-  addMapAndParentTransitions(map) {
-    if (map === void 0) return;
-    this.currentNode = this.container;
-    let parents = map.getParents();
-    if (parents.length > 0) {
-      this.addTransitionTo(parents.pop());
-      parents.reverse().forEach(each => this.addTransitionTo(each));
-    }
-    let mapNode = this.addSubtransitions(map);
-    // Mark and show the selected map.
-    mapNode.classList.add('selected');
-    if (this.selectedMap == map) {
-      setTimeout(
-          () => mapNode.scrollIntoView(
-              {behavior: 'smooth', block: 'nearest', inline: 'nearest'}),
-          1);
-    }
-  }
-
-  addMapNode(map) {
-    let node = div('map');
-    if (map.edge) node.style.backgroundColor = map.edge.getColor();
-    node.map = map;
-    node.addEventListener('click', () => this.selectMap(map));
-    if (map.children.length > 1) {
-      node.innerText = map.children.length;
-      let showSubtree = div('showSubtransitions');
-      showSubtree.addEventListener('click', (e) => this.toggleSubtree(e, node));
-      node.appendChild(showSubtree);
-    } else if (map.children.length == 0) {
-      node.innerHTML = '&#x25CF;'
-    }
-    this.currentNode.appendChild(node);
-    return node;
-  }
-
-  addSubtransitions(map) {
-    let mapNode = this.addTransitionTo(map);
-    // Draw outgoing linear transition line.
-    let current = map;
-    while (current.children.length == 1) {
-      current = current.children[0].to;
-      this.addTransitionTo(current);
-    }
-    return mapNode;
-  }
-
-  addTransitionEdge(map) {
-    let classes = ['transitionEdge'];
-    let edge = div(classes);
-    edge.style.backgroundColor = map.edge.getColor();
-    let labelNode = div('transitionLabel');
-    labelNode.innerText = map.edge.toString();
-    edge.appendChild(labelNode);
-    return edge;
-  }
-
-  addTransitionTo(map) {
-    // transition[ transitions[ transition[...], transition[...], ...]];
-
-    let transition = div('transition');
-    if (map.isDeprecated()) transition.classList.add('deprecated');
-    if (map.edge) {
-      transition.appendChild(this.addTransitionEdge(map));
-    }
-    let mapNode = this.addMapNode(map);
-    transition.appendChild(mapNode);
-
-    let subtree = div('transitions');
-    transition.appendChild(subtree);
-
-    this.currentNode.appendChild(transition);
-    this.currentNode = subtree;
-
-    return mapNode;
-  }
-
-  toggleSubtree(event, node) {
-    let map = node.map;
-    event.target.classList.toggle('opened');
-    let transitionsNode = node.parentElement.querySelector('.transitions');
-    let subtransitionNodes = transitionsNode.children;
-    if (subtransitionNodes.length <= 1) {
-      // Add subtransitions excepth the one that's already shown.
-      let visibleTransitionMap = subtransitionNodes.length == 1 ?
-          transitionsNode.querySelector('.map').map :
-          void 0;
-      map.children.forEach(edge => {
-        if (edge.to != visibleTransitionMap) {
-          this.currentNode = transitionsNode;
-          this.addSubtransitions(edge.to);
-        }
-      });
-    } else {
-      // remove all but the first (currently selected) subtransition
-      for (let i = subtransitionNodes.length - 1; i > 0; i--) {
-        transitionsNode.removeChild(subtransitionNodes[i]);
-      }
-    }
-  }
-}
-
-// =========================================================================
-
-function transitionTypeToColor(type) {
-  switch (type) {
-    case 'new':
-      // green
-      return '#aedc6e';
-    case 'Normalize':
-      // violet
-      return '#d26edc';
-    case 'SlowToFast':
-      // orange
-      return '#dc9b6e';
-    case 'InitialMap':
-      // yellow
-      return '#EEFF41';
-    case 'Transition':
-      // pink/violet (primary)
-      return '#9B6EDC';
-    case 'ReplaceDescriptors':
-      // red
-      return '#dc6eae';
-  }
-  // pink/violet (primary)
-  return '#9B6EDC';
-}
-
-export { State, div, table, tr, td};
+export { State };
