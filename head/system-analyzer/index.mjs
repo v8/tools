@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import CustomIcProcessor from "./ic-processor.mjs";
-import {State} from './map-model.mjs';
+import {State} from './app-model.mjs';
 import {MapProcessor} from './map-processor.mjs';
 import './ic-panel.mjs';
 import './timeline-panel.mjs';
@@ -17,11 +17,35 @@ class App {
     this.icPanelId_ =  icPanelId;
     this.icPanel_ = this.$(icPanelId);
     document.addEventListener('keydown', e => this.handleKeyDown(e));
+    this.icPanel_.addEventListener(
+      'ictimefilter', e => this.handleICTimeFilter(e));
+    this.icPanel_.addEventListener(
+      'mapclick', e => this.handleMapClick(e));
+    this.icPanel_.addEventListener(
+      'filepositionclick', e => this.handleFilePositionClick(e));
+    this.entries = undefined;
   }
+
+  handleMapClick(e) {
+     //TODO(zcankara) Direct the event based on the key and value
+     console.log("map: ", e.detail.key);
+  }
+  handleFilePositionClick(e) {
+    //TODO(zcankara) Direct the event based on the key and value
+    console.log("filePosition: ", e.detail.key);
+  }
+
+  handleICTimeFilter(event) {
+    let filteredEntries =  this.entries.filter(
+      e => e.time >= event.detail.startTime && e.time <= event.detail.endTime);
+    console.log("filtered entries: ", filteredEntries);
+    this.icPanel_.filteredEntries = filteredEntries;
+  }
+
 
   $(id) { return document.querySelector(id); }
 
-    handleKeyDown(event) {
+  handleKeyDown(event) {
     let nav = document.state.navigation;
     switch(event.key) {
       case "ArrowUp":
@@ -68,7 +92,8 @@ class App {
       let icProcessor = new CustomIcProcessor();
       icProcessor.processString(fileData.chunk);
       let entries = icProcessor.entries;
-      this.icPanel_.entries = entries;
+      this.entries = entries;
+      this.icPanel_.filteredEntries = entries;
       this.icPanel_.count.innerHTML = entries.length;
     }
     reader.readAsText(fileData.file);
@@ -96,8 +121,7 @@ class App {
   }
 
   handleShowMaps(e) {
-    //document.state.view.transitionView.showMaps(e.detail);
-    document.state.mapPanel.showMaps(e.detail);
+    document.state.mapPanel.mapEntries = e.detail;
   }
 
   handleSelectIc(e){
