@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {Event} from './event.mjs';
+import {Timeline} from './timeline.mjs';
+
 /**
  * Parser for dynamic code optimization state.
  */
@@ -174,9 +177,9 @@ IcProcessor.kProperties = [
 ];
 
 class CustomIcProcessor extends IcProcessor {
+  #timeline = new Timeline();
   constructor() {
     super();
-    this.entries = [];
   }
 
   functionName(pc) {
@@ -188,18 +191,28 @@ class CustomIcProcessor extends IcProcessor {
       type, pc, time, line, column, old_state, new_state, map, key, modifier,
       slow_reason) {
     let fnName = this.functionName(pc);
-    this.entries.push(new Entry(
-        type, fnName, time, line, column, key, old_state, new_state, map,
-        slow_reason));
+    let entry = new Entry(
+      type, fnName, time, line, column, key, old_state, new_state, map,
+      slow_reason);
+    this.#timeline.push(entry);
+  }
+
+
+  get timeline(){
+    return this.#timeline;
+  }
+
+  processString(string) {
+    super.processString(string);
+    return this.timeline;
   }
 };
 
-class Entry {
+class Entry extends Event {
   constructor(
       type, fn_file, time, line, column, key, oldState, newState, map, reason,
       additional) {
-    this.time = time;
-    this.type = type;
+    super(type, time);
     this.category = 'other';
     if (this.type.indexOf('Store') !== -1) {
       this.category = 'Store';
@@ -219,6 +232,7 @@ class Entry {
     this.reason = reason;
     this.additional = additional;
   }
+
 
   parseMapProperties(parts, offset) {
     let next = parts[++offset];
