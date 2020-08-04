@@ -6,6 +6,7 @@ import {V8CustomElement, defineCustomElement} from '../helper.mjs';
 defineCustomElement('./map-panel/map-transitions', (templateText) =>
  class MapTransitions extends V8CustomElement {
   #map;
+  #mapEntries;
   constructor() {
     super(templateText);
     this.transitionView.addEventListener(
@@ -45,7 +46,7 @@ defineCustomElement('./map-panel/map-transitions', (templateText) =>
     this.dispatchEvent(new CustomEvent(
       'mapdetailsupdate', {bubbles: true, composed: true, detail: map}));
     this.dispatchEvent(new CustomEvent(
-      'statemapchange', {bubbles: true, composed: true, detail: map}));
+      'mapchange', {bubbles: true, composed: true, detail: map}));
   }
 
   dblClickSelectMap(map) {
@@ -72,12 +73,12 @@ defineCustomElement('./map-panel/map-transitions', (templateText) =>
   }
 
   set mapEntries(list){
-    this._mapEntries = list;
+    this.#mapEntries = list;
     this.showMaps();
   }
 
   get mapEntries(){
-    return this._mapEntries;
+    return this.#mapEntries;
   }
 
   addMapAndParentTransitions(map) {
