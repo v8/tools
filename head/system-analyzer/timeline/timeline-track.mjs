@@ -5,6 +5,7 @@
 import {defineCustomElement, V8CustomElement,
   transitionTypeToColor, CSSColor} from '../helper.mjs';
 import {kChunkWidth, kChunkHeight} from '../map-processor.mjs';
+import {SelectionEvent, SelectEvent} from '../events.mjs';
 
 defineCustomElement('./timeline/timeline-track', (templateText) =>
   class TimelineTrack extends V8CustomElement {
@@ -14,6 +15,8 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
     #selectedEntry;
     constructor() {
       super(templateText);
+      this.timeline.addEventListener("scroll",
+        e => this.handleTimelineScroll(e));
       this.backgroundCanvas = document.createElement('canvas');
       this.isLocked = false;
     }
@@ -67,13 +70,17 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       return this.#selectedEntry;
     }
 
+    set scrollLeft(offset){
+      this.timeline.scrollLeft = offset;
+    }
+
     updateStats(){
       let unique = new Map();
       for (const entry of this.data.all) {
         if(!unique.has(entry.type)) {
-          unique.set(entry.type, 1);
+          unique.set(entry.type, [entry]);
         } else {
-          unique.set(entry.type, unique.get(entry.type) + 1);
+          unique.get(entry.type).push(entry);
         }
       }
       this.renderStatsWindow(unique);
@@ -84,23 +91,35 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       this.removeAllChildren(timelineLegendContent);
       let fragment = document.createDocumentFragment();
       let colorIterator = 0;
-      unique.forEach((key, val) => {
+      unique.forEach((entries, type) => {
         let dt = document.createElement("dt");
-        dt.innerHTML = key;
-        dt.style.backgroundColor = transitionTypeToColor(val);
+        dt.innerHTML = entries.length;
+        dt.style.backgroundColor = transitionTypeToColor(type);
         dt.style.color = CSSColor.surfaceColor;
         fragment.appendChild(dt);
         let dd = document.createElement("dd");
-        dd.innerHTML = val;
+        dd.innerHTML = type;
+        dd.entries = entries;
+        dd.addEventListener('dblclick', e => this.handleEntryTypeDblClick(e));
         fragment.appendChild(dd);
         colorIterator += 1;
       });
       timelineLegendContent.appendChild(fragment);
     }
 
-    // TODO(zcankara) Emit event and handle data in timeline track
-    handleTimelineIndicatorMove(offset) {
+    handleEntryTypeDblClick(e){
+      this.dispatchEvent(new SelectionEvent(e.target.entries));
+    }
+
+    timelineIndicatorMove(offset) {
       this.timeline.scrollLeft += offset;
+    }
+
+    handleTimelineScroll(e){
+      let horizontal = e.currentTarget.scrollLeft;
+      this.dispatchEvent(new CustomEvent(
+        'scrolltrack', {bubbles: true, composed: true,
+          detail: horizontal}));
     }
 
     asyncSetTimelineChunkBackground(backgroundTodo) {
@@ -207,8 +226,7 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       let relativeIndex =
           Math.round(event.layerY / event.target.offsetHeight * chunk.size());
       let map = chunk.at(relativeIndex);
-      this.dispatchEvent(new CustomEvent(
-        'mapchange', {bubbles: true, composed: true, detail: map}));
+      this.dispatchEvent(new SelectEvent(map));
     }
 
     handleChunkClick(event) {
@@ -219,8 +237,8 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       this.isLocked = true;
       let chunk = event.target.chunk;
       if (!chunk) return;
-      this.dispatchEvent(new CustomEvent(
-        'showmaps', {bubbles: true, composed: true, detail: chunk}));
+      let maps = chunk.filter();
+      this.dispatchEvent(new SelectionEvent(maps));
     }
 
     drawOverview() {

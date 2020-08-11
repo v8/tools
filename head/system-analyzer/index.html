@@ -54,7 +54,7 @@ found in the LICENSE file. -->
     display:none;
   }
   .slider {
-    background-color: var(--on-surface-color);
+    background-color: var(--primary-color);
     bottom: 0;
     cursor: pointer;
     left: 0;
@@ -109,7 +109,7 @@ globalThis.app = new App("#log-file-reader", "#map-panel", "#timeline-panel",
         <timeline-track id="map-track"></timeline-track>
         <timeline-track id="ic-track"></timeline-track>
       </timeline-panel>
-      <map-panel id="map-panel" onclick="app.handleMapAddressSearch(event)" onchange="app.handleShowMaps(event)"></map-panel>
+      <map-panel id="map-panel"></map-panel>
       <ic-panel id="ic-panel" onchange="app.handleSelectIc(event)"></ic-panel>
     </div>
   </div>

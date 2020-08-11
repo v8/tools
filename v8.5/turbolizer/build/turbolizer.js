@@ -2573,7 +2573,7 @@
     event.stopImmediatePropagation();
   }
 
-  function dragDisable(view) {
+  function nodrag(view) {
     var root = view.document.documentElement,
         selection$$1 = select(view).on("dragstart.drag", noevent, true);
     if ("onselectstart" in root) {
@@ -2670,7 +2670,7 @@
       var gesture = beforestart("mouse", container.apply(this, arguments), mouse, this, arguments);
       if (!gesture) return;
       select(event.view).on("mousemove.drag", mousemoved, true).on("mouseup.drag", mouseupped, true);
-      dragDisable(event.view);
+      nodrag(event.view);
       nopropagation();
       mousemoving = false;
       mousedownx = event.clientX;
@@ -7379,7 +7379,7 @@
           x0 = event.clientX,
           y0 = event.clientY;
 
-      dragDisable(event.view);
+      nodrag(event.view);
       nopropagation$2();
       g.mouse = [p, this.__zoom.invert(p)];
       interrupt(this);
