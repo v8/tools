@@ -6,69 +6,100 @@ found in the LICENSE file. -->
   <link href="./index.css" rel="stylesheet">
 </head>
 <style>
-#timeline {
-  position: relative;
-  height: 300px;
-  overflow-y: hidden;
-  overflow-x: scroll;
-  user-select: none;
-  background-color: var(--timeline-background-color);
-  box-shadow: 0 19px 38px rgba(0,0,0,0.30), 0 15px 12px rgba(0,0,0,0.22);
-}
-#timelineLabel {
-  transform: rotate(90deg);
-  transform-origin: left bottom 0;
-  position: absolute;
-  left: 0;
-  width: 250px;
-  text-align: center;
-  font-size: 10px;
-  opacity: 0.5;
-}
-#timelineChunks {
-  height: 250px;
-  position: absolute;
-  margin-right: 100px;
-}
-#timelineCanvas {
-  height: 250px;
-  position: relative;
-  overflow: visible;
-  pointer-events: none;
-}
-.chunk {
-  width: 6px;
-  border: 0px var(--timeline-background-color) solid;
-  border-width: 0 2px 0 2px;
-  position: absolute;
-  background-size: 100% 100%;
-  image-rendering: pixelated;
-  bottom: 0px;
-}
-.timestamp {
-  height: 250px;
-  width: 100px;
-  border-left: 1px var(--surface-color) dashed;
-  padding-left: 4px;
-  position: absolute;
-  pointer-events: none;
-  font-size: 10px;
-  opacity: 0.5;
-}
-#timelineLegend {
-  position: relative;
-  float: right;
-  text-align: center;
-}
-.timeline {
-  background-color: var(--timeline-background-color);
-}
+  #timeline {
+    position: relative;
+    height: 300px;
+    overflow-y: hidden;
+    overflow-x: scroll;
+    user-select: none;
+    background-color: var(--timeline-background-color);
+  }
+
+  #timeline::-webkit-scrollbar {
+    width: 0;
+    background-color: transparent;
+  }
+
+  #timelineLabel {
+    transform: rotate(90deg);
+    transform-origin: left bottom 0;
+    position: absolute;
+    left: 0;
+    width: 250px;
+    text-align: center;
+    font-size: 10px;
+    opacity: 0.5;
+  }
+
+  #timelineChunks {
+    height: 250px;
+    position: absolute;
+    margin-right: 100px;
+  }
+
+  #timelineCanvas {
+    height: 250px;
+    position: relative;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .chunk {
+    width: 6px;
+    border: 0px var(--timeline-background-color) solid;
+    border-width: 0 2px 0 2px;
+    position: absolute;
+    background-size: 100% 100%;
+    image-rendering: pixelated;
+    bottom: 0px;
+  }
+
+  .timestamp {
+    height: 250px;
+    width: 100px;
+    border-left: 1px var(--surface-color) dashed;
+    padding-left: 4px;
+    position: absolute;
+    pointer-events: none;
+    font-size: 10px;
+    opacity: 0.5;
+  }
+
+  #legend {
+    position: relative;
+    float: right;
+    text-align: center;
+    width: 100%;
+    max-width: 280px;
+    padding-left: 20px;
+    padding-top: 10px;
+  }
+
+  th,
+  td {
+    width: 200px;
+    text-align: center;
+    padding: 5px;
+  }
+
+  .timeline {
+    background-color: var(--timeline-background-color);
+  }
 </style>
 <div class="timeline">
-  <div id="timelineLegend">
-    <p>Category</p>
-    <dl id="timelineLegendContent" style="float:right; padding:20px">
-    </dl>
+  <div id="legend">
+    <table>
+      <thead>
+        <tr>
+          <td>Color</td>
+          <td>Type</td>
+          <td>Count</td>
+          <td>Percent</td>
+        </tr>
+      </thead>
+      <tbody id="legendContent">
+      </tbody>
+    </table>
   </div>
   <div id="timeline">
     <div id="timelineLabel">Frequency</div>
