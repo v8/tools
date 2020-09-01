@@ -52,7 +52,7 @@ print(BRANCHES)
 
 
 
-for branch in BRANCHES:
+for branch in BRANCHES_FORCE_BUILDS:
     step(f'Importing web tools from branch: {branch}')
     if branch == 'lkgr':
         version_name = 'head'
