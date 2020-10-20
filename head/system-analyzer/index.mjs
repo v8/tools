@@ -2,45 +2,50 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 import { SelectionEvent, FocusEvent, SelectTimeEvent } from "./events.mjs";
 import { State } from "./app-model.mjs";
-import { MapLogEvent } from "./log/map.mjs";
-import { IcLogEvent } from "./log/ic.mjs";
-import Processor from "./processor.mjs";
+import { MapLogEntry } from "./log/map.mjs";
+import { IcLogEntry } from "./log/ic.mjs";
+import { Processor } from "./processor.mjs";
+import { SourcePosition } from  "../profile.mjs";
 import { $ } from "./helper.mjs";
 import "./ic-panel.mjs";
 import "./timeline-panel.mjs";
 import "./map-panel.mjs";
 import "./log-file-reader.mjs";
 import "./source-panel.mjs";
+
+
 class App {
-  #state;
-  #view;
-  #navigation;
+  _state;
+  _view;
+  _navigation;
   constructor(fileReaderId, mapPanelId, timelinePanelId,
-    icPanelId, mapTrackId, icTrackId, sourcePanelId) {
-    this.#view = {
+    icPanelId, mapTrackId, icTrackId, deoptTrackId, sourcePanelId) {
+    this._view = {
       logFileReader: $(fileReaderId),
       icPanel: $(icPanelId),
       mapPanel: $(mapPanelId),
       timelinePanel: $(timelinePanelId),
       mapTrack: $(mapTrackId),
       icTrack: $(icTrackId),
+      deoptTrack: $(deoptTrackId),
       sourcePanel: $(sourcePanelId)
     };
-    this.#state = new State();
-    this.#navigation = new Navigation(this.#state, this.#view);
+    this._state = new State();
+    this._navigation = new Navigation(this._state, this._view);
     document.addEventListener('keydown',
-      e => this.#navigation.handleKeyDown(e));
+      e => this._navigation.handleKeyDown(e));
     this.toggleSwitch = $('.theme-switch input[type="checkbox"]');
     this.toggleSwitch.addEventListener("change", (e) => this.switchTheme(e));
-    this.#view.logFileReader.addEventListener("fileuploadstart", (e) =>
+    this._view.logFileReader.addEventListener("fileuploadstart", (e) =>
       this.handleFileUpload(e)
     );
-    this.#view.logFileReader.addEventListener("fileuploadend", (e) =>
+    this._view.logFileReader.addEventListener("fileuploadend", (e) =>
       this.handleDataUpload(e)
     );
-    Object.entries(this.#view).forEach(([_, panel]) => {
+    Object.entries(this._view).forEach(([_, panel]) => {
       panel.addEventListener(SelectionEvent.name,
         e => this.handleShowEntries(e));
       panel.addEventListener(FocusEvent.name,
@@ -50,9 +55,9 @@ class App {
     });
   }
   handleShowEntries(e) {
-    if (e.entries[0] instanceof MapLogEvent) {
+    if (e.entries[0] instanceof MapLogEntry) {
       this.showMapEntries(e.entries);
-    } else if (e.entries[0] instanceof IcLogEvent) {
+    } else if (e.entries[0] instanceof IcLogEntry) {
       this.showIcEntries(e.entries);
     } else if (e.entries[0] instanceof SourcePosition) {
       this.showSourcePositionEntries(e.entries);
@@ -61,63 +66,65 @@ class App {
     }
   }
   showMapEntries(entries) {
-    this.#state.selectedMapLogEvents = entries;
-    this.#view.mapPanel.selectedMapLogEvents = this.#state.selectedMapLogEvents;
+    this._state.selectedMapLogEntries = entries;
+    this._view.mapPanel.selectedMapLogEntries = this.#state.selectedMapLogEntries;
   }
   showIcEntries(entries) {
-    this.#state.selectedIcLogEvents = entries;
-    this.#view.icPanel.selectedLogEvents = this.#state.selectedIcLogEvents;
+    this._state.selectedIcLogEntries = entries;
+    this._view.icPanel.selectedLogEntries = this.#state.selectedIcLogEntries;
   }
   showSourcePositionEntries(entries) {
     //TODO(zcankara) Handle multiple source position selection events
-    this.#view.sourcePanel.selectedSourcePositions = entries;
+    this._view.sourcePanel.selectedSourcePositions = entries;
   }
 
   handleTimeRangeSelect(e) {
     this.selectTimeRange(e.start, e.end);
   }
   handleShowEntryDetail(e) {
-    if (e.entry instanceof MapLogEvent) {
-      this.selectMapLogEvent(e.entry);
-    } else if (e.entry instanceof IcLogEvent) {
-      this.selectICLogEvent(e.entry);
+    if (e.entry instanceof MapLogEntry) {
+      this.selectMapLogEntry(e.entry);
+    } else if (e.entry instanceof IcLogEntry) {
+      this.selectICLogEntry(e.entry);
     } else if (e.entry instanceof SourcePosition) {
-      this.selectSourcePositionEvent(e.entry);
+      this.selectSourcePosition(e.entry);
     } else {
       throw new Error("Unknown selection type!");
     }
   }
   selectTimeRange(start, end) {
-    this.#state.timeSelection.start = start;
-    this.#state.timeSelection.end = end;
-    this.#state.icTimeline.selectTimeRange(start, end);
-    this.#state.mapTimeline.selectTimeRange(start, end);
-    this.#view.mapPanel.selectedMapLogEvents =
-      this.#state.mapTimeline.selection;
-    this.#view.icPanel.selectedLogEvents = this.#state.icTimeline.selection;
+    this._state.timeSelection.start = start;
+    this._state.timeSelection.end = end;
+    this._state.icTimeline.selectTimeRange(start, end);
+    this._state.mapTimeline.selectTimeRange(start, end);
+    this._view.mapPanel.selectedMapLogEntries =
+      this._state.mapTimeline.selection;
+    this._view.icPanel.selectedLogEntries = this._state.icTimeline.selection;
   }
-  selectMapLogEvent(entry) {
-    this.#state.map = entry;
-    this.#view.mapTrack.selectedEntry = entry;
-    this.#view.mapPanel.map = entry;
+  selectMapLogEntry(entry) {
+    this._state.map = entry;
+    this._view.mapTrack.selectedEntry = entry;
+    this._view.mapPanel.map = entry;
   }
-  selectICLogEvent(entry) {
-    this.#state.ic = entry;
-    this.#view.icPanel.selectedLogEvents = [entry];
+  selectICLogEntry(entry) {
+    this._state.ic = entry;
+    this._view.icPanel.selectedLogEntries = [entry];
   }
-  selectSourcePositionEvent(sourcePositions) {
+  selectSourcePosition(sourcePositions) {
     if (!sourcePositions.script) return;
-    this.#view.sourcePanel.selectedSourcePositions = [sourcePositions];
+    this._view.sourcePanel.selectedSourcePositions = [sourcePositions];
   }
 
   handleFileUpload(e) {
     this.restartApp();
     $("#container").className = "initial";
   }
+
   restartApp() {
-    this.#state = new State();
-    this.#navigation = new Navigation(this.#state, this.#view);
+    this._state = new State();
+    this._navigation = new Navigation(this._state, this._view);
   }
+
   // Event log processing
   handleLoadTextProcessor(text) {
     let logProcessor = new Processor();
@@ -134,25 +141,26 @@ class App {
     const processor = this.handleLoadTextProcessor(fileData.chunk);
     const mapTimeline = processor.mapTimeline;
     const icTimeline = processor.icTimeline;
-    //TODO(zcankara) Make sure only one instance of src event map ic id match
+    const deoptTimeline = processor.deoptTimeline;
     // Load map log events timeline.
-    this.#state.mapTimeline = mapTimeline;
+    this._state.mapTimeline = mapTimeline;
     // Transitions must be set before timeline for stats panel.
-    this.#view.mapPanel.transitions = this.#state.mapTimeline.transitions;
-    this.#view.mapTrack.data = mapTimeline;
-    this.#state.chunks = this.#view.mapTrack.chunks;
-    this.#view.mapPanel.timeline = mapTimeline;
+    this._view.mapPanel.transitions = this._state.mapTimeline.transitions;
+    this._view.mapTrack.data = mapTimeline;
+    this._state.chunks = this._view.mapTrack.chunks;
+    this._view.mapPanel.timeline = mapTimeline;
     // Load ic log events timeline.
-    this.#state.icTimeline = icTimeline;
-    this.#view.icPanel.timeline = icTimeline;
-    this.#view.icTrack.data = icTimeline;
-    this.#view.sourcePanel.data = processor.scripts
+    this._state.icTimeline = icTimeline;
+    this._view.icPanel.timeline = icTimeline;
+    this._view.icTrack.data = icTimeline;
+    this._view.deoptTrack.data = deoptTimeline;
+    this._view.sourcePanel.data = processor.scripts
     this.fileLoaded = true;
   }
 
   refreshTimelineTrackView() {
-    this.#view.mapTrack.data = this.#state.mapTimeline;
-    this.#view.icTrack.data = this.#state.icTimeline;
+    this._view.mapTrack.data = this._state.mapTimeline;
+    this._view.icTrack.data = this._state.icTimeline;
   }
 
   switchTheme(event) {
@@ -166,10 +174,10 @@ class App {
 }
 
 class Navigation {
-  #view;
+  _view;
   constructor(state, view) {
     this.state = state;
-    this.#view = view;
+    this._view = view;
   }
   get map() {
     return this.state.map
@@ -181,34 +189,34 @@ class Navigation {
     return this.state.chunks
   }
   increaseTimelineResolution() {
-    this.#view.timelinePanel.nofChunks *= 1.5;
+    this._view.timelinePanel.nofChunks *= 1.5;
     this.state.nofChunks *= 1.5;
   }
   decreaseTimelineResolution() {
-    this.#view.timelinePanel.nofChunks /= 1.5;
+    this._view.timelinePanel.nofChunks /= 1.5;
     this.state.nofChunks /= 1.5;
   }
   selectNextEdge() {
     if (!this.map) return;
     if (this.map.children.length != 1) return;
     this.map = this.map.children[0].to;
-    this.#view.mapTrack.selectedEntry = this.map;
+    this._view.mapTrack.selectedEntry = this.map;
     this.updateUrl();
-    this.#view.mapPanel.map = this.map;
+    this._view.mapPanel.map = this.map;
   }
   selectPrevEdge() {
     if (!this.map) return;
     if (!this.map.parent()) return;
     this.map = this.map.parent();
-    this.#view.mapTrack.selectedEntry = this.map;
+    this._view.mapTrack.selectedEntry = this.map;
     this.updateUrl();
-    this.#view.mapPanel.map = this.map;
+    this._view.mapPanel.map = this.map;
   }
   selectDefaultMap() {
     this.map = this.chunks[0].at(0);
-    this.#view.mapTrack.selectedEntry = this.map;
+    this._view.mapTrack.selectedEntry = this.map;
     this.updateUrl();
-    this.#view.mapPanel.map = this.map;
+    this._view.mapPanel.map = this.map;
   }
   moveInChunks(next) {
     if (!this.map) return this.selectDefaultMap();
@@ -223,9 +231,9 @@ class Navigation {
     if (!chunk) return;
     index = Math.min(index, chunk.size() - 1);
     this.map = chunk.at(index);
-    this.#view.mapTrack.selectedEntry = this.map;
+    this._view.mapTrack.selectedEntry = this.map;
     this.updateUrl();
-    this.#view.mapPanel.map = this.map;
+    this._view.mapPanel.map = this.map;
   }
   moveInChunk(delta) {
     if (!this.map) return this.selectDefaultMap();
@@ -241,9 +249,9 @@ class Navigation {
       map = chunk.at(index);
     }
     this.map = map;
-    this.#view.mapTrack.selectedEntry = this.map;
+    this._view.mapTrack.selectedEntry = this.map;
     this.updateUrl();
-    this.#view.mapPanel.map = this.map;
+    this._view.mapPanel.map = this.map;
   }
   updateUrl() {
     let entries = this.state.entries;

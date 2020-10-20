@@ -8,8 +8,8 @@ defineCustomElement(
   "./map-panel/map-transitions",
   (templateText) =>
     class MapTransitions extends V8CustomElement {
-      #map;
-      #selectedMapLogEvents;
+      _map;
+      _selectedMapLogEntries;
       constructor() {
         super(templateText);
         this.transitionView.addEventListener("mousemove", (e) =>
@@ -32,7 +32,7 @@ defineCustomElement(
       }
 
       set map(value) {
-        this.#map = value;
+        this._map = value;
         this.showMap();
       }
 
@@ -57,28 +57,28 @@ defineCustomElement(
 
       showMap() {
         // Called when a map selected
-        if (this.currentMap === this.#map) return;
-        this.currentMap = this.#map;
-        this.selectedMapLogEvents = [this.#map];
-        this.dispatchEvent(new FocusEvent(this.#map));
+        if (this.currentMap === this._map) return;
+        this.currentMap = this._map;
+        this.selectedMapLogEntries = [this._map];
+        this.dispatchEvent(new FocusEvent(this._map));
       }
 
       showMaps() {
         // Timeline dbl click to show map transitions of selected maps
         this.transitionView.style.display = "none";
         this.removeAllChildren(this.transitionView);
-        this.selectedMapLogEvents.forEach((map) =>
+        this.selectedMapLogEntries.forEach((map) =>
           this.addMapAndParentTransitions(map));
         this.transitionView.style.display = "";
       }
 
-      set selectedMapLogEvents(list) {
-        this.#selectedMapLogEvents = list;
+      set selectedMapLogEntries(list) {
+        this._selectedMapLogEntries = list;
         this.showMaps();
       }
 
-      get selectedMapLogEvents() {
-        return this.#selectedMapLogEvents;
+      get selectedMapLogEntries() {
+        return this._selectedMapLogEntries;
       }
 
       addMapAndParentTransitions(map) {

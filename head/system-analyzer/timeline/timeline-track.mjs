@@ -4,7 +4,7 @@
 
 import {
   defineCustomElement, V8CustomElement,
-  typeToColor, CSSColor
+  kColors, CSSColor
 } from '../helper.mjs';
 import { kChunkWidth, kChunkHeight } from "../log/map.mjs";
 import {
@@ -14,16 +14,18 @@ import {
 
 defineCustomElement('./timeline/timeline-track', (templateText) =>
   class TimelineTrack extends V8CustomElement {
-    static SELECTION_OFFSET = 20;
-    #timeline;
-    #nofChunks = 400;
-    #chunks;
-    #selectedEntry;
-    #timeToPixel;
-    #timeSelection = { start: 0, end: Infinity };
-    #isSelected = false;
-    #timeStartOffset;
-    #mouseDownTime;
+    // TODO turn into static field once Safari supports it.
+    static get SELECTION_OFFSET() { return 20 };
+    _timeline;
+    _nofChunks = 400;
+    _chunks;
+    _selectedEntry;
+    _timeToPixel;
+    _timeSelection = { start: 0, end: Infinity };
+    _isSelected = false;
+    _timeStartOffset;
+    _mouseDownTime;
+    _typeToColor;
     constructor() {
       super(templateText);
       this.timeline.addEventListener("scroll",
@@ -40,13 +42,14 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
 
     handleTimeSelectionMouseDown(e) {
       if (e.target.className === "chunk") return;
-      this.#isSelected = true;
-      this.#mouseDownTime = this.positionToTime(e.clientX);
+      this._isSelected = true;
+      this._mouseDownTime = this.positionToTime(e.clientX);
     }
+
     handleTimeSelectionMouseMove(e) {
-      if (!this.#isSelected) return;
+      if (!this._isSelected) return;
       let mouseMoveTime = this.positionToTime(e.clientX);
-      let startTime = this.#mouseDownTime;
+      let startTime = this._mouseDownTime;
       let endTime = mouseMoveTime;
       if (this.isOnLeftHandle(e.clientX)) {
         startTime = mouseMoveTime;
@@ -59,39 +62,42 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
         Math.min(startTime, endTime),
         Math.max(startTime, endTime)));
     }
+
     handleTimeSelectionMouseUp(e) {
-      this.#isSelected = false;
-      this.dispatchEvent(new SelectTimeEvent(this.#timeSelection.start,
-        this.#timeSelection.end));
+      this._isSelected = false;
+      this.dispatchEvent(new SelectTimeEvent(this._timeSelection.start,
+        this._timeSelection.end));
     }
+
     isOnLeftHandle(posX) {
       return (Math.abs(this.leftHandlePosX - posX)
         <= TimelineTrack.SELECTION_OFFSET);
     }
+
     isOnRightHandle(posX) {
       return (Math.abs(this.rightHandlePosX - posX)
         <= TimelineTrack.SELECTION_OFFSET);
     }
 
-
     set startTime(value) {
       console.assert(
-        value <= this.#timeSelection.end,
+        value <= this._timeSelection.end,
         "Selection start time greater than end time!");
-      this.#timeSelection.start = value;
+      this._timeSelection.start = value;
       this.updateSelection();
     }
+
     set endTime(value) {
       console.assert(
-        value > this.#timeSelection.start,
+        value > this._timeSelection.start,
         "Selection end time smaller than start time!");
-      this.#timeSelection.end = value;
+      this._timeSelection.end = value;
       this.updateSelection();
     }
 
     updateSelection() {
-      let startTimePos = this.timeToPosition(this.#timeSelection.start);
-      let endTimePos = this.timeToPosition(this.#timeSelection.end);
+      let startTimePos = this.timeToPosition(this._timeSelection.start);
+      let endTimePos = this.timeToPosition(this._timeSelection.end);
       this.leftHandle.style.left = startTimePos + "px";
       this.selection.style.left = startTimePos + "px";
       this.rightHandle.style.left = endTimePos + "px";
@@ -103,6 +109,7 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       let leftHandlePosX = this.leftHandle.getBoundingClientRect().x;
       return leftHandlePosX;
     }
+
     get rightHandlePosX() {
       let rightHandlePosX = this.rightHandle.getBoundingClientRect().x;
       return rightHandlePosX;
@@ -116,22 +123,24 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
     }
 
     positionToTime(posX) {
-      let posTimelineX = this.positionOnTimeline(posX) + this.#timeStartOffset;
-      return posTimelineX / this.#timeToPixel;
+      let posTimelineX = this.positionOnTimeline(posX) + this._timeStartOffset;
+      return posTimelineX / this._timeToPixel;
     }
 
     timeToPosition(time) {
-      let posX = time * this.#timeToPixel;
-      posX -= this.#timeStartOffset
+      let posX = time * this._timeToPixel;
+      posX -= this._timeStartOffset
       return posX;
     }
 
     get leftHandle() {
       return this.$('.leftHandle');
     }
+
     get rightHandle() {
       return this.$('.rightHandle');
     }
+
     get selection() {
       return this.$('.selection');
     }
@@ -156,63 +165,71 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       return this.$('#legendContent');
     }
     set data(value) {
-      this.#timeline = value;
+      this._timeline = value;
+      this._resetTypeToColorCache();
       this.updateChunks();
       this.updateTimeline();
       this.renderLegend();
     }
 
+    _resetTypeToColorCache() {
+      this._typeToColor = new Map();
+      let lastIndex = 0;
+      for (const type of this.data.uniqueTypes.keys()) {
+        this._typeToColor.set(type, kColors[lastIndex++]);
+      }
+    }
+
     get data() {
-      return this.#timeline;
+      return this._timeline;
     }
 
     set nofChunks(count) {
-      this.#nofChunks = count;
+      this._nofChunks = count;
       this.updateChunks();
       this.updateTimeline();
     }
+
     get nofChunks() {
-      return this.#nofChunks;
+      return this._nofChunks;
     }
+
     updateChunks() {
-      this.#chunks = this.data.chunks(this.nofChunks);
+      this._chunks = this.data.chunks(this.nofChunks);
     }
+
     get chunks() {
-      return this.#chunks;
+      return this._chunks;
     }
+
     set selectedEntry(value) {
-      this.#selectedEntry = value;
+      this._selectedEntry = value;
       if (value.edge) this.redraw();
     }
+
     get selectedEntry() {
-      return this.#selectedEntry;
+      return this._selectedEntry;
     }
 
     set scrollLeft(offset) {
       this.timeline.scrollLeft = offset;
     }
 
+    typeToColor(type) {
+      return this._typeToColor.get(type);
+    }
+
     renderLegend() {
       let timelineLegend = this.timelineLegend;
       let timelineLegendContent = this.timelineLegendContent;
       this.removeAllChildren(timelineLegendContent);
-      let row = this.tr();
-      row.entries = this.data.all;
-      row.classList.add('clickable');
-      row.addEventListener('dblclick', e => this.handleEntryTypeDblClick(e));
-      row.appendChild(this.td(""));
-      let td = this.td("All");
-      row.appendChild(td);
-      row.appendChild(this.td(this.data.all.length));
-      row.appendChild(this.td("100%"));
-      timelineLegendContent.appendChild(row);
       let colorIterator = 0;
-      this.#timeline.uniqueTypes.forEach((entries, type) => {
+      this._timeline.uniqueTypes.forEach((entries, type) => {
         let row = this.tr();
         row.entries = entries;
         row.classList.add('clickable');
         row.addEventListener('dblclick', e => this.handleEntryTypeDblClick(e));
-        let color = typeToColor(type);
+        let color = this.typeToColor(type);
         if (color !== null) {
           let div = this.div(["colorbox"]);
           div.style.backgroundColor = color;
@@ -228,6 +245,13 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
         timelineLegendContent.appendChild(row);
         colorIterator += 1;
       });
+      // Add Total row.
+      let row = this.tr();
+      row.appendChild(this.td(""));
+      row.appendChild(this.td("All"));
+      row.appendChild(this.td(this.data.all.length));
+      row.appendChild(this.td("100%"));
+      timelineLegendContent.appendChild(row);
       timelineLegend.appendChild(timelineLegendContent);
     }
 
@@ -277,14 +301,14 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       let type, count;
       if (true) {
         chunk.getBreakdown(map => map.type).forEach(([type, count]) => {
-          ctx.fillStyle = typeToColor(type);
+          ctx.fillStyle = this.typeToColor(type);
           let height = count / total * kHeight;
           ctx.fillRect(0, y, kWidth, y + height);
           y += height;
         });
       } else {
         chunk.items.forEach(map => {
-          ctx.fillStyle = typeToColor(map.type);
+          ctx.fillStyle = this.typeToColor(map.type);
           let y = chunk.yOffset(map);
           ctx.fillRect(0, y, kWidth, y + 1);
         });
@@ -302,12 +326,12 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
       let start = this.data.startTime;
       let end = this.data.endTime;
       let duration = end - start;
-      this.#timeToPixel = chunks.length * kChunkWidth / duration;
-      this.#timeStartOffset = start * this.#timeToPixel;
+      this._timeToPixel = chunks.length * kChunkWidth / duration;
+      this._timeStartOffset = start * this._timeToPixel;
       let addTimestamp = (time, name) => {
         let timeNode = this.div('timestamp');
         timeNode.innerText = name;
-        timeNode.style.left = ((time - start) * this.#timeToPixel) + 'px';
+        timeNode.style.left = ((time - start) * this._timeToPixel) + 'px';
         chunksNode.appendChild(timeNode);
       };
       let backgroundTodo = [];
@@ -319,7 +343,7 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
         let node = this.div();
         node.className = 'chunk';
         node.style.left =
-          ((chunks[i].start - start) * this.#timeToPixel) + 'px';
+          ((chunks[i].start - start) * this._timeToPixel) + 'px';
         node.style.height = height + 'px';
         node.chunk = chunk;
         node.addEventListener('mousemove', e => this.handleChunkMouseMove(e));
@@ -383,7 +407,7 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
     }
 
     setEdgeStyle(edge, ctx) {
-      let color = typeToColor(edge.type);
+      let color = this.typeToColor(edge.type);
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
     }
@@ -481,7 +505,7 @@ defineCustomElement('./timeline/timeline-track', (templateText) =>
         ctx.lineTo(centerX + offsetX, centerY - labelOffset);
         ctx.stroke();
         ctx.textAlign = 'left';
-        ctx.fillStyle = typeToColor(edge.type);
+        ctx.fillStyle = this.typeToColor(edge.type);
         ctx.fillText(
           edge.toString(), centerX + offsetX + 2, centerY - labelOffset);
       }
