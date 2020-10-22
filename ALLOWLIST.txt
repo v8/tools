@@ -3,6 +3,7 @@
 *.css
 *.html
 *.js
+*.mjs
 *callstats*
 *explorer*
 *explorer*/***
