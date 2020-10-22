@@ -12,7 +12,6 @@ found in the LICENSE file. -->
     overflow-y: hidden;
     overflow-x: scroll;
     user-select: none;
-    background-color: var(--timeline-background-color);
   }
 
   #timelineLabel {
@@ -41,8 +40,6 @@ found in the LICENSE file. -->
 
   .chunk {
     width: 6px;
-    border: 0px var(--timeline-background-color) solid;
-    border-width: 0 2px 0 2px;
     position: absolute;
     background-size: 100% 100%;
     image-rendering: pixelated;
@@ -66,15 +63,16 @@ found in the LICENSE file. -->
     max-width: 280px;
     padding-left: 20px;
     padding-top: 10px;
+    border-collapse: collapse;
   }
 
   th,
   td {
     width: 200px;
     text-align: left;
-    padding-bottom: 1px;
+    padding-bottom: 3px;
   }
-  
+
   /* right align numbers */
   #legend td:nth-of-type(4n+3),
   #legend td:nth-of-type(4n+4) {
@@ -98,33 +96,36 @@ found in the LICENSE file. -->
     z-index: 3;
     cursor: col-resize;
   }
+  #timeline .leftHandle {
+    border-left: 1px solid var(--on-surface-color);
+  }
+  #timeline .rightHandle {
+    border-right: 1px solid var(--on-surface-color);
+  }
 
   #timeline .selection {
     background-color: rgba(133, 68, 163, 0.5);
     height: 100%;
     position: absolute;
-    z-index: 2;
   }
 </style>
-<div class="timeline">
-  <table id="legend">
-    <thead>
-      <tr>
-        <td></td>
-        <td class="legendTypeColumn">Type</td>
-        <td>Count</td>
-        <td>Percent</td>
-      </tr>
-    </thead>
-    <tbody id="legendContent">
-    </tbody>
-  </table>
-  <div id="timeline">
-    <div class="leftHandle"></div>
-    <div class="selection"></div>
-    <div class="rightHandle"></div>
-    <div id="timelineLabel">Frequency</div>
-    <div id="timelineChunks"></div>
-    <canvas id="timelineCanvas"></canvas>
-  </div>
+<table id="legend">
+  <thead>
+    <tr>
+      <td></td>
+      <td class="legendTypeColumn">Type</td>
+      <td>Count</td>
+      <td>Percent</td>
+    </tr>
+  </thead>
+  <tbody id="legendContent">
+  </tbody>
+</table>
+<div id="timeline">
+  <div class="leftHandle"></div>
+  <div class="selection"></div>
+  <div class="rightHandle"></div>
+  <div id="timelineLabel">Frequency</div>
+  <div id="timelineChunks"></div>
+  <canvas id="timelineCanvas"></canvas>
 </div>
