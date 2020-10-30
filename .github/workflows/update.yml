@@ -28,7 +28,7 @@ jobs:
         with:
           repository: v8/v8
           path: .v8
-      - name: Restore Cached ./gen Directory
+      - name: Restore Cached ./gen/*.sha Stamp Directory
         uses: actions/cache@v2
         with:
           path: gen/*/.sha
