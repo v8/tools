@@ -115,7 +115,7 @@ for branch,sha in BRANCHES:
             with Step(f'Building turbolizer: {turbolizer_dir}'):
                 run('rm', '-rf', turbolizer_dir / 'build')
                 try:
-                    run('npm', 'i', cwd=turbolizer_dir)
+                    run('npm', 'i', turbolizer_dir, cwd=turbolizer_dir)
                     run('npm', 'run-script', 'build', cwd=turbolizer_dir)
                 except Exception as e:
                     print(f'Error occured: {e}')
