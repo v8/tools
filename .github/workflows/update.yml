@@ -23,6 +23,13 @@ jobs:
         run: apk add git openssh-client rsync tar zstd npm
       - name: Checkout nain Branch 
         uses: actions/checkout@v2
+      - name: Cache gen and out dir
+        uses: actions/cache@v2
+        with:
+          path: |
+            .v8
+            gen
+          key: gen_out
       - name: Checkout gh-pages Branch  
         uses: actions/checkout@v2
         with:
