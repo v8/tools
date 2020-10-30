@@ -14,26 +14,31 @@ on:
 
 jobs:
   build:
-    name: Build and deploy V8 tools
+    name: Build and Deploy V8 Tools
     runs-on: ubuntu-latest
     container:
       image: docker://python:3.7-alpine
     steps:
-      - name: Install dependencies
+      - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd
       - name: Install node
         uses: actions/setup-node@v2-beta
         with:
           node-version: '12'
-      - name: Checkout tools repo
+      - name: Checkout Repository
         uses: actions/checkout@v2
+      - name: Checkout v8 repo
+        uses: actions/checkout@v2
+        with:
+          repository: https://chromium.googlesource.com/v8/v8.git
+          path: .v8
       - name: Restore cached doc SHAs
         uses: actions/cache@v2
         with:
           path: dist/*/.sha
           key: dist-${{ hashFiles('dist/*/.sha') }}
           restore-keys: dist-
-      - name: Build tools 
+      - name: Build V8 Tools 
         run: python update.py
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.2.0
@@ -51,5 +56,5 @@ jobs:
           BASE_BRANCH: main
           BRANCH: gh-pages
           FOLDER: dist
-          GIT_CONFIG_NAME: V8 Tools updater
+          GIT_CONFIG_NAME: V8 Tools Updater
           GIT_CONFIG_EMAIL: camillobr@chromium.org
