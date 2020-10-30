@@ -40,25 +40,17 @@ class Step:
         print("::endgroup::")
 
 
-with Step(f'Update V8 checkout in: {V8_GIT}'):
+with Step(f'Getting V8 checkout in: {V8_GIT}'):
     if not V8_GIT.exists():
         run('git', 'clone', '--depth=1', 'https://github.com/v8/v8.git', V8_GIT)
-    # List all remote branches even for a shallow copy
-    git('remote', 'set-branches', 'origin', '*')
-    git('fetch', '--all', '--no-tags', '--depth=1')
 
-
-with Step('List branches'):
-    if len(sys.argv) == 1:
-      NAMES = ['refs/remotes/origin/*-lkgr', 'refs/remotes/origin/lkgr']
-    else:
-      NAMES = [
-        'refs/remotes/origin/lkgr' if name == "head" else f'refs/remotes/origin/{name}-lkgr'
-        for name in sys.argv[1:]
-      ]
-    
-    BRANCHES = git('for-each-ref', *NAMES, '--format=%(refname:strip=3) %(objectname)', capture=True).rstrip().split("\n")
-    BRANCHES = [ref.split(' ') for ref in BRANCHES]
+with Step('List Branches'):
+    BRANCHES = git('ls-remote', '--heads', 'origin', capture=True).rstrip().split("\n")
+    BRANCHES = [ref.split("\t") for ref in BRANCHES]
+    print(BRANCHES)
+    BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
+    # Filter Branches
+    BRANCHES = filter(lambda branch_and_sha:branch_and_sha[0].endswith("lkgr"), BRANCHES)
     BRANCHES = [(branch.split('-')[0], sha) for branch,sha in BRANCHES]
     
     # Sort branches from old to new:
@@ -72,7 +64,10 @@ with Step('List branches'):
     
     GEN_DIR.mkdir(exist_ok=True)
 
-for branch, sha in BRANCHES:
+with Step("Fetch Filtered Branches"):
+    git("fetch", "--depth=1", "origin", *(sha for branch,sha in BRANCHES))
+
+for branch,sha in BRANCHES:
     with Step(f'Generating Branch: {branch}'):
         if branch == 'lkgr':
             version_name = 'head'
@@ -86,23 +81,23 @@ for branch, sha in BRANCHES:
 
         def needs_update():
             if not stamp.exists():
-                Step(f'Needs update: no stamp file')
+                print(f'Needs update: no stamp file')
                 return True
             stamp_mtime = stamp.stat().st_mtime
             if stamp_mtime <= GEN_DIR.stat().st_mtime:
-                Step(f'Needs update: stamp file older than Doxyfile')
+                print(f'Needs update: stamp file older than Doxyfile')
                 return True
             if stamp_mtime <= Path(__file__).stat().st_mtime:
-                Step(f'Needs update: stamp file older than update script')
+                print(f'Needs update: stamp file older than update script')
                 return True
             stamp_sha = stamp.read_text()
             if stamp_sha != sha:
-                Step(f'Needs update: stamp SHA does not match branch SHA ({stamp_sha} vs. {sha})')
+                print(f'Needs update: stamp SHA does not match branch SHA ({stamp_sha} vs. {sha})')
                 return True
             return False
 
         if not needs_update():
-            Step(f'Docs already up-to-date.')
+            print(f'Docs already up-to-date.')
             continue
         stamp.write_text(sha)
 
