@@ -50,6 +50,7 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
     if not V8_GIT.exists():
         run('git', 'clone', '--depth=1', 'https://github.com/v8/v8.git', V8_GIT)
 
+
 def map_branch_name(branch):
     version = branch.split('-')[0]
     if version == 'lkgr':
@@ -62,7 +63,7 @@ with Step('List Branches'):
     BRANCHES = [ref.split("\t") for ref in BRANCHES]
     BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
     # Only keep release branches
-    BRANCHES = filter(lambda branch_and_sha:branch_and_sha[0].endswith("lkgr"), BRANCHES)
+    BRANCHES = filter(lambda each: each[0].endswith("lkgr"), BRANCHES)
     BRANCHES = [(map_branch_name(branch), branch, sha) for branch,sha in BRANCHES]
     
     # Sort branches from old to new:
@@ -73,7 +74,8 @@ with Step('List Branches'):
 
     BRANCHES.sort(key=branch_sort_key)
     print(BRANCHES)
-   
+
+
 def filter_by_stamp(values):
     version,branch,sha = values
     stamp = OUT_DIR / version / '.sha'
@@ -90,11 +92,11 @@ def filter_by_stamp(values):
         return True
     return False
 
-
 with Step("Fetch Filtered Branches"):
     # Fetch only the required branches
     BRANCHES = list(filter(filter_by_stamp, BRANCHES))
     git("fetch", "--depth=1", "origin", *(branch for version,branch,sha in BRANCHES))
+
 
 for version,branch,sha in BRANCHES:
     with Step(f'Generating Branch: {branch}'):
