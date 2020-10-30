@@ -88,7 +88,7 @@ for branch,sha in BRANCHES:
                 return True
             stamp_mtime = stamp.stat().st_mtime
             if stamp_mtime <= OUT_DIR.stat().st_mtime:
-                print(f'Needs update: stamp file older than Doxyfile')
+                print(f'Needs update: stamp file older than "{OUT_DIR}"')
                 return True
             if stamp_mtime <= Path(__file__).stat().st_mtime:
                 print(f'Needs update: stamp file older than update script')
