@@ -21,19 +21,18 @@ jobs:
     steps:
       - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd npm
-      - name: Checkout Main Repository
+      - name: Checkout nain Branch 
         uses: actions/checkout@v2
+      - name: Checkout gh-pages Branch  
+        uses: actions/checkout@v2
+        with:
+          ref: 'gh-pages'
+          path: gen
       - name: Checkout V8 Repository
         uses: actions/checkout@v2
         with:
           repository: v8/v8
           path: .v8
-      - name: Restore Cached ./gen/*.sha Stamp Directory
-        uses: actions/cache@v2
-        with:
-          path: gen/*/.sha
-          key: gen-${{ hashFiles('gen/*/.sha') }}
-          restore-keys: gen-
       - name: Build V8 Tools 
         run: python3 -u update.py
       - name: Set up SSH
