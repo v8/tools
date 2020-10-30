@@ -51,33 +51,32 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
         run('git', 'clone', '--depth=1', 'https://github.com/v8/v8.git', V8_GIT)
 
 with Step('List Branches'):
+    # Find the refs and SHA of all remote branches.
     BRANCHES = git('ls-remote', '--heads', 'origin', capture=True).rstrip().split("\n")
     BRANCHES = [ref.split("\t") for ref in BRANCHES]
     BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
     # Only keep release branches
     BRANCHES = filter(lambda branch_and_sha:branch_and_sha[0].endswith("lkgr"), BRANCHES)
-    BRANCHES = [(branch.split('-')[0], sha) for branch,sha in BRANCHES]
+    BRANCHES = [(branch.split('-')[0], branch, sha) for branch,sha in BRANCHES]
     
     # Sort branches from old to new:
-    def branch_sort_key(branch_and_sha): 
-      if branch_and_sha[0] == 'lkgr':
+    def branch_sort_key(version_branch_sha): 
+      if version_branch_sha[0] == 'lkgr':
         return (float("inf"),)
-      return tuple(map(int, branch_and_sha[0].split('.')))
-    
+      return tuple(map(int, version_branch_sha[0].split('.')))
+
     BRANCHES.sort(key=branch_sort_key)
     print(BRANCHES)
     
 with Step("Fetch Filtered Branches"):
-    git("fetch", "--depth=1", "origin", *(sha for branch,sha in BRANCHES))
+    # Fetch only the required branches
+    git("fetch", "--depth=1", "origin", *(branch for version,branch,sha in BRANCHES))
 
-for branch,sha in BRANCHES:
+for version,branch,sha in BRANCHES:
     with Step(f'Generating Branch: {branch}'):
-        if branch == 'lkgr':
-            version_name = 'head'
-        else:
-            branch_name = branch.split('-')[0]
-            version_name = f'v{branch_name}'
-        branch_dir = OUT_DIR / version_name 
+        if version == 'lkgr':
+            version = 'head'
+        branch_dir = OUT_DIR / version
         branch_dir.mkdir(exist_ok=True)
 
         stamp = branch_dir / '.sha'

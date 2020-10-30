@@ -28,12 +28,8 @@ jobs:
         with:
           path: |
             .v8
+            gen
           key: gen_out
-      - name: Checkout gh-pages Branch  
-        uses: actions/checkout@v2
-        with:
-          ref: 'gh-pages'
-          path: gen
       - name: Build V8 Tools 
         run: python3 -u update.py
       - name: Set up SSH
