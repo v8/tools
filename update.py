@@ -42,8 +42,10 @@ class Step:
 
 with Step(f'Update V8 checkout in: {V8_GIT}'):
     if not V8_GIT.exists():
-        run('git', 'clone', 'https://github.com/v8/v8.git', V8_GIT)
-    git('fetch', '--all')
+        run('git', 'clone', '--depth=1', 'https://github.com/v8/v8.git', V8_GIT)
+    # List all remote branches even for a shallow copy
+    git('remote', 'set-branches', 'origin', '*')
+    git('fetch', '--all', '--no-tags', '--depth=1')
 
 
 with Step('List branches'):

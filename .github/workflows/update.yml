@@ -32,6 +32,7 @@ jobs:
         with:
           repository: v8/v8
           path: .v8
+          fetch-depth: 0
       - name: Restore Cached ./gen Directory
         uses: actions/cache@v2
         with:
