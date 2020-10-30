@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<!-- Copyright 2020 the V8 project authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" href="favicon.ico">
+  <title>V8 Tools Page</title>
+<style>
+body {
+  font-family: sans-serif;
+  color: white;
+  margin-left: 5%;
+  margin-right: 5%;
+  background-color: #000000;
+  text-align: center;
+}
+dl a {
+  background-color: #BB86FC;
+  color: black;
+  padding: 15px 25px;
+  text-decoration: none;
+  display: inline-block;
+  border-radius: 2px;
+}
+dl a:hover, a:active {
+  background-color: white;
+  color:black;
+}
+dl div {
+  display: inline-block;
+  text-align: center;
+  padding: 10px 25px 10px 25px ;
+  margin: 5px;
+  transition: background-color 0.5s;
+  background-color: #121212;
+  border-radius: 10px;
+
+}
+dl div.head { 
+  width: calc(100% - 60px);
+}
+dl div:hover {
+  background-color: #222;
+}
+dd {
+  padding: 15px 0 0 0;
+  margin: 0;
+}
+dt {
+  padding: 15px 0 0 0;
+  margin: 0;
+}
+</style>
+</head>
+<body>
+  <h1>Welcome to the V8 Tools Version Page</h1>
+  <dl id="container">
+    <div class="head">
+      <dt><a href="./head">HEAD</a></dt>
+      <dd>The latest version of V8 tools.</dd>
+    </div>
+  </dl>
+  <footer>
+    <p>
+    The sources of this page live on <a href="https://github.com/v8/tools">github</a>.
+    </p>
+  </footer>
+</body>
+<script>
+  fetch('versions.txt')
+    .then(response => response.text())
+    .then(data => addVersionLinks(data));
+
+  function addVersionLinks(versions) {
+    let container = document.querySelector("#container");
+    versions
+      .trimEnd()
+      .split("\n")
+      .reverse()
+      .forEach(version => {
+        let versionNumber = version.substring(1);
+        let div = document.createElement("div");
+        let dt = document.createElement("dt");
+        let a = document.createElement('a');
+        a.href = version;
+        a.innerText = versionNumber;
+        dt.appendChild(a);
+        div.appendChild(dt);
+        let dd = document.createElement('dd');
+        dd.innerText = `Tools for version ${versionNumber}.`;
+        div.appendChild(dd);
+        container.appendChild(div);
+    });
+  }
+</script>
+</html>
