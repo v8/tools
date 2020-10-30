@@ -6,13 +6,16 @@ import os
 import sys
 from pathlib import Path
 
+# =============================================================================
 
 DESTINATION = Path(__file__).parent
 ALLOWLIST = DESTINATION  / 'ALLOWLIST.txt'
 TOOLS_GIT = DESTINATION
 V8_GIT = DESTINATION  / '.v8'
-GEN_DIR = DESTINATION / 'gen'
+OUT_DIR = DESTINATION / 'gen'
+OUT_DIR.mkdir(exist_ok=True)
 
+# =============================================================================
 
 def run(*command, capture=False, cwd=None):
     command = list(map(str, command))
@@ -24,8 +27,10 @@ def run(*command, capture=False, cwd=None):
         return result.stdout.decode('utf-8')
     return None
 
+
 def git(*command, capture=False, repository=V8_GIT):
     return run('git', '-C', repository, *command, capture=capture)
+
 
 class Step:
     def __init__(self, title):
@@ -39,6 +44,7 @@ class Step:
     def __exit__(self, type, value, tb):
         print("::endgroup::")
 
+# =============================================================================
 
 with Step(f'Getting V8 checkout in: {V8_GIT}'):
     if not V8_GIT.exists():
@@ -47,9 +53,8 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
 with Step('List Branches'):
     BRANCHES = git('ls-remote', '--heads', 'origin', capture=True).rstrip().split("\n")
     BRANCHES = [ref.split("\t") for ref in BRANCHES]
-    print(BRANCHES)
     BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
-    # Filter Branches
+    # Only keep release branches
     BRANCHES = filter(lambda branch_and_sha:branch_and_sha[0].endswith("lkgr"), BRANCHES)
     BRANCHES = [(branch.split('-')[0], sha) for branch,sha in BRANCHES]
     
@@ -62,8 +67,6 @@ with Step('List Branches'):
     BRANCHES.sort(key=branch_sort_key)
     print(BRANCHES)
     
-    GEN_DIR.mkdir(exist_ok=True)
-
 with Step("Fetch Filtered Branches"):
     git("fetch", "--depth=1", "origin", *(sha for branch,sha in BRANCHES))
 
@@ -74,7 +77,7 @@ for branch,sha in BRANCHES:
         else:
             branch_name = branch.split('-')[0]
             version_name = f'v{branch_name}'
-        branch_dir = GEN_DIR / version_name 
+        branch_dir = OUT_DIR / version_name 
         branch_dir.mkdir(exist_ok=True)
 
         stamp = branch_dir / '.sha'
@@ -84,7 +87,7 @@ for branch,sha in BRANCHES:
                 print(f'Needs update: no stamp file')
                 return True
             stamp_mtime = stamp.stat().st_mtime
-            if stamp_mtime <= GEN_DIR.stat().st_mtime:
+            if stamp_mtime <= OUT_DIR.stat().st_mtime:
                 print(f'Needs update: stamp file older than Doxyfile')
                 return True
             if stamp_mtime <= Path(__file__).stat().st_mtime:
@@ -119,11 +122,12 @@ for branch,sha in BRANCHES:
 
 
 with Step("Update versions.txt"):
-    versions_file = GEN_DIR / 'versions.txt'
+    versions_file = OUT_DIR / 'versions.txt'
     with open(versions_file, mode='w') as f:
-        versions = list(GEN_DIR.glob('v*'))
+        versions = list(OUT_DIR.glob('v*'))
         versions.sort()
         # write all but the last filename (=versions.txt)
         for version_dir in versions[:-1]:
             f.write(version_dir.name)
             f.write('\n')
+    run("cp", DESTINATION / "index.html.template", OUT_DIR / "index.html")
