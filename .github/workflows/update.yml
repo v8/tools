@@ -27,10 +27,10 @@ jobs:
           node-version: '12'
       - name: Checkout Repository
         uses: actions/checkout@v2
-      - name: Checkout v8 repo
+      - name: Checkout V8 Repository
         uses: actions/checkout@v2
         with:
-          repository: https://chromium.googlesource.com/v8/v8.git
+          repository: v8/v8
           path: .v8
       - name: Restore cached doc SHAs
         uses: actions/cache@v2
