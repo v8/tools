@@ -36,7 +36,7 @@ class Step:
         print("::group::" + self.title)
         print('-' * 80)
 
-    def __exit__(self):
+    def __exit__(self, type, value, tb):
         print("::endgroup::")
 
 
