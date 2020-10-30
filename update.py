@@ -132,7 +132,3 @@ with Step("Update versions.txt"):
         for version_dir in versions[:-1]:
             f.write(version_dir.name)
             f.write('\n')
-    
-    git('add', versions_file, repository=TOOLS_GIT)
-
-
