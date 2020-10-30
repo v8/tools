@@ -1,0 +1,56 @@
+# Copyright 2020 the V8 project authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+name: Update V8 Tools 
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Rebuild tools every day at 3am.
+    - cron: '0 3 * * *'
+
+jobs:
+  build:
+    name: Build and deploy V8 tools
+    runs-on: ubuntu-latest
+    container:
+      image: docker://python:3.7-alpine
+    steps:
+      - name: Install dependencies
+        run: apk add git openssh-client rsync tar zstd
+      - name: Install node
+        uses: actions/checkout@v2
+        uses: actions/setup-node@v1
+          with:
+            node-version: '12'
+      - name: Checkout tools repo
+        uses: actions/checkout@v2
+      - name: Restore cached doc SHAs
+        uses: actions/cache@v2
+        with:
+          path: dist/*/.sha
+          key: dist-${{ hashFiles('dist/*/.sha') }}
+          restore-keys: dist-
+      - name: Build tools 
+        run: python update.py
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.2.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Set known keys in /root/.ssh (see https://github.com/webfactory/ssh-agent/issues/20)
+        run: |
+          mkdir -p /root/.ssh
+          ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@releases/v3
+        with:
+          SSH: true
+          SINGLE_COMMIT: true
+          BASE_BRANCH: main
+          BRANCH: gh-pages
+          FOLDER: dist
+          GIT_CONFIG_NAME: V8 Tools updater
+          GIT_CONFIG_EMAIL: camillobr@chromium.org
