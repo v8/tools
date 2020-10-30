@@ -23,13 +23,11 @@ jobs:
         run: apk add git openssh-client rsync tar zstd npm
       - name: Checkout main Branch 
         uses: actions/checkout@v2
-      - name: Cache ".v8" Checkout and "gen" Directory
-        uses: actions/cache@v2
+      - name: Checkout gh-pages
+        uses: actions/checkout@v2
         with:
-          path: |
-            .v8
-            gen
-          key: gen_out
+          ref: gh-pages
+          path: gen
       - name: Build V8 Tools 
         run: python3 -u update.py
       - name: Set up SSH
