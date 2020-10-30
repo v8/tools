@@ -21,10 +21,6 @@ jobs:
     steps:
       - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd npm
-      - name: Install node
-        uses: actions/setup-node@v2-beta
-        with:
-          node-version: '12'
       - name: Checkout Main Repository
         uses: actions/checkout@v2
       - name: Checkout V8 Repository
