@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-
 import subprocess
 import tempfile
 import os
+import sys
 from pathlib import Path
 
 
@@ -11,6 +11,7 @@ DESTINATION = Path(__file__).parent
 ALLOWLIST = DESTINATION  / 'ALLOWLIST.txt'
 TOOLS_GIT = DESTINATION
 V8_GIT = DESTINATION  / '.v8'
+GEN_DIR = DESTINATION / 'gen'
 
 
 def run(*command, capture=False, cwd=None):
@@ -34,34 +35,69 @@ def step(title):
 
 step(f'Update V8 checkout in: {V8_GIT}')
 if not V8_GIT.exists():
-    run('git', 'clone', 'https://chromium.googlesource.com/v8/v8.git', V8_GIT)
+    run('git', 'clone', 'https://github.com/v8/v8.git', V8_GIT)
 git('fetch', '--all')
 
 
 step('List branches')
-BRANCHES = git('branch', '--all', '--list', '*-lkgr', '--format=%(refname)', capture=True).split()
-BRANCHES = list(set(map(lambda ref: ref.split('/')[-1], BRANCHES)))
+if len(sys.argv) == 1:
+  NAMES = ['refs/remotes/origin/*-lkgr', 'refs/remotes/origin/lkgr']
+else:
+  NAMES = [
+    'refs/remotes/origin/lkgr' if name == "head" else f'refs/remotes/origin/{name}-lkgr'
+    for name in sys.argv[1:]
+  ]
+
+BRANCHES = git('for-each-ref', *NAMES, '--format=%(refname:strip=3) %(objectname)', capture=True).rstrip().split("\n")
+BRANCHES = [ref.split(' ') for ref in BRANCHES]
+BRANCHES = [(branch.split('-')[0], sha) for branch,sha in BRANCHES]
 
 # Sort branches from old to new:
-BRANCHES.sort(key=lambda branch: list(map(int, branch.split('-')[0].split('.'))))
-BRANCHES.append('lkgr')
+def branch_sort_key(branch_and_sha): 
+  if branch_and_sha[0] == 'lkgr':
+    return (float("inf"),)
+  return tuple(map(int, branch_and_sha[0].split('.')))
 
-# List of branches that have potential back-merges and thus need updates:
-BRANCHES_FORCE_BUILDS = set(BRANCHES[-4:])
+BRANCHES.sort(key=branch_sort_key)
 print(BRANCHES)
 
+GEN_DIR.mkdir(exist_ok=True)
 
-
-for branch in BRANCHES_FORCE_BUILDS:
-    step(f'Importing web tools from branch: {branch}')
+for branch, sha in BRANCHES:
+    step(f'Generating Branch: {branch}')
     if branch == 'lkgr':
         version_name = 'head'
     else:
         branch_name = branch.split('-')[0]
         version_name = f'v{branch_name}'
-    branch_dir = DESTINATION / version_name 
+    branch_dir = GEN_DIR / version_name 
     branch_dir.mkdir(exist_ok=True)
-    git('switch', '--force', '--detach', f'remotes/origin/{branch}')
+
+    stamp = branch_dir / '.sha'
+
+    def needs_update():
+        if not stamp.exists():
+            step(f'Needs update: no stamp file')
+            return True
+        stamp_mtime = stamp.stat().st_mtime
+        if stamp_mtime <= GEN_DIR.stat().st_mtime:
+            step(f'Needs update: stamp file older than Doxyfile')
+            return True
+        if stamp_mtime <= Path(__file__).stat().st_mtime:
+            step(f'Needs update: stamp file older than update script')
+            return True
+        stamp_sha = stamp.read_text()
+        if stamp_sha != sha:
+            step(f'Needs update: stamp SHA does not match branch SHA ({stamp_sha} vs. {sha})')
+            return True
+        return False
+
+    if not needs_update():
+        step(f'Docs already up-to-date.')
+        continue
+    stamp.write_text(sha)
+
+    git('switch', '--force', '--detach', sha)
     git('clean', '--force', '-d')
     source = V8_GIT / 'tools'
     run('rsync', '--itemize-changes', f'--include-from={ALLOWLIST}',
@@ -69,22 +105,20 @@ for branch in BRANCHES_FORCE_BUILDS:
             '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
     turbolizer_dir = branch_dir / 'turbolizer'
     if (turbolizer_dir / 'package.json').exists():
-        force_build = branch in BRANCHES_FORCE_BUILDS
-        if force_build or not (turbolizer_dir / 'build').exists():
-            step(f'Building turbolizer: {turbolizer_dir}')
-            run('rm', '-rf', turbolizer_dir / 'build')
-            try:
-                run('npm', 'i', cwd=turbolizer_dir)
-                run('npm', 'run-script', 'build', cwd=turbolizer_dir)
-            except Exception as e:
-                print(f'Error occured: {e}')
+        step(f'Building turbolizer: {turbolizer_dir}')
+        run('rm', '-rf', turbolizer_dir / 'build')
+        try:
+            run('npm', 'i', cwd=turbolizer_dir)
+            run('npm', 'run-script', 'build', cwd=turbolizer_dir)
+        except Exception as e:
+            print(f'Error occured: {e}')
     git('add', branch_dir, repository=TOOLS_GIT)
 
 
 step("Update versions.txt")
-versions_file = DESTINATION / 'versions.txt'
+versions_file = GEN_DIR / 'versions.txt'
 with open(versions_file, mode='w') as f:
-    versions = list(DESTINATION.glob('v*'))
+    versions = list(GEN_DIR.glob('v*'))
     versions.sort()
     # write all but the last filename (=versions.txt)
     for version_dir in versions[:-1]:

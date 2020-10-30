@@ -22,7 +22,7 @@ jobs:
       - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd
       - name: Install node
-        uses: actions/setup-node@v2-beta
+        uses: actions/setup-node@v1
         with:
           node-version: '12'
       - name: Checkout Repository
@@ -32,12 +32,12 @@ jobs:
         with:
           repository: v8/v8
           path: .v8
-      - name: Restore cached doc SHAs
+      - name: Restore Cached ./gen Directory
         uses: actions/cache@v2
         with:
-          path: dist/*/.sha
-          key: dist-${{ hashFiles('dist/*/.sha') }}
-          restore-keys: dist-
+          path: gen/*/.sha
+          key: gen-${{ hashFiles('gen/*/.sha') }}
+          restore-keys: gen-
       - name: Build V8 Tools 
         run: python update.py
       - name: Set up SSH
@@ -55,6 +55,6 @@ jobs:
           SINGLE_COMMIT: true
           BASE_BRANCH: main
           BRANCH: gh-pages
-          FOLDER: dist
+          FOLDER: gen
           GIT_CONFIG_NAME: V8 Tools Updater
           GIT_CONFIG_EMAIL: camillobr@chromium.org
