@@ -32,7 +32,6 @@ jobs:
         with:
           repository: v8/v8
           path: .v8
-          fetch-depth: 0
       - name: Restore Cached ./gen Directory
         uses: actions/cache@v2
         with:
@@ -40,7 +39,7 @@ jobs:
           key: gen-${{ hashFiles('gen/*/.sha') }}
           restore-keys: gen-
       - name: Build V8 Tools 
-        run: python update.py
+        run: python3 -u update.py
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.2.0
         with:
