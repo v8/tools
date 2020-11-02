@@ -11,6 +11,7 @@ on:
   schedule:
     # Rebuild tools every day at 3am.
     - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
