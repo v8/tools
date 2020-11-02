@@ -30,19 +30,10 @@ jobs:
           path: gen
       - name: Build V8 Tools 
         run: python3 -u update.py
-      - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.2.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Set known keys in /root/.ssh (see https://github.com/webfactory/ssh-agent/issues/20)
-        run: |
-          mkdir -p /root/.ssh
-          ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@releases/v3
         with:
-          SSH: true
-          SINGLE_COMMIT: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: main
           BRANCH: gh-pages
           FOLDER: gen
