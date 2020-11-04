@@ -22,26 +22,6 @@ function formatSeconds(millis) {
   return (millis * kMillis2Seconds).toFixed(2) + 's';
 }
 
-function defineCustomElement(path, generator) {
-  let name = path.substring(path.lastIndexOf("/") + 1, path.length);
-  path = path + '-template.html';
-  fetch(path)
-    .then(stream => stream.text())
-    .then(
-      templateText => customElements.define(name, generator(templateText)));
-}
-
-// DOM Helpers
-function removeAllChildren(node) {
-  let range = document.createRange();
-  range.selectNodeContents(node);
-  range.deleteContents();
-}
-
-function $(id) {
-  return document.querySelector(id)
-}
-
 class CSSColor {
   static getColor(name) {
     const style = getComputedStyle(document.body);
@@ -135,22 +115,71 @@ function typeToColor(type) {
   return CSSColor.secondaryColor;
 }
 
-function div(classes) {
-  let node = document.createElement('div');
-  if (classes !== void 0) {
-    if (typeof classes === 'string') {
-      node.classList.add(classes);
-    } else {
-      classes.forEach(cls => node.classList.add(cls));
+class DOM {
+  static div(classes) {
+    const node = document.createElement('div');
+    if (classes !== void 0) {
+      if (typeof classes === 'string') {
+        node.classList.add(classes);
+      } else {
+        classes.forEach(cls => node.classList.add(cls));
+      }
     }
+    return node;
   }
-  return node;
+
+  static table(className) {
+    const node = document.createElement('table');
+    if (className) node.classList.add(className);
+    return node;
+  }
+
+  static td(textOrNode, className) {
+    const node = document.createElement('td');
+    if (typeof textOrNode === 'object') {
+      node.appendChild(textOrNode);
+    } else if (textOrNode) {
+      node.innerText = textOrNode;
+    }
+    if (className) node.classList.add(className);
+    return node;
+  }
+
+  static tr(className) {
+    const node = document.createElement('tr');
+    if (className) node.classList.add(className);
+    return node;
+  }
+
+  static text(string) {
+    return document.createTextNode(string);
+  }
+
+  static removeAllChildren(node) {
+    let range = document.createRange();
+    range.selectNodeContents(node);
+    range.deleteContents();
+  }
+
+  static defineCustomElement(path, generator) {
+    let name = path.substring(path.lastIndexOf('/') + 1, path.length);
+    path = path + '-template.html';
+    fetch(path)
+        .then(stream => stream.text())
+        .then(
+            templateText =>
+                customElements.define(name, generator(templateText)));
+  }
+}
+
+function $(id) {
+  return document.querySelector(id)
 }
 
 class V8CustomElement extends HTMLElement {
   constructor(templateText) {
     super();
-    const shadowRoot = this.attachShadow({ mode: 'open' });
+    const shadowRoot = this.attachShadow({mode: 'open'});
     shadowRoot.innerHTML = templateText;
   }
   $(id) {
@@ -160,32 +189,7 @@ class V8CustomElement extends HTMLElement {
   querySelectorAll(query) {
     return this.shadowRoot.querySelectorAll(query);
   }
-
-  div(classes) { return div(classes) }
-
-  table(className) {
-    let node = document.createElement('table')
-    if (className) node.classList.add(className)
-    return node;
-  }
-
-  td(textOrNode) {
-    let node = document.createElement('td');
-    if (typeof textOrNode === 'object') {
-      node.appendChild(textOrNode);
-    } else {
-      node.innerText = textOrNode;
-    }
-    return node;
-  }
-
-  tr() {
-    return document.createElement('tr');
-  }
-
-  removeAllChildren(node) { return removeAllChildren(node); }
 }
-
 
 class LazyTable {
   constructor(table, rowData, rowElementCreator) {
@@ -194,7 +198,32 @@ class LazyTable {
     this._rowElementCreator = rowElementCreator;
     const tbody = table.querySelector('tbody');
     table.replaceChild(document.createElement('tbody'), tbody);
-    table.querySelector("tfoot td").onclick = (e) => this._addMoreRows();
+    table.querySelector('tfoot td').onclick = (e) => this._addMoreRows();
+    this._addMoreRows();
+  }
+
+  _nextRowDataSlice() {
+    return this._rowData.splice(0, 100);
+  }
+
+  _addMoreRows() {
+    const fragment = new DocumentFragment();
+    for (let row of this._nextRowDataSlice()) {
+      const tr = this._rowElementCreator(row);
+      fragment.appendChild(tr);
+    }
+    this._table.querySelector('tbody').appendChild(fragment);
+  }
+}
+
+class LazyTable {
+  constructor(table, rowData, rowElementCreator) {
+    this._table = table;
+    this._rowData = rowData;
+    this._rowElementCreator = rowElementCreator;
+    const tbody = table.querySelector('tbody');
+    table.replaceChild(document.createElement('tbody'), tbody);
+    table.querySelector('tfoot td').onclick = (e) => this._addMoreRows();
     this._addMoreRows();
   }
 
@@ -217,6 +246,12 @@ function delay(time) {
 }
 
 export {
-  defineCustomElement, V8CustomElement, removeAllChildren,
-  $, div, typeToColor, CSSColor, delay, LazyTable,
+  DOM,
+  $,
+  V8CustomElement,
+  formatBytes,
+  typeToColor,
+  CSSColor,
+  delay,
+  LazyTable,
 };
