@@ -53,7 +53,7 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
 
 def map_branch_name(branch):
     version = branch.split('-')[0]
-    if version == 'lkgr':
+    if version == 'lkgr' or version == 'master':
         return 'head'
     return f"v{version}"
 
@@ -63,11 +63,12 @@ with Step('List Branches'):
     BRANCHES = [ref.split("\t") for ref in BRANCHES]
     BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
     # Only keep release branches
-    BRANCHES = filter(lambda each: each[0].endswith("lkgr"), BRANCHES)
+    BRANCHES = filter(lambda each: each[0].endswith("-lkgr") or each[0] == 'master', BRANCHES)
     BRANCHES = [(map_branch_name(branch), branch, sha) for branch,sha in BRANCHES]
     
     # Sort branches from old to new:
     def branch_sort_key(version_branch_sha): 
+        print(version_branch_sha)
         if version_branch_sha[0] == 'head':
             return (float("inf"),)
         return tuple(map(int, version_branch_sha[0][1:].split('.')))
