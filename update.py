@@ -68,7 +68,6 @@ with Step('List Branches'):
     
     # Sort branches from old to new:
     def branch_sort_key(version_branch_sha): 
-        print(version_branch_sha)
         if version_branch_sha[0] == 'head':
             return (float("inf"),)
         return tuple(map(int, version_branch_sha[0][1:].split('.')))
