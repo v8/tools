@@ -5,7 +5,7 @@
 import {LogReader, parseString, parseVarArgs} from '../logreader.mjs';
 import {Profile} from '../profile.mjs';
 
-import {DeoptLogEntry} from './log/deopt.mjs';
+import {CodeLogEntry, DeoptLogEntry} from './log/code.mjs';
 import {IcLogEntry} from './log/ic.mjs';
 import {Edge, MapLogEntry} from './log/map.mjs';
 import {Timeline} from './timeline.mjs';
@@ -17,17 +17,25 @@ export class Processor extends LogReader {
   _mapTimeline = new Timeline();
   _icTimeline = new Timeline();
   _deoptTimeline = new Timeline();
+  _codeTimeline = new Timeline();
   _formatPCRegexp = /(.*):[0-9]+:[0-9]+$/;
   MAJOR_VERSION = 7;
   MINOR_VERSION = 6;
   constructor(logString) {
     super();
-    this.propertyICParser = [
+    const propertyICParser = [
       parseInt, parseInt, parseInt, parseInt, parseString, parseString,
       parseString, parseString, parseString, parseString
     ];
     this.dispatchTable_ = {
       __proto__: null,
+      'v8-version': {
+        parsers: [
+          parseInt,
+          parseInt,
+        ],
+        processor: this.processV8Version
+      },
       'code-creation': {
         parsers: [
           parseString, parseInt, parseInt, parseInt, parseInt, parseString,
@@ -42,20 +50,20 @@ export class Processor extends LogReader {
         ],
         processor: this.processCodeDeopt
       },
-      'v8-version': {
+      'code-move':
+          {parsers: [parseInt, parseInt], processor: this.processCodeMove},
+      'code-delete': {parsers: [parseInt], processor: this.processCodeDelete},
+      'code-source-info': {
         parsers: [
-          parseInt,
-          parseInt,
+          parseInt, parseInt, parseInt, parseInt, parseString, parseString,
+          parseString
         ],
-        processor: this.processV8Version
+        processor: this.processCodeSourceInfo
       },
       'script-source': {
         parsers: [parseInt, parseString, parseString],
         processor: this.processScriptSource
       },
-      'code-move':
-          {parsers: [parseInt, parseInt], processor: this.processCodeMove},
-      'code-delete': {parsers: [parseInt], processor: this.processCodeDelete},
       'sfi-move':
           {parsers: [parseInt, parseInt], processor: this.processFunctionMove},
       'map-create':
@@ -72,31 +80,31 @@ export class Processor extends LogReader {
         processor: this.processMapDetails
       },
       'LoadGlobalIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'LoadGlobalIC')
       },
       'StoreGlobalIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'StoreGlobalIC')
       },
       'LoadIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'LoadIC')
       },
       'StoreIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'StoreIC')
       },
       'KeyedLoadIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'KeyedLoadIC')
       },
       'KeyedStoreIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'KeyedStoreIC')
       },
       'StoreInArrayLiteralIC': {
-        parsers: this.propertyICParser,
+        parsers: propertyICParser,
         processor: this.processPropertyIC.bind(this, 'StoreInArrayLiteralIC')
       },
     };
@@ -182,20 +190,24 @@ export class Processor extends LogReader {
   }
 
   processCodeCreation(type, kind, timestamp, start, size, name, maybe_func) {
+    let entry;
     if (maybe_func.length) {
       const funcAddr = parseInt(maybe_func[0]);
       const state = this.parseState(maybe_func[1]);
-      this._profile.addFuncCode(
+      entry = this._profile.addFuncCode(
           type, name, timestamp, start, size, funcAddr, state);
     } else {
-      this._profile.addCode(type, name, timestamp, start, size);
+      entry = this._profile.addCode(type, name, timestamp, start, size);
     }
+    this._codeTimeline.push(new CodeLogEntry(type, timestamp, kind, entry));
   }
 
   processCodeDeopt(
       timestamp, codeSize, instructionStart, inliningId, scriptOffset,
       deoptKind, deoptLocation, deoptReason) {
-    this._deoptTimeline.push(new DeoptLogEntry(deoptKind, timestamp));
+    this._deoptTimeline.push(new DeoptLogEntry(
+        deoptKind, timestamp, deoptReason, deoptLocation, scriptOffset,
+        instructionStart, codeSize, inliningId));
   }
 
   processV8Version(majorVersion, minorVersion) {
@@ -224,22 +236,20 @@ export class Processor extends LogReader {
     this._profile.moveFunc(from, to);
   }
 
-  formatName(entry) {
-    if (!entry) return '<unknown>';
-    let name = entry.func.getName();
-    let re = /(.*):[0-9]+:[0-9]+$/;
-    let array = re.exec(name);
-    if (!array) return name;
-    return entry.getState() + array[1];
+  processCodeSourceInfo(
+      start, script, startPos, endPos, sourcePositions, inliningPositions,
+      inlinedFunctions) {
+    this._profile.addSourcePositions(
+        start, script, startPos, endPos, sourcePositions, inliningPositions,
+        inlinedFunctions);
   }
 
   processPropertyIC(
       type, pc, time, line, column, old_state, new_state, map, key, modifier,
       slow_reason) {
-    let fnName = this.functionName(pc);
-    let parts = fnName.split(' ');
-    let fileName = parts[parts.length - 1];
-    let script = this.getScript(fileName);
+    let profileEntry = this._profile.findEntry(pc);
+    let fnName = this.formatProfileEntry(profileEntry);
+    let script = this.getProfileEntryScript(profileEntry);
     // TODO: Use SourcePosition here directly
     let entry = new IcLogEntry(
         type, fnName, time, line, column, key, old_state, new_state, map,
@@ -250,33 +260,27 @@ export class Processor extends LogReader {
     this._icTimeline.push(entry);
   }
 
-  functionName(pc) {
-    let entry = this._profile.findEntry(pc);
-    return this.formatName(entry);
-  }
-  formatPC(pc, line, column) {
-    let entry = this._profile.findEntry(pc);
-    if (!entry) return '<unknown>'
-      if (entry.type === 'Builtin') {
-        return entry.name;
-      }
-    let name = entry.func.getName();
-    let array = this._formatPCRegexp.exec(name);
-    if (array === null) {
-      entry = name;
-    } else {
-      entry = entry.getState() + array[1];
-    }
-    return entry + ':' + line + ':' + column;
+  formatProfileEntry(profileEntry, line, column) {
+    if (!profileEntry) return '<unknown>';
+    if (profileEntry.type === 'Builtin') return profileEntry.name;
+    const name = profileEntry.func.getName();
+    const array = this._formatPCRegexp.exec(name);
+    const formatted =
+        (array === null) ? name : profileEntry.getState() + array[1];
+    if (line === undefined || column === undefined) return formatted;
+    return `${formatted}:${line}:${column}`;
   }
 
-  processFileName(filePositionLine) {
-    if (!filePositionLine.includes(' ')) return;
-    // Try to handle urls with file positions: https://foo.bar.com/:17:330"
-    filePositionLine = filePositionLine.split(' ');
-    let parts = filePositionLine[1].split(':');
-    if (parts[0].length <= 5) return parts[0] + ':' + parts[1];
-    return parts[1];
+  getProfileEntryScript(profileEntry) {
+    if (!profileEntry) return undefined;
+    if (profileEntry.type === 'Builtin') return undefined;
+    const script = profileEntry.source?.script;
+    if (script !== undefined) return script;
+    // Slow path, try to get the script from the url:
+    const fnName = this.formatProfileEntry(profileEntry);
+    let parts = fnName.split(' ');
+    let fileName = parts[parts.length - 1];
+    return this.getScript(fileName);
   }
 
   processMap(type, time, from, to, pc, line, column, reason, name) {
@@ -286,13 +290,11 @@ export class Processor extends LogReader {
     let to_ = this.getExistingMapEntry(to, time_);
     // TODO: use SourcePosition directly.
     let edge = new Edge(type, name, reason, time, from_, to_);
-    to_.filePosition = this.formatPC(pc, line, column);
-    let fileName = this.processFileName(to_.filePosition);
-    // TODO: avoid undefined source positions.
-    if (fileName !== undefined) {
-      to_.script = this.getScript(fileName);
-    }
-    if (to_.script) {
+    const profileEntry = this._profile.findEntry(pc)
+    to_.filePosition = this.formatProfileEntry(profileEntry, line, column);
+    let script = this.getProfileEntryScript(profileEntry);
+    if (script) {
+      to_.script = script;
       to_.sourcePosition = to_.script.addSourcePosition(line, column, to_)
     }
     edge.finishSetup();
@@ -350,6 +352,10 @@ export class Processor extends LogReader {
 
   get deoptTimeline() {
     return this._deoptTimeline;
+  }
+
+  get codeTimeline() {
+    return this._codeTimeline;
   }
 
   get scripts() {
