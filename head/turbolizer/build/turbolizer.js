@@ -2573,7 +2573,7 @@
     event.stopImmediatePropagation();
   }
 
-  function dragDisable(view) {
+  function nodrag(view) {
     var root = view.document.documentElement,
         selection$$1 = select(view).on("dragstart.drag", noevent, true);
     if ("onselectstart" in root) {
@@ -2670,7 +2670,7 @@
       var gesture = beforestart("mouse", container.apply(this, arguments), mouse, this, arguments);
       if (!gesture) return;
       select(event.view).on("mousemove.drag", mousemoved, true).on("mouseup.drag", mouseupped, true);
-      dragDisable(event.view);
+      nodrag(event.view);
       nopropagation();
       mousemoving = false;
       mousedownx = event.clientX;
@@ -4717,7 +4717,7 @@
     return columns;
   }
 
-  function dsvFormat(delimiter) {
+  function dsv(delimiter) {
     var reFormat = new RegExp("[\"" + delimiter + "\n\r]"),
         DELIMITER = delimiter.charCodeAt(0);
 
@@ -4810,9 +4810,19 @@
     };
   }
 
-  var csv = dsvFormat(",");
+  var csv = dsv(",");
 
-  var tsv = dsvFormat("\t");
+  var csvParse = csv.parse;
+  var csvParseRows = csv.parseRows;
+  var csvFormat = csv.format;
+  var csvFormatRows = csv.formatRows;
+
+  var tsv = dsv("\t");
+
+  var tsvParse = tsv.parse;
+  var tsvParseRows = tsv.parseRows;
+  var tsvFormat = tsv.format;
+  var tsvFormatRows = tsv.formatRows;
 
   function tree_add(d) {
     var x = +this._x.call(null, d),
@@ -7375,7 +7385,7 @@
           x0 = event.clientX,
           y0 = event.clientY;
 
-      dragDisable(event.view);
+      nodrag(event.view);
       nopropagation$2();
       g.mouse = [p, this.__zoom.invert(p)];
       interrupt(this);
