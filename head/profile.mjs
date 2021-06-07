@@ -48,8 +48,9 @@ export class SourcePosition {
 }
 
 export class Script {
-  name;
+  url;
   source;
+  name;
   // Map<line, Map<column, SourcePosition>>
   lineToColumn = new Map();
   _entries = [];
@@ -158,14 +159,6 @@ class SourceInfo {
   }
 }
 
-class Tick {
-  constructor(time_ns, vmState, processedStack) {
-    this.time = time_ns;
-    this.state = vmState;
-    this.stack = processedStack;
-  }
-}
-
 /**
  * Creates a profile object for processing profiling-related events
  * and calculating function execution times.
@@ -177,7 +170,6 @@ export class Profile {
   topDownTree_ = new CallTree();
   bottomUpTree_ = new CallTree();
   c_entries_ = {};
-  ticks_ = [];
   scripts_ = [];
   urlToScript_ = new Map();
 
@@ -490,7 +482,7 @@ export class Profile {
     this.bottomUpTree_.addPath(nameStack);
     nameStack.reverse();
     this.topDownTree_.addPath(nameStack);
-    this.ticks_.push(new Tick(time_ns, vmState, entryStack));
+    return entryStack;
   }
 
   /**
@@ -1222,7 +1214,9 @@ JsonProfile.prototype.addSourcePositions = function (
 };
 
 JsonProfile.prototype.addScriptSource = function (id, url, source) {
-  this.scripts_[id] = new Script(id, url, source);
+  const script = new Script(id);
+  script.update(url, source);
+  this.scripts_[id] = script;
 };
 
 JsonProfile.prototype.deoptCode = function (
