@@ -39,4 +39,4 @@ jobs:
           BRANCH: gh-pages
           FOLDER: gen
           GIT_CONFIG_NAME: V8 Tools Updater
-          GIT_CONFIG_EMAIL: camillobr@chromium.org
+          GIT_CONFIG_EMAIL: cbruni@chromium.org
