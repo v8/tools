@@ -18,8 +18,30 @@ export function formatBytes(bytes) {
   return bytes.toFixed(2) + units[index];
 }
 
-export function formatMicroSeconds(millis) {
-  return (millis * kMicro2Milli).toFixed(1) + 'ms';
+export function formatMicroSeconds(micro) {
+  return (micro * kMicro2Milli).toFixed(1) + 'ms';
+}
+
+export function formatDurationMicros(micros, secondsDigits = 3) {
+  return formatDurationMillis(micros * kMicro2Milli, secondsDigits);
+}
+
+export function formatDurationMillis(millis, secondsDigits = 3) {
+  if (millis < 1000) {
+    if (millis < 1) {
+      return (millis / kMicro2Milli).toFixed(1) + 'ns';
+    }
+    return millis.toFixed(2) + 'ms';
+  }
+  let seconds = millis / 1000;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  seconds = seconds % 60;
+  let buffer = ''
+  if (hours > 0) buffer += hours + 'h ';
+  if (hours > 0 || minutes > 0) buffer += minutes + 'm ';
+  buffer += seconds.toFixed(secondsDigits) + 's'
+  return buffer;
 }
 
 export function delay(time) {
@@ -41,21 +63,21 @@ export class Group {
   constructor(key, id, parentTotal, entries) {
     this.key = key;
     this.id = id;
-    this.count = 1;
     this.entries = entries;
+    this.length = entries.length;
     this.parentTotal = parentTotal;
   }
 
   get percent() {
-    return this.count / this.parentTotal * 100;
+    return this.length / this.parentTotal * 100;
   }
 
   add() {
-    this.count++;
+    this.length++;
   }
 
   addEntry(entry) {
-    this.count++;
+    this.length++;
     this.entries.push(entry);
   }
 }
@@ -65,6 +87,7 @@ export function groupBy(array, keyFunction, collect = false) {
   if (keyFunction === undefined) keyFunction = each => each;
   const keyToGroup = new Map();
   const groups = [];
+  const sharedEmptyArray = [];
   let id = 0;
   // This is performance critical, resorting to for-loop
   for (let each of array) {
@@ -74,8 +97,7 @@ export function groupBy(array, keyFunction, collect = false) {
       collect ? group.addEntry(each) : group.add();
       continue;
     }
-    let entries = undefined;
-    if (collect) entries = [each];
+    let entries = collect ? [each] : sharedEmptyArray;
     group = new Group(key, id++, array.length, entries);
     groups.push(group);
     keyToGroup.set(key, group);

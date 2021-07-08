@@ -550,7 +550,9 @@
       instructionsToKeyPcOffsets(instructionIds) {
           const keyPcOffsets = [];
           for (const instructionId of instructionIds) {
-              keyPcOffsets.push(this.instructionToPCOffset[instructionId].gap);
+              const pcOffset = this.instructionToPCOffset[instructionId];
+              if (pcOffset !== undefined)
+                  keyPcOffsets.push(pcOffset.gap);
           }
           return keyPcOffsets;
       }
@@ -782,6 +784,7 @@
           this.nodeHandlers = [];
           this.blockHandlers = [];
           this.instructionHandlers = [];
+          this.registerAllocationHandlers = [];
           this.sourceResolver = sourceResolver;
       }
       addSourcePositionHandler(handler) {
@@ -800,11 +803,27 @@
           this.allHandlers.push(handler);
           this.instructionHandlers.push(handler);
       }
+      addRegisterAllocatorHandler(handler) {
+          this.allHandlers.push(handler);
+          this.registerAllocationHandlers.push(handler);
+      }
       broadcastInstructionSelect(from, instructionOffsets, selected) {
+          // Select the lines from the disassembly (right panel)
           for (const b of this.instructionHandlers) {
               if (b != from)
                   b.brokeredInstructionSelect(instructionOffsets, selected);
           }
+          // Select the lines from the source panel (left panel)
+          const pcOffsets = this.sourceResolver.instructionsToKeyPcOffsets(instructionOffsets);
+          for (const offset of pcOffsets) {
+              const nodes = this.sourceResolver.nodesForPCOffset(offset)[0];
+              const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
+              for (const b of this.sourcePositionHandlers) {
+                  if (b != from)
+                      b.brokeredSourcePositionSelect(sourcePositions, selected);
+              }
+          }
+          // The middle panel lines have already been selected so there's no need to reselect them.
       }
       broadcastSourcePositionSelect(from, sourcePositions, selected) {
           sourcePositions = sourcePositions.filter(l => {
@@ -814,25 +833,61 @@
               }
               return true;
           });
+          // Select the lines from the source panel (left panel)
           for (const b of this.sourcePositionHandlers) {
               if (b != from)
                   b.brokeredSourcePositionSelect(sourcePositions, selected);
           }
+          // Select the nodes (middle panel)
           const nodes = this.sourceResolver.sourcePositionsToNodeIds(sourcePositions);
           for (const b of this.nodeHandlers) {
               if (b != from)
                   b.brokeredNodeSelect(nodes, selected);
           }
+          for (const node of nodes) {
+              const instructionOffsets = this.sourceResolver.nodeIdToInstructionRange[node];
+              // Skip nodes which do not have an associated instruction range.
+              if (instructionOffsets == undefined)
+                  continue;
+              // Select the lines from the disassembly (right panel)
+              for (const b of this.instructionHandlers) {
+                  if (b != from)
+                      b.brokeredInstructionSelect(instructionOffsets, selected);
+              }
+              // Select the lines from the middle panel for the register allocation phase.
+              for (const b of this.registerAllocationHandlers) {
+                  if (b != from)
+                      b.brokeredRegisterAllocationSelect(instructionOffsets, selected);
+              }
+          }
       }
       broadcastNodeSelect(from, nodes, selected) {
+          // Select the nodes (middle panel)
           for (const b of this.nodeHandlers) {
               if (b != from)
                   b.brokeredNodeSelect(nodes, selected);
           }
+          // Select the lines from the source panel (left panel)
           const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
           for (const b of this.sourcePositionHandlers) {
               if (b != from)
                   b.brokeredSourcePositionSelect(sourcePositions, selected);
+          }
+          for (const node of nodes) {
+              const instructionOffsets = this.sourceResolver.nodeIdToInstructionRange[node];
+              // Skip nodes which do not have an associated instruction range.
+              if (instructionOffsets == undefined)
+                  continue;
+              // Select the lines from the disassembly (right panel)
+              for (const b of this.instructionHandlers) {
+                  if (b != from)
+                      b.brokeredInstructionSelect(instructionOffsets, selected);
+              }
+              // Select the lines from the middle panel for the register allocation phase.
+              for (const b of this.registerAllocationHandlers) {
+                  if (b != from)
+                      b.brokeredRegisterAllocationSelect(instructionOffsets, selected);
+              }
           }
       }
       broadcastBlockSelect(from, blocks, selected) {
@@ -909,7 +964,7 @@
       }
       select(s, isSelected) {
           for (const i of s) {
-              if (!i)
+              if (i == undefined)
                   continue;
               if (isSelected == undefined) {
                   isSelected = !this.selection.has(this.stringKey(i));
@@ -950,6 +1005,7 @@
           const view = this;
           view.textListNode = view.divNode.getElementsByTagName('ul')[0];
           view.patterns = null;
+          view.instructionIdToHtmlElementsMap = new Map();
           view.nodeIdToHtmlElementsMap = new Map();
           view.blockIdToHtmlElementsMap = new Map();
           view.blockIdtoNodeIds = new Map();
@@ -1010,6 +1066,38 @@
           };
           this.blockSelectionHandler = blockSelectionHandler;
           broker.addBlockHandler(blockSelectionHandler);
+          view.registerAllocationSelection = new MySelection(anyToString);
+          const registerAllocationSelectionHandler = {
+              clear: function () {
+                  view.registerAllocationSelection.clear();
+                  view.updateSelection();
+                  broker.broadcastClear(registerAllocationSelectionHandler);
+              },
+              select: function (instructionIds, selected) {
+                  view.registerAllocationSelection.select(instructionIds, selected);
+                  view.updateSelection();
+                  broker.broadcastInstructionSelect(null, [instructionIds], selected);
+              },
+              brokeredRegisterAllocationSelect: function (instructionIds, selected) {
+                  const firstSelect = view.blockSelection.isEmpty();
+                  view.registerAllocationSelection.select(instructionIds, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.registerAllocationSelection.clear();
+                  view.updateSelection();
+              }
+          };
+          broker.addRegisterAllocatorHandler(registerAllocationSelectionHandler);
+          view.registerAllocationSelectionHandler = registerAllocationSelectionHandler;
+      }
+      // instruction-id are the divs for the register allocator phase
+      addHtmlElementForInstructionId(anyInstructionId, htmlElement) {
+          const instructionId = anyToString(anyInstructionId);
+          if (!this.instructionIdToHtmlElementsMap.has(instructionId)) {
+              this.instructionIdToHtmlElementsMap.set(instructionId, []);
+          }
+          this.instructionIdToHtmlElementsMap.get(instructionId).push(htmlElement);
       }
       addHtmlElementForNodeId(anyNodeId, htmlElement) {
           const nodeId = anyToString(anyNodeId);
@@ -1057,6 +1145,20 @@
               for (const element of elements) {
                   mkVisible.consider(element, isSelected);
                   element.classList.toggle("selected", isSelected);
+              }
+          }
+          for (const key of this.instructionIdToHtmlElementsMap.keys()) {
+              for (const element of this.instructionIdToHtmlElementsMap.get(key)) {
+                  element.classList.toggle("selected", false);
+              }
+          }
+          for (const instrId of view.registerAllocationSelection.selectedKeys()) {
+              const elements = this.instructionIdToHtmlElementsMap.get(instrId);
+              if (!elements)
+                  continue;
+              for (const element of elements) {
+                  mkVisible.consider(element, true);
+                  element.classList.toggle("selected", true);
               }
           }
           for (const key of this.nodeIdToHtmlElementsMap.keys()) {
@@ -10101,6 +10203,9 @@
           function mkBlockLinkHandler(blockId) {
               return mkLinkHandler(blockId, view.blockSelectionHandler);
           }
+          function mkInstructionLinkHandler(instrId) {
+              return mkLinkHandler(instrId, view.registerAllocationSelectionHandler);
+          }
           function mkOperandLinkHandler(text) {
               return mkLinkHandler(text, view.selectionHandler);
           }
@@ -10135,6 +10240,8 @@
               const instId = createElement("div", "instruction-id", instruction.id);
               const offsets = view.sourceResolver.instructionToPcOffsets(instruction.id);
               instId.classList.add("clickable");
+              view.addHtmlElementForInstructionId(instruction.id, instId);
+              instId.onclick = mkInstructionLinkHandler(instruction.id);
               instId.dataset.instructionId = instruction.id;
               if (offsets) {
                   instId.setAttribute("title", `This instruction generated gap code at pc-offset 0x${offsets.gap.toString(16)}, code at pc-offset 0x${offsets.arch.toString(16)}, condition handling at pc-offset 0x${offsets.condition.toString(16)}.`);
