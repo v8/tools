@@ -230,7 +230,7 @@
           // The disassembly phase is stored separately.
           this.disassemblyPhase = undefined;
           // Maps line numbers to source positions
-          this.lineToSourcePositions = new Map();
+          this.linePositionMap = new Map();
           // Maps node ids to instruction ranges.
           this.nodeIdToInstructionRange = [];
           // Maps block ids to instruction ranges.
@@ -670,10 +670,10 @@
       }
       addAnyPositionToLine(lineNumber, sourcePosition) {
           const lineNumberString = anyToString(lineNumber);
-          if (!this.lineToSourcePositions.has(lineNumberString)) {
-              this.lineToSourcePositions.set(lineNumberString, []);
+          if (!this.linePositionMap.has(lineNumberString)) {
+              this.linePositionMap.set(lineNumberString, []);
           }
-          const A = this.lineToSourcePositions.get(lineNumberString);
+          const A = this.linePositionMap.get(lineNumberString);
           if (!A.includes(sourcePosition))
               A.push(sourcePosition);
       }
@@ -684,8 +684,8 @@
               this.addAnyPositionToLine(i, { bytecodePosition: pos });
           });
       }
-      linetoSourcePositions(lineNumber) {
-          const positions = this.lineToSourcePositions.get(anyToString(lineNumber));
+      lineToSourcePositions(lineNumber) {
+          const positions = this.linePositionMap.get(anyToString(lineNumber));
           if (positions === undefined)
               return [];
           return positions;
@@ -10570,7 +10570,7 @@
           view.sourceResolver = sourceResolver;
           view.source = sourceFunction;
           view.codeMode = codeMode;
-          this.sourcePositionToHtmlElement = new Map();
+          this.sourcePositionToHtmlElements = new Map();
           this.showAdditionalInliningPosition = false;
           const selectionHandler = {
               clear: function () {
@@ -10612,21 +10612,23 @@
       }
       addHtmlElementToSourcePosition(sourcePosition, element) {
           const key = sourcePositionToStringKey(sourcePosition);
-          if (this.sourcePositionToHtmlElement.has(key)) {
-              console.log("Warning: duplicate source position", sourcePosition);
+          if (!this.sourcePositionToHtmlElements.has(key)) {
+              this.sourcePositionToHtmlElements.set(key, []);
           }
-          this.sourcePositionToHtmlElement.set(key, element);
+          this.sourcePositionToHtmlElements.get(key).push(element);
       }
       getHtmlElementForSourcePosition(sourcePosition) {
           const key = sourcePositionToStringKey(sourcePosition);
-          return this.sourcePositionToHtmlElement.get(key);
+          return this.sourcePositionToHtmlElements.get(key);
       }
       updateSelection(scrollIntoView = false) {
           const mkVisible = new ViewElements(this.divNode.parentNode);
-          for (const [sp, el] of this.sourcePositionToHtmlElement.entries()) {
+          for (const [sp, els] of this.sourcePositionToHtmlElements.entries()) {
               const isSelected = this.selection.isKeySelected(sp);
-              mkVisible.consider(el, isSelected);
-              el.classList.toggle("selected", isSelected);
+              for (const el of els) {
+                  mkVisible.consider(el, isSelected);
+                  el.classList.toggle("selected", isSelected);
+              }
           }
           mkVisible.apply(scrollIntoView);
       }
@@ -10644,7 +10646,7 @@
           if (doClear) {
               this.selectionHandler.clear();
           }
-          const positions = this.sourceResolver.linetoSourcePositions(lineNumber - 1);
+          const positions = this.sourceResolver.lineToSourcePositions(lineNumber - 1);
           if (positions !== undefined) {
               this.selectionHandler.select(positions, undefined);
           }
@@ -10751,7 +10753,9 @@
           const sps = this.sourceResolver.sourcePositionsInRange(this.source.sourceId, pos - adjust, end);
           let offset = 0;
           for (const sourcePosition of sps) {
-              this.sourceResolver.addAnyPositionToLine(lineNumber, sourcePosition);
+              // Internally, line numbers are 0-based so we have to substract 1 from the line number. This
+              // path in only taken by non-Wasm code. Wasm code relies on setSourceLineToBytecodePosition.
+              this.sourceResolver.addAnyPositionToLine(lineNumber - 1, sourcePosition);
               const textnode = currentSpan.tagName == 'SPAN' ? currentSpan.lastChild : currentSpan;
               if (!(textnode instanceof Text))
                   continue;
@@ -10787,11 +10791,8 @@
           lineNumberElement.dataset.lineNumber = `${lineNumber}`;
           lineNumberElement.innerText = `${lineNumber}`;
           lineElement.insertBefore(lineNumberElement, lineElement.firstChild);
-          // Don't add lines to source positions of not in backwardsCompatibility mode.
-          if (this.source.backwardsCompatibility === true) {
-              for (const sourcePosition of this.sourceResolver.linetoSourcePositions(lineNumber - 1)) {
-                  view.addHtmlElementToSourcePosition(sourcePosition, lineElement);
-              }
+          for (const sourcePosition of this.sourceResolver.lineToSourcePositions(lineNumber - 1)) {
+              view.addHtmlElementToSourcePosition(sourcePosition, lineElement);
           }
       }
   }
