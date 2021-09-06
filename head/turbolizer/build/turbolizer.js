@@ -4210,12 +4210,12 @@
     };
   }
 
-  function attrFunction$1(name, interpolate, value$$1) {
+  function attrFunction$1(name, interpolate, value) {
     var value00,
         value10,
         interpolate0;
     return function() {
-      var value0, value1 = value$$1(this);
+      var value0, value1 = value(this);
       if (value1 == null) return void this.removeAttribute(name);
       value0 = this.getAttribute(name);
       return value0 === value1 ? null
@@ -4224,12 +4224,12 @@
     };
   }
 
-  function attrFunctionNS$1(fullname, interpolate, value$$1) {
+  function attrFunctionNS$1(fullname, interpolate, value) {
     var value00,
         value10,
         interpolate0;
     return function() {
-      var value0, value1 = value$$1(this);
+      var value0, value1 = value(this);
       if (value1 == null) return void this.removeAttributeNS(fullname.space, fullname.local);
       value0 = this.getAttributeNS(fullname.space, fullname.local);
       return value0 === value1 ? null
@@ -4238,12 +4238,12 @@
     };
   }
 
-  function transition_attr(name, value$$1) {
+  function transition_attr(name, value) {
     var fullname = namespace(name), i = fullname === "transform" ? interpolateTransformSvg : interpolate$1;
-    return this.attrTween(name, typeof value$$1 === "function"
-        ? (fullname.local ? attrFunctionNS$1 : attrFunction$1)(fullname, i, tweenValue(this, "attr." + name, value$$1))
-        : value$$1 == null ? (fullname.local ? attrRemoveNS$1 : attrRemove$1)(fullname)
-        : (fullname.local ? attrConstantNS$1 : attrConstant$1)(fullname, i, value$$1 + ""));
+    return this.attrTween(name, typeof value === "function"
+        ? (fullname.local ? attrFunctionNS$1 : attrFunction$1)(fullname, i, tweenValue(this, "attr." + name, value))
+        : value == null ? (fullname.local ? attrRemoveNS$1 : attrRemove$1)(fullname)
+        : (fullname.local ? attrConstantNS$1 : attrConstant$1)(fullname, i, value + ""));
   }
 
   function attrTweenNS(fullname, value) {
@@ -4489,13 +4489,13 @@
     };
   }
 
-  function styleFunction$1(name, interpolate, value$$1) {
+  function styleFunction$1(name, interpolate, value) {
     var value00,
         value10,
         interpolate0;
     return function() {
       var value0 = styleValue(this, name),
-          value1 = value$$1(this);
+          value1 = value(this);
       if (value1 == null) value1 = (this.style.removeProperty(name), styleValue(this, name));
       return value0 === value1 ? null
           : value0 === value00 && value1 === value10 ? interpolate0
@@ -4503,14 +4503,14 @@
     };
   }
 
-  function transition_style(name, value$$1, priority) {
+  function transition_style(name, value, priority) {
     var i = (name += "") === "transform" ? interpolateTransformCss : interpolate$1;
-    return value$$1 == null ? this
+    return value == null ? this
             .styleTween(name, styleRemove$1(name, i))
             .on("end.style." + name, styleRemoveEnd(name))
-        : this.styleTween(name, typeof value$$1 === "function"
-            ? styleFunction$1(name, i, tweenValue(this, "style." + name, value$$1))
-            : styleConstant$1(name, i, value$$1 + ""), priority);
+        : this.styleTween(name, typeof value === "function"
+            ? styleFunction$1(name, i, tweenValue(this, "style." + name, value))
+            : styleConstant$1(name, i, value + ""), priority);
   }
 
   function styleTween(name, value, priority) {
@@ -4819,7 +4819,7 @@
     return columns;
   }
 
-  function dsv(delimiter) {
+  function dsvFormat(delimiter) {
     var reFormat = new RegExp("[\"" + delimiter + "\n\r]"),
         DELIMITER = delimiter.charCodeAt(0);
 
@@ -4912,14 +4912,9 @@
     };
   }
 
-  var csv = dsv(",");
+  var csv = dsvFormat(",");
 
-  var csvParse = csv.parse;
-  var csvParseRows = csv.parseRows;
-  var csvFormat = csv.format;
-  var csvFormatRows = csv.formatRows;
-
-  var tsv = dsv("\t");
+  var tsv = dsvFormat("\t");
 
   function tree_add(d) {
     var x = +this._x.call(null, d),
@@ -7633,8 +7628,8 @@
     };
 
     zoom.on = function() {
-      var value$$1 = listeners.on.apply(listeners, arguments);
-      return value$$1 === listeners ? zoom : value$$1;
+      var value = listeners.on.apply(listeners, arguments);
+      return value === listeners ? zoom : value;
     };
 
     zoom.clickDistance = function(_) {
