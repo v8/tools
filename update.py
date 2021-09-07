@@ -20,7 +20,7 @@ OUT_DIR.mkdir(exist_ok=True)
 def run(*command, capture=False, cwd=None):
     command = list(map(str, command))
     print(f'CMD:  {" ".join(command)}')
-    stdout = subprocess.PIPE if capture else None 
+    stdout = subprocess.PIPE if capture else None
     result = subprocess.run(command, stdout=stdout, cwd=cwd)
     result.check_returncode()
     if capture:
@@ -53,7 +53,7 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
 
 def map_branch_name(branch):
     version = branch.split('-')[0]
-    if version == 'lkgr' or version == 'master':
+    if version == 'lkgr' or version == 'main':
         return 'head'
     return f"v{version}"
 
@@ -63,11 +63,11 @@ with Step('List Branches'):
     BRANCHES = [ref.split("\t") for ref in BRANCHES]
     BRANCHES = [(branch.split('/')[-1], sha) for sha,branch in BRANCHES]
     # Only keep release branches
-    BRANCHES = filter(lambda each: each[0].endswith("-lkgr") or each[0] == 'master', BRANCHES)
+    BRANCHES = filter(lambda each: each[0].endswith("-lkgr") or each[0] == 'main', BRANCHES)
     BRANCHES = [(map_branch_name(branch), branch, sha) for branch,sha in BRANCHES]
-    
+
     # Sort branches from old to new:
-    def branch_sort_key(version_branch_sha): 
+    def branch_sort_key(version_branch_sha):
         if version_branch_sha[0] == 'head':
             return (float("inf"),)
         return tuple(map(int, version_branch_sha[0][1:].split('.')))
@@ -110,7 +110,7 @@ for version,branch,sha in BRANCHES:
         git('clean', '--force', '-d')
         source = V8_GIT / 'tools'
         run('rsync', '--itemize-changes', f'--include-from={ALLOWLIST}',
-                '--exclude=*', '--recursive', 
+                '--exclude=*', '--recursive',
                 '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
         turbolizer_dir = branch_dir / 'turbolizer'
         if (turbolizer_dir / 'package.json').exists():
