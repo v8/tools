@@ -9,6 +9,10 @@
 *explorer*/***
 *processor*
 *processor*/**
+heap-layout
+heap-layout/**
+js
+js/**
 profview
 profview/**
 profviz

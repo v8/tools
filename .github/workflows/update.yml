@@ -2,14 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-name: Update V8 Tools 
+name: Update V8 Tools
 
 on:
   push:
     branches:
       - main
   schedule:
-    # Rebuild tools every day at 3am.
+    # Rebuild tools every hour.
     - cron: '0 * * * *'
   workflow_dispatch:
 
@@ -22,14 +22,14 @@ jobs:
     steps:
       - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd npm
-      - name: Checkout main Branch 
+      - name: Checkout main Branch
         uses: actions/checkout@v2
       - name: Checkout gh-pages
         uses: actions/checkout@v2
         with:
           ref: gh-pages
           path: gen
-      - name: Build V8 Tools 
+      - name: Build V8 Tools
         run: python3 -u update.py
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@releases/v3

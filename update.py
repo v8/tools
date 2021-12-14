@@ -50,7 +50,8 @@ class Step:
 
 with Step(f'Getting V8 checkout in: {V8_GIT}'):
   if not V8_GIT.exists():
-    run('git', 'clone', '--depth=1', 'https://github.com/v8/v8.git', V8_GIT)
+    run('git', 'clone', '--depth=1', 'https://chromium.googlesource.com/v8/v8',
+        V8_GIT)
 
 
 def map_branch_name(branch):
