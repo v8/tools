@@ -364,17 +364,16 @@ export class ExpandableText {
     button.innerText = '...';
     button.onclick = (e) => {
       e.stopImmediatePropagation();
-      this.expand(e.shiftKey);
+      this.expand()
     };
-    button.title = 'Expand text. Use SHIFT-click to show all.'
     return button;
   }
 
-  expand(showAll = false) {
+  expand() {
     DOM.removeAllChildren(this._node);
     this._start = this._start + this._delta;
     this._end = this._end - this._delta;
-    if (this._start >= this._end || showAll) {
+    if (this._start >= this._end) {
       this._node.innerText = this._string;
       this._button.onclick = undefined;
       return;
