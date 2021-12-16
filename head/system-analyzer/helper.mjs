@@ -102,6 +102,6 @@ export function groupBy(array, keyFunction, collect = false) {
     groups.push(group);
     keyToGroup.set(key, group);
   }
-  // Sort by length
-  return groups.sort((a, b) => b.length - a.length);
+  // Sort by count
+  return groups.sort((a, b) => b.count - a.count);
 }
