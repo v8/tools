@@ -70,7 +70,7 @@ export class SourcePosition {
 
 export class Script {
   url;
-  source = "";
+  source;
   name;
   sourcePosition = undefined;
   // Map<line, Map<column, SourcePosition>>
@@ -106,7 +106,7 @@ export class Script {
   }
 
   findFunctionSourcePosition(sourcePosition) {
-    // TODO(cbruni): implement
+    // TODO(cbruni) implmenent
     return undefined;
   }
 
@@ -314,6 +314,7 @@ export class Profile {
     COMPILED: 0,
     IGNITION: 1,
     BASELINE: 2,
+    TURBOPROP: 4,
     TURBOFAN: 5,
   }
 
@@ -345,6 +346,8 @@ export class Profile {
         return this.CodeState.IGNITION;
       case '^':
         return this.CodeState.BASELINE;
+      case '+':
+        return this.CodeState.TURBOPROP;
       case '*':
         return this.CodeState.TURBOFAN;
     }
@@ -358,6 +361,8 @@ export class Profile {
       return "Unopt";
     } else if (state === this.CodeState.BASELINE) {
       return "Baseline";
+    } else if (state === this.CodeState.TURBOPROP) {
+      return "Turboprop";
     } else if (state === this.CodeState.TURBOFAN) {
       return "Opt";
     }
