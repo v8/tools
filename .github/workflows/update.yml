@@ -31,6 +31,8 @@ jobs:
           path: gen
       - name: Build V8 Tools
         run: python3 -u update.py
+      - name: Prevent auto-deploy
+        run: touch gen/.nojekyll
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@releases/v3
         with:
