@@ -32,7 +32,7 @@ jobs:
       - name: Build V8 Tools
         run: python3 -u update.py
       - name: Prevent auto-deploy
-        run: touch gen/.nojekyll
+        run: touch -a gen/.nojekyll
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4.2.5
         with:
@@ -41,3 +41,4 @@ jobs:
           folder: gen
           git-config-name: V8 Tools Updater
           git-config-email: cbruni@chromium.org
+          commit-message: V8 Tools Update
