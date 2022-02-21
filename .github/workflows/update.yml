@@ -34,11 +34,10 @@ jobs:
       - name: Prevent auto-deploy
         run: touch gen/.nojekyll
       - name: Deploy
-        uses: JamesIves/github-pages-deploy-action@releases/v3
+        uses: JamesIves/github-pages-deploy-action@releases/v4.2
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_BRANCH: main
-          BRANCH: gh-pages
-          FOLDER: gen
-          GIT_CONFIG_NAME: V8 Tools Updater
-          GIT_CONFIG_EMAIL: cbruni@chromium.org
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: gh-pages
+          folder: gen
+          git-config-name: V8 Tools Updater
+          git-config-email: cbruni@chromium.org
