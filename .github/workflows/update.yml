@@ -34,7 +34,7 @@ jobs:
       - name: Prevent auto-deploy
         run: touch gen/.nojekyll
       - name: Deploy
-        uses: JamesIves/github-pages-deploy-action@v4.2
+        uses: JamesIves/github-pages-deploy-action@v4.2.5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: gh-pages
