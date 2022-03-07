@@ -6,6 +6,7 @@ import {delay} from '../../helper.mjs';
 import {TickLogEntry} from '../../log/tick.mjs';
 import {Timeline} from '../../timeline.mjs';
 import {DOM, SVG} from '../helper.mjs';
+
 import {TimelineTrackStackedBase} from './timeline-track-stacked-base.mjs'
 
 class Flame {
@@ -178,15 +179,15 @@ class Annotations {
     if (end > rawFlames.length) end = rawFlames.length;
     const logEntry = this._logEntry;
     // Also compare against the function, if any.
-    const func = logEntry.entry?.func ?? -1;
+    const func = logEntry.entry?.func;
     for (let i = start; i < end; i++) {
       const flame = rawFlames[i];
-      const flameLogEntry = flame.logEntry;
-      if (!flameLogEntry) continue;
-      if (flameLogEntry !== logEntry) {
-        if (flameLogEntry.entry?.func !== func) continue;
+      if (!flame.entry) continue;
+      if (flame.entry.logEntry !== logEntry &&
+          (!func || flame.entry.func !== func)) {
+        continue;
       }
-      this._buffer += this._track._drawItem(flame, i, true);
+      this._buffer += this._track.drawFlame(flame, i, true);
     }
   }
 
