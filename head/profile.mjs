@@ -70,7 +70,7 @@ export class SourcePosition {
 
 export class Script {
   url;
-  source = "";
+  source;
   name;
   sourcePosition = undefined;
   // Map<line, Map<column, SourcePosition>>
@@ -106,7 +106,7 @@ export class Script {
   }
 
   findFunctionSourcePosition(sourcePosition) {
-    // TODO(cbruni): implement
+    // TODO(cbruni) implmenent
     return undefined;
   }
 
@@ -261,10 +261,6 @@ class SourceInfo {
   }
 }
 
-const kProfileOperationMove = 0;
-const kProfileOperationDelete = 1;
-const kProfileOperationTick = 2;
-
 /**
  * Creates a profile object for processing profiling-related events
  * and calculating function execution times.
@@ -275,10 +271,9 @@ export class Profile {
   codeMap_ = new CodeMap();
   topDownTree_ = new CallTree();
   bottomUpTree_ = new CallTree();
-  c_entries_ = {__proto__:null};
+  c_entries_ = {};
   scripts_ = [];
   urlToScript_ = new Map();
-  warnings = new Set();
 
   serializeVMSymbols() {
     let result = this.codeMap_.getAllStaticEntriesWithAddresses();
@@ -305,9 +300,9 @@ export class Profile {
    * @enum {number}
    */
   static Operation = {
-    MOVE: kProfileOperationMove,
-    DELETE: kProfileOperationDelete,
-    TICK: kProfileOperationTick
+    MOVE: 0,
+    DELETE: 1,
+    TICK: 2
   }
 
   /**
@@ -319,6 +314,7 @@ export class Profile {
     COMPILED: 0,
     IGNITION: 1,
     BASELINE: 2,
+    TURBOPROP: 4,
     TURBOFAN: 5,
   }
 
@@ -350,6 +346,8 @@ export class Profile {
         return this.CodeState.IGNITION;
       case '^':
         return this.CodeState.BASELINE;
+      case '+':
+        return this.CodeState.TURBOPROP;
       case '*':
         return this.CodeState.TURBOFAN;
     }
@@ -363,6 +361,8 @@ export class Profile {
       return "Unopt";
     } else if (state === this.CodeState.BASELINE) {
       return "Baseline";
+    } else if (state === this.CodeState.TURBOPROP) {
+      return "Turboprop";
     } else if (state === this.CodeState.TURBOFAN) {
       return "Opt";
     }
@@ -459,7 +459,7 @@ export class Profile {
     // As code and functions are in the same address space,
     // it is safe to put them in a single code map.
     let func = this.codeMap_.findDynamicEntryByStartAddress(funcAddr);
-    if (func === null) {
+    if (!func) {
       func = new FunctionEntry(name);
       this.codeMap_.addCode(funcAddr, func);
     } else if (func.name !== name) {
@@ -467,7 +467,7 @@ export class Profile {
       func.name = name;
     }
     let entry = this.codeMap_.findDynamicEntryByStartAddress(start);
-    if (entry !== null) {
+    if (entry) {
       if (entry.size === size && entry.func === func) {
         // Entry state has changed.
         entry.state = state;
@@ -476,7 +476,7 @@ export class Profile {
         entry = null;
       }
     }
-    if (entry === null) {
+    if (!entry) {
       entry = new DynamicFuncCodeEntry(size, type, func, state);
       this.codeMap_.addCode(start, entry);
     }
@@ -493,7 +493,7 @@ export class Profile {
     try {
       this.codeMap_.moveCode(from, to);
     } catch (e) {
-      this.handleUnknownCode(kProfileOperationMove, from);
+      this.handleUnknownCode(Profile.Operation.MOVE, from);
     }
   }
 
@@ -510,7 +510,7 @@ export class Profile {
     try {
       this.codeMap_.deleteCode(start);
     } catch (e) {
-      this.handleUnknownCode(kProfileOperationDelete, start);
+      this.handleUnknownCode(Profile.Operation.DELETE, start);
     }
   }
 
@@ -521,16 +521,16 @@ export class Profile {
         inliningPositions, inlinedFunctions) {
     const script = this.getOrCreateScript(scriptId);
     const entry = this.codeMap_.findDynamicEntryByStartAddress(start);
-    if (entry === null) return;
+    if (!entry) return;
     // Resolve the inlined functions list.
     if (inlinedFunctions.length > 0) {
       inlinedFunctions = inlinedFunctions.substring(1).split("S");
       for (let i = 0; i < inlinedFunctions.length; i++) {
         const funcAddr = parseInt(inlinedFunctions[i]);
         const func = this.codeMap_.findDynamicEntryByStartAddress(funcAddr);
-        if (func === null || func.funcId === undefined) {
+        if (!func || func.funcId === undefined) {
           // TODO: fix
-          this.warnings.add(`Could not find function ${inlinedFunctions[i]}`);
+          console.warn(`Could not find function ${inlinedFunctions[i]}`);
           inlinedFunctions[i] = null;
         } else {
           inlinedFunctions[i] = func.funcId;
@@ -547,9 +547,7 @@ export class Profile {
 
   addDisassemble(start, kind, disassemble) {
     const entry = this.codeMap_.findDynamicEntryByStartAddress(start);
-    if (entry !== null) {
-      this.getOrCreateSourceInfo(entry).setDisassemble(disassemble);
-    }
+    if (entry) this.getOrCreateSourceInfo(entry).setDisassemble(disassemble);
     return entry;
   }
 
@@ -565,7 +563,7 @@ export class Profile {
 
   getOrCreateScript(id) {
     let script = this.scripts_[id];
-    if (script === undefined) {
+    if (!script) {
       script = new Script(id);
       this.scripts_[id] = script;
     }
@@ -625,7 +623,7 @@ export class Profile {
     for (let i = 0; i < stack.length; ++i) {
       const pc = stack[i];
       const entry = this.codeMap_.findEntry(pc);
-      if (entry !== null) {
+      if (entry) {
         entryStack.push(entry);
         const name = entry.getName();
         if (i === 0 && (entry.type === 'CPP' || entry.type === 'SHARED_LIB')) {
@@ -638,13 +636,12 @@ export class Profile {
           nameStack.push(name);
         }
       } else {
-        this.handleUnknownCode(kProfileOperationTick, pc, i);
+        this.handleUnknownCode(Profile.Operation.TICK, pc, i);
         if (i === 0) nameStack.push("UNKNOWN");
         entryStack.push(pc);
       }
       if (look_for_first_c_function && i > 0 &&
-          (entry === null || entry.type !== 'CPP')
-          && last_seen_c_function !== '') {
+          (!entry || entry.type !== 'CPP') && last_seen_c_function !== '') {
         if (this.c_entries_[last_seen_c_function] === undefined) {
           this.c_entries_[last_seen_c_function] = 0;
         }
@@ -719,7 +716,7 @@ export class Profile {
   getFlatProfile(opt_label) {
     const counters = new CallTree();
     const rootLabel = opt_label || CallTree.ROOT_NODE_LABEL;
-    const precs = {__proto__:null};
+    const precs = {};
     precs[rootLabel] = 0;
     const root = counters.findOrAddChild(rootLabel);
 
@@ -971,7 +968,9 @@ class CallTree {
    * @param {Array<string>} path Call path.
    */
   addPath(path) {
-    if (path.length == 0) return;
+    if (path.length == 0) {
+      return;
+    }
     let curr = this.root_;
     for (let i = 0; i < path.length; ++i) {
       curr = curr.findOrAddChild(path[i]);
@@ -1085,14 +1084,21 @@ class CallTree {
  * @param {CallTreeNode} opt_parent Node parent.
  */
 class CallTreeNode {
+  /**
+   * Node self weight (how many times this node was the last node in
+   * a call path).
+   * @type {number}
+   */
+  selfWeight = 0;
+
+  /**
+   * Node total weight (includes weights of all children).
+   * @type {number}
+   */
+  totalWeight = 0;
+  children = {};
 
   constructor(label, opt_parent) {
-    // Node self weight (how many times this node was the last node in
-    // a call path).
-    this.selfWeight = 0;
-    // Node total weight (includes weights of all children).
-    this.totalWeight = 0;
-    this. children = { __proto__:null };
     this.label = label;
     this.parent = opt_parent;
   }
@@ -1135,8 +1141,7 @@ class CallTreeNode {
    * @param {string} label Child node label.
    */
   findChild(label) {
-    const found = this.children[label];
-    return found === undefined ? null : found;
+    return this.children[label] || null;
   }
 
   /**
@@ -1146,9 +1151,7 @@ class CallTreeNode {
    * @param {string} label Child node label.
    */
   findOrAddChild(label) {
-    const found = this.findChild(label)
-    if (found === null) return this.addChild(label);
-    return found;
+    return this.findChild(label) || this.addChild(label);
   }
 
   /**
@@ -1168,7 +1171,7 @@ class CallTreeNode {
    * @param {function(CallTreeNode)} f Visitor function.
    */
   walkUpToRoot(f) {
-    for (let curr = this; curr !== null; curr = curr.parent) {
+    for (let curr = this; curr != null; curr = curr.parent) {
       f(curr);
     }
   }
