@@ -108,19 +108,19 @@ export class TimelineTrackStackedBase extends TimelineTrackBase {
   }
 
   _drawItem(item, i, outline = false) {
-    const x = roundTo3Digits(this.timeToPosition(item.time));
+    const x = this.timeToPosition(item.time);
     const y = (item.depth + 1) * kItemHeight;
-    let width = roundTo3Digits(item.duration * this._timeToPixel);
+    let width = item.duration * this._timeToPixel;
     if (outline) {
       return `<rect x=${x} y=${y} width=${width} height=${
-          kItemHeight - 1} class=fs />`;
+          kItemHeight - 1} class=flameSelected />`;
     }
     let color = this._legend.colorForType(item.type);
     if (i % 2 == 1) {
       color = CSSColor.darken(color, 20);
     }
     return `<rect x=${x} y=${y} width=${width} height=${kItemHeight - 1} fill=${
-        color} class=f />`;
+        color} class=flame />`;
   }
 
   _drawItemText(item) {
@@ -141,8 +141,4 @@ export class TimelineTrackStackedBase extends TimelineTrackBase {
     buffer += `<text x=${x + 1} y=${y - 3} class=txt>${text}</text>`
     return buffer;
   }
-}
-
-function roundTo3Digits(value) {
-  return ((value * 1000) | 0) / 1000;
 }
