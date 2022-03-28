@@ -19,13 +19,6 @@ function nodeToStringKey(n: GNode) {
   return "" + n.id;
 }
 
-function nodeOriginToStringKey(n: GNode): string | undefined {
-  if (n.nodeLabel && n.nodeLabel.origin) {
-    return "" + n.nodeLabel.origin.nodeId;
-  }
-  return undefined;
-}
-
 interface GraphState {
   showTypes: boolean;
   selection: MySelection;
@@ -139,7 +132,7 @@ export class GraphView extends PhaseView {
       }
     };
 
-    view.state.selection = new MySelection(nodeToStringKey, nodeOriginToStringKey);
+    view.state.selection = new MySelection(nodeToStringKey);
 
     const defs = svg.append('svg:defs');
     defs.append('svg:marker')
@@ -261,14 +254,12 @@ export class GraphView extends PhaseView {
     this.toolbox.appendChild(createImgInput("toggle-types", "toggle types",
       partial(this.toggleTypesAction, this)));
 
-    const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
-
     this.phaseName = data.name;
-    this.createGraph(data.data, adaptedSelection);
+    this.createGraph(data.data, rememberedSelection);
     this.broker.addNodeHandler(this.selectionHandler);
 
-    if (adaptedSelection != null && adaptedSelection.size > 0) {
-      this.attachSelection(adaptedSelection);
+    if (rememberedSelection != null && rememberedSelection.size > 0) {
+      this.attachSelection(rememberedSelection);
       this.connectVisibleSelectedNodes();
       this.viewSelection();
     } else {
@@ -295,14 +286,14 @@ export class GraphView extends PhaseView {
     this.deleteContent();
   }
 
-  createGraph(data, selection) {
+  createGraph(data, rememberedSelection) {
     this.graph = new Graph(data);
 
     this.showControlAction(this);
 
-    if (selection != undefined) {
+    if (rememberedSelection != undefined) {
       for (const n of this.graph.nodes()) {
-        n.visible = n.visible || selection.has(nodeToStringKey(n));
+        n.visible = n.visible || rememberedSelection.has(nodeToStringKey(n));
       }
     }
 
@@ -366,33 +357,6 @@ export class GraphView extends PhaseView {
         this.setAttribute('transform', transform);
       }
     });
-  }
-
-  adaptSelectionToCurrentPhase(data, selection) {
-    const updatedGraphSelection = new Set();
-    if (!data || !(selection instanceof Map)) return updatedGraphSelection;
-    // Adding survived nodes (with the same id)
-    for (const node of data.nodes) {
-      const stringKey = this.state.selection.stringKey(node);
-      if (selection.has(stringKey)) {
-        updatedGraphSelection.add(stringKey);
-      }
-    }
-    // Adding children of nodes
-    for (const node of data.nodes) {
-      const originStringKey = this.state.selection.originStringKey(node);
-      if (originStringKey && selection.has(originStringKey)) {
-        updatedGraphSelection.add(this.state.selection.stringKey(node));
-      }
-    }
-    // Adding ancestors of nodes
-    selection.forEach(selectedNode => {
-      const originStringKey = this.state.selection.originStringKey(selectedNode);
-      if (originStringKey) {
-        updatedGraphSelection.add(originStringKey);
-      }
-    });
-    return updatedGraphSelection;
   }
 
   attachSelection(s) {
