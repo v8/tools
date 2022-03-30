@@ -2,24 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 import {formatBytes} from '../helper.mjs';
+
 import {LogEntry} from './log.mjs';
-
-class CodeString {
-  constructor(string) {
-    if (typeof string !== 'string') {
-      throw new Error('Expected string');
-    }
-    this.string = string;
-  }
-
-  get isCode() {
-    return true;
-  }
-
-  toString() {
-    return this.string;
-  }
-}
 
 export class DeoptLogEntry extends LogEntry {
   constructor(
@@ -70,7 +54,6 @@ export class CodeLogEntry extends LogEntry {
     this._kind = kind;
     this._kindName = kindName;
     this._entry = entry;
-    this._feedbackVector = undefined;
     entry.logEntry = this;
   }
 
@@ -80,10 +63,6 @@ export class CodeLogEntry extends LogEntry {
 
   get isBuiltinKind() {
     return this._kindName === 'Builtin';
-  }
-
-  get isBytecodeKind() {
-    return this._kindName === 'Unopt';
   }
 
   get kindName() {
@@ -115,17 +94,6 @@ export class CodeLogEntry extends LogEntry {
     return entries.map(each => each.logEntry);
   }
 
-  get feedbackVector() {
-    return this._feedbackVector;
-  }
-
-  setFeedbackVector(fbv) {
-    if (this._feedbackVector) {
-      throw new Error('Double setting FeedbackVector');
-    }
-    this._feedbackVector = fbv;
-  }
-
   toString() {
     return `Code(${this.type})`;
   }
@@ -133,69 +101,13 @@ export class CodeLogEntry extends LogEntry {
   get toolTipDict() {
     const dict = super.toolTipDict;
     dict.size = formatBytes(dict.size);
-    dict.source = new CodeString(dict.source);
-    dict.code = new CodeString(dict.code);
     return dict;
   }
 
   static get propertyNames() {
     return [
       'functionName', 'sourcePosition', 'kindName', 'size', 'type', 'kind',
-      'script', 'source', 'code', 'feedbackVector', 'variants'
-    ];
-  }
-}
-
-export class FeedbackVectorEntry extends LogEntry {
-  constructor(
-      timestamp, codeEntry, fbvAddress, length, optimizationMarker,
-      optimizationTier, invocationCount, profilerTicks, string) {
-    super('FeedbackVector', timestamp);
-    this._length = length;
-    this._code = codeEntry;
-    this._string = string;
-    this._optimizationMarker = optimizationMarker;
-    this._optimizationTier = optimizationTier;
-    this._invocationCount = invocationCount;
-    this._profilerTicks = profilerTicks;
-  }
-
-  toString() {
-    return `FeedbackVector(l=${this.length})`
-  }
-
-  get length() {
-    return this._length;
-  }
-
-  get code() {
-    return this._code;
-  }
-
-  get string() {
-    return this._string;
-  }
-
-  get optimizationMarker() {
-    return this._optimizationMarker;
-  }
-
-  get optimizationTier() {
-    return this._optimizationTier;
-  }
-
-  get invocationCount() {
-    return this._invocationCount;
-  }
-
-  get profilerTicks() {
-    return this._profilerTicks;
-  }
-
-  static get propertyNames() {
-    return [
-      'length', 'length', 'code', 'optimizationMarker', 'optimizationTier',
-      'invocationCount', 'profilerTicks', 'string'
+      'script', 'source', 'code', 'variants'
     ];
   }
 }
