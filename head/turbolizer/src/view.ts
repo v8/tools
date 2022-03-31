@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import { GNode } from "./node";
-
 export abstract class View {
   protected container: HTMLElement;
   protected divNode: HTMLElement;
@@ -24,8 +22,8 @@ export abstract class View {
 }
 
 export abstract class PhaseView extends View {
-  public abstract initializeContent(data: any, rememberedSelection: Map<string, GNode>): void;
-  public abstract detachSelection(): Map<string, GNode>;
+  public abstract initializeContent(data: any, rememberedSelection: Set<any>): void;
+  public abstract detachSelection(): Set<string>;
   public abstract onresize(): void;
   public abstract searchInputAction(searchInput: HTMLInputElement, e: Event, onlyVisible: boolean): void;
 
