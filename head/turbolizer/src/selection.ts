@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import { GNode } from "./node";
-
 export class MySelection {
   selection: any;
   stringKey: (o: any) => string;
-  originStringKey: (node: GNode) => string;
 
-  constructor(stringKeyFnc, originStringKeyFnc?) {
+  constructor(stringKeyFnc) {
     this.selection = new Map();
     this.stringKey = stringKeyFnc;
-    this.originStringKey = originStringKeyFnc;
   }
 
   isEmpty(): boolean {
@@ -54,7 +50,7 @@ export class MySelection {
   }
 
   detachSelection() {
-    const result = this.selection;
+    const result = this.selectedKeys();
     this.clear();
     return result;
   }
