@@ -87,9 +87,6 @@ DOM.defineCustomElement(
       set content(content) {
         if (!content) return this.hide();
         this.show();
-        if (this._content === content) return;
-        this._content = content;
-
         if (typeof content === 'string') {
           this.contentNode.innerHTML = content;
           this.contentNode.className = 'textContent';
@@ -115,15 +112,12 @@ DOM.defineCustomElement(
       }
 
       hide() {
-        this._content = undefined;
-        if (this._isHidden) return;
         this._isHidden = true;
         this.bodyNode.style.display = 'none';
         this.targetNode = undefined;
       }
 
       show() {
-        if (!this._isHidden) return;
         this.bodyNode.style.display = 'block';
         this._isHidden = false;
       }

@@ -1543,27 +1543,23 @@ code is governed by a BSD-style license that can be found in the LICENSE file.
       // Instead of the default multi-page JSON:
       //    {"Version 1": { "Page 1": ..., ...}, "Version 2": {...}, ...}
       // In this case insert a single "Default" version as top-level entry.
-      const  firstProperty = (object) => {
+      let firstProperty = (object) => {
         for (let key in object) return object[key];
       };
-      const maybeMetrics = firstProperty(json);
-      const maybeMetric = firstProperty(maybeMetrics);
-      const tempName = name ? name : new Date().toISOString();
-      const getFileName =
-          () => window.prompt('Enter a name for the loaded file:', tempName);
-      if ('count' in maybeMetric && 'duration' in maybeMetric) {
+      let maybePage = firstProperty(json);
+      let maybeMetrics = firstProperty(maybePage);
+      let tempName = name ? name : new Date().toISOString();
+      tempName = window.prompt('Enter a name for the loaded file:', tempName);
+      if ('count' in maybeMetrics && 'duration' in maybeMetrics) {
         return {
-          [getFileName()]: json
+          [tempName]: json
         }
       }
       // Legacy fallback where the metrics are encoded as arrays:
       //  { PAGE: [[metric_name, ...], [...], ]}
-      // Also, make sure we don't have the versioned array-style:
-      // { VERSION: { PAGE: [[metric_name, ...], [...], ]}, ...}
-      const innerArray = firstProperty(maybeMetrics);
-      if (Array.isArray(maybeMetric) && !Array.isArray(innerArray)) {
+      if (Array.isArray(maybeMetrics)) {
         return {
-          [getFileName()]: json
+          [tempName]: json
         }
       }
       return json
