@@ -28,15 +28,6 @@
 import { SplayTree } from "./splaytree.mjs";
 
 /**
-* The number of alignment bits in a page address.
-*/
-const kPageAlignment = 12;
-/**
-* Page size in bytes.
-*/
-const kPageSize =  1 << kPageAlignment;
-
-/**
  * Constructs a mapper that maps addresses into code entries.
  *
  * @constructor
@@ -65,7 +56,19 @@ export class CodeMap {
   /**
    * Map of memory pages occupied with static code.
    */
-  pages_ = new Set();
+  pages_ = [];
+
+
+  /**
+   * The number of alignment bits in a page address.
+   */
+  static PAGE_ALIGNMENT = 12;
+
+
+  /**
+   * Page size in bytes.
+   */
+  static PAGE_SIZE =  1 << CodeMap.PAGE_ALIGNMENT;
 
 
   /**
@@ -127,8 +130,9 @@ export class CodeMap {
    * @private
    */
   markPages_(start, end) {
-    for (let addr = start; addr <= end; addr += kPageSize) {
-      this.pages_.add((addr / kPageSize) | 0);
+    for (let addr = start; addr <= end;
+        addr += CodeMap.PAGE_SIZE) {
+      this.pages_[(addr / CodeMap.PAGE_SIZE)|0] = 1;
     }
   }
 
@@ -140,7 +144,7 @@ export class CodeMap {
     let addr = end - 1;
     while (addr >= start) {
       const node = tree.findGreatestLessThan(addr);
-      if (node === null) break;
+      if (!node) break;
       const start2 = node.key, end2 = start2 + node.value.size;
       if (start2 < end && start < end2) to_delete.push(start2);
       addr = start2 - 1;
@@ -160,7 +164,7 @@ export class CodeMap {
    */
   findInTree_(tree, addr) {
     const node = tree.findGreatestLessThan(addr);
-    return node !== null && this.isAddressBelongsTo_(addr, node) ? node : null;
+    return node && this.isAddressBelongsTo_(addr, node) ? node : null;
   }
 
   /**
@@ -171,23 +175,22 @@ export class CodeMap {
    * @param {number} addr Address.
    */
   findAddress(addr) {
-    const pageAddr = (addr / kPageSize) | 0;
-    if (this.pages_.has(pageAddr)) {
+    const pageAddr = (addr / CodeMap.PAGE_SIZE)|0;
+    if (pageAddr in this.pages_) {
       // Static code entries can contain "holes" of unnamed code.
       // In this case, the whole library is assigned to this address.
       let result = this.findInTree_(this.statics_, addr);
-      if (result === null) {
+      if (!result) {
         result = this.findInTree_(this.libraries_, addr);
-        if (result === null) return null;
+        if (!result) return null;
       }
       return {entry: result.value, offset: addr - result.key};
     }
-    const max = this.dynamics_.findMax();
-    if (max === null) return null;
     const min = this.dynamics_.findMin();
-    if (addr >= min.key && addr < (max.key + max.value.size)) {
+    const max = this.dynamics_.findMax();
+    if (max != null && addr < (max.key + max.value.size) && addr >= min.key) {
       const dynaEntry = this.findInTree_(this.dynamics_, addr);
-      if (dynaEntry === null) return null;
+      if (dynaEntry == null) return null;
       // Dedupe entry name.
       const entry = dynaEntry.value;
       if (!entry.nameUpdated_) {
@@ -207,7 +210,7 @@ export class CodeMap {
    */
   findEntry(addr) {
     const result = this.findAddress(addr);
-    return result !== null ? result.entry : null;
+    return result ? result.entry : null;
   }
 
   /**
@@ -217,7 +220,7 @@ export class CodeMap {
    */
   findDynamicEntryByStartAddress(addr) {
     const node = this.dynamics_.find(addr);
-    return node !== null ? node.value : null;
+    return node ? node.value : null;
   }
 
   /**
