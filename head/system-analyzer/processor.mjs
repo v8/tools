@@ -7,7 +7,7 @@ import {Profile} from '../profile.mjs';
 import {RemoteLinuxCppEntriesProvider, RemoteMacOSCppEntriesProvider} from '../tickprocessor.mjs'
 
 import {ApiLogEntry} from './log/api.mjs';
-import {CodeLogEntry, DeoptLogEntry, FeedbackVectorEntry, SharedLibLogEntry} from './log/code.mjs';
+import {CodeLogEntry, DeoptLogEntry, SharedLibLogEntry} from './log/code.mjs';
 import {IcLogEntry} from './log/ic.mjs';
 import {Edge, MapLogEntry} from './log/map.mjs';
 import {TickLogEntry} from './log/tick.mjs';
@@ -59,7 +59,6 @@ export class Processor extends LogReader {
   _formatPCRegexp = /(.*):[0-9]+:[0-9]+$/;
   _lastTimestamp = 0;
   _lastCodeLogEntry;
-  _lastTickLogEntry;
   _chunkRemainder = '';
   MAJOR_VERSION = 7;
   MINOR_VERSION = 6;
@@ -115,13 +114,6 @@ export class Processor extends LogReader {
           parseString,
         ],
         processor: this.processCodeDisassemble
-      },
-      'feedback-vector': {
-        parsers: [
-          parseInt, parseString, parseInt, parseInt, parseString, parseString,
-          parseInt, parseInt, parseString
-        ],
-        processor: this.processFeedbackVector
       },
       'script-source': {
         parsers: [parseInt, parseString, parseString],
@@ -249,9 +241,6 @@ export class Processor extends LogReader {
 
   async finalize() {
     await this._chunkConsumer.consumeAll();
-    if (this._profile.warnings.size > 0) {
-      console.warn('Found profiler warnings:', this._profile.warnings);
-    }
     // TODO(cbruni): print stats;
     this._mapTimeline.transitions = new Map();
     let id = 0;
@@ -339,21 +328,6 @@ export class Processor extends LogReader {
     logEntry.sourcePosition = script.addSourcePosition(line, column, logEntry);
   }
 
-  processFeedbackVector(
-      timestamp, fbv_address, fbv_length, instructionStart, optimization_marker,
-      optimization_tier, invocation_count, profiler_ticks, fbv_string) {
-    const codeEntry = this._profile.findEntry(instructionStart);
-    if (!codeEntry) {
-      console.warn('Didn\'t find code for FBV', {fbv, instructionStart});
-      return;
-    }
-    const fbv = new FeedbackVectorEntry(
-        timestamp, codeEntry.logEntry, fbv_address, fbv_length,
-        optimization_marker, optimization_tier, invocation_count,
-        profiler_ticks, fbv_string);
-    codeEntry.logEntry.setFeedbackVector(fbv);
-  }
-
   processScriptSource(scriptId, url, source) {
     this._profile.addScriptSource(scriptId, url, source);
   }
@@ -391,12 +365,7 @@ export class Processor extends LogReader {
     const entryStack = this._profile.recordTick(
         time_ns, vmState,
         this.processStack(pc, tos_or_external_callback, stack));
-    const newEntry = new TickLogEntry(time_ns, vmState, entryStack);
-    this._tickTimeline.push(newEntry);
-    if (this._lastTickLogEntry !== undefined) {
-      this._lastTickLogEntry.end(time_ns);
-    }
-    this._lastTickLogEntry = newEntry;
+    this._tickTimeline.push(new TickLogEntry(time_ns, vmState, entryStack))
   }
 
   processCodeSourceInfo(
