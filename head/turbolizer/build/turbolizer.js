@@ -620,8 +620,8 @@
                       if (phase.nodeIdToInstructionRange) {
                           this.readNodeIdToInstructionRange(phase.nodeIdToInstructionRange);
                       }
-                      if (phase.blockIdtoInstructionRange) {
-                          this.readBlockIdToInstructionRange(phase.blockIdtoInstructionRange);
+                      if (phase.blockIdToInstructionRange) {
+                          this.readBlockIdToInstructionRange(phase.blockIdToInstructionRange);
                       }
                       if (phase.instructionOffsetToPCOffset) {
                           this.readInstructionOffsetToPCOffset(phase.instructionOffsetToPCOffset);
@@ -952,9 +952,10 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class MySelection {
-      constructor(stringKeyFnc) {
+      constructor(stringKeyFnc, originStringKeyFnc) {
           this.selection = new Map();
           this.stringKey = stringKeyFnc;
+          this.originStringKey = originStringKeyFnc;
       }
       isEmpty() {
           return this.selection.size == 0;
@@ -991,7 +992,7 @@
           return result;
       }
       detachSelection() {
-          const result = this.selectedKeys();
+          const result = this.selection;
           this.clear();
           return result;
       }
@@ -1008,7 +1009,7 @@
           view.instructionIdToHtmlElementsMap = new Map();
           view.nodeIdToHtmlElementsMap = new Map();
           view.blockIdToHtmlElementsMap = new Map();
-          view.blockIdtoNodeIds = new Map();
+          view.blockIdToNodeIds = new Map();
           view.nodeIdToBlockId = [];
           view.selection = new MySelection(anyToString);
           view.blockSelection = new MySelection(anyToString);
@@ -1115,10 +1116,10 @@
       }
       addNodeIdToBlockId(anyNodeId, anyBlockId) {
           const blockId = anyToString(anyBlockId);
-          if (!this.blockIdtoNodeIds.has(blockId)) {
-              this.blockIdtoNodeIds.set(blockId, []);
+          if (!this.blockIdToNodeIds.has(blockId)) {
+              this.blockIdToNodeIds.set(blockId, []);
           }
-          this.blockIdtoNodeIds.get(blockId).push(anyToString(anyNodeId));
+          this.blockIdToNodeIds.get(blockId).push(anyToString(anyNodeId));
           this.nodeIdToBlockId[anyNodeId] = blockId;
       }
       blockIdsForNodeIds(nodeIds) {
@@ -7868,7 +7869,7 @@
   const edgeToStr = (e) => e.stringID();
 
   // Copyright 2015 the V8 project authors. All rights reserved.
-  const DEFAULT_NODE_ROW_SEPARATION = 130;
+  const DEFAULT_NODE_ROW_SEPARATION = 150;
   function newGraphOccupation(graph) {
       const isSlotFilled = [];
       let nodeOccupation = [];
@@ -8335,6 +8336,12 @@
   function nodeToStringKey(n) {
       return "" + n.id;
   }
+  function nodeOriginToStringKey(n) {
+      if (n.nodeLabel && n.nodeLabel.origin) {
+          return "" + n.nodeLabel.origin.nodeId;
+      }
+      return undefined;
+  }
   class GraphView extends PhaseView {
       createViewElement() {
           const pane = document.createElement('div');
@@ -8417,7 +8424,7 @@
                   view.updateGraphVisibility();
               }
           };
-          view.state.selection = new MySelection(nodeToStringKey);
+          view.state.selection = new MySelection(nodeToStringKey, nodeOriginToStringKey);
           const defs = svg$$1.append('svg:defs');
           defs.append('svg:marker')
               .attr('id', 'end-arrow')
@@ -8520,11 +8527,12 @@
           this.toolbox.appendChild(createImgInput("hide-selected", "hide selected", partial(this.hideSelectedAction, this)));
           this.toolbox.appendChild(createImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this)));
           this.toolbox.appendChild(createImgInput("toggle-types", "toggle types", partial(this.toggleTypesAction, this)));
+          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
           this.phaseName = data.name;
-          this.createGraph(data.data, rememberedSelection);
+          this.createGraph(data.data, adaptedSelection);
           this.broker.addNodeHandler(this.selectionHandler);
-          if (rememberedSelection != null && rememberedSelection.size > 0) {
-              this.attachSelection(rememberedSelection);
+          if (adaptedSelection != null && adaptedSelection.size > 0) {
+              this.attachSelection(adaptedSelection);
               this.connectVisibleSelectedNodes();
               this.viewSelection();
           }
@@ -8548,12 +8556,12 @@
           super.hide();
           this.deleteContent();
       }
-      createGraph(data, rememberedSelection) {
+      createGraph(data, selection$$1) {
           this.graph = new Graph(data);
           this.showControlAction(this);
-          if (rememberedSelection != undefined) {
+          if (selection$$1 != undefined) {
               for (const n of this.graph.nodes()) {
-                  n.visible = n.visible || rememberedSelection.has(nodeToStringKey(n));
+                  n.visible = n.visible || selection$$1.has(nodeToStringKey(n));
               }
           }
           this.graph.forEachEdge(e => e.visible = e.source.visible && e.target.visible);
@@ -8616,6 +8624,33 @@
                   this.setAttribute('transform', transform$$1);
               }
           });
+      }
+      adaptSelectionToCurrentPhase(data, selection$$1) {
+          const updatedGraphSelection = new Set();
+          if (!data || !(selection$$1 instanceof Map))
+              return updatedGraphSelection;
+          // Adding survived nodes (with the same id)
+          for (const node of data.nodes) {
+              const stringKey = this.state.selection.stringKey(node);
+              if (selection$$1.has(stringKey)) {
+                  updatedGraphSelection.add(stringKey);
+              }
+          }
+          // Adding children of nodes
+          for (const node of data.nodes) {
+              const originStringKey = this.state.selection.originStringKey(node);
+              if (originStringKey && selection$$1.has(originStringKey)) {
+                  updatedGraphSelection.add(this.state.selection.stringKey(node));
+              }
+          }
+          // Adding ancestors of nodes
+          selection$$1.forEach(selectedNode => {
+              const originStringKey = this.state.selection.originStringKey(selectedNode);
+              if (originStringKey) {
+                  updatedGraphSelection.add(originStringKey);
+              }
+          });
+          return updatedGraphSelection;
       }
       attachSelection(s) {
           if (!(s instanceof Set))
@@ -10477,6 +10512,12 @@
               if (e.keyCode == 191) { // keyCode == '/'
                   searchInput.focus();
               }
+              else if (e.keyCode == 78) { // keyCode == 'n'
+                  view.displayNextGraphPhase();
+              }
+              else if (e.keyCode == 66) { // keyCode == 'b'
+                  view.displayPreviousGraphPhase();
+              }
           });
           searchInput.setAttribute("value", window.sessionStorage.getItem("lastSearch") || "");
           this.graph = new GraphView(this.divNode, selectionBroker, view.displayPhaseByName.bind(this), toolbox.querySelector(".graph-toolbox"));
@@ -10532,6 +10573,32 @@
           const phaseId = this.sourceResolver.getPhaseIdByName(phaseName);
           this.selectMenu.selectedIndex = phaseId;
           this.displayPhase(this.sourceResolver.getPhase(phaseId), selection);
+      }
+      displayNextGraphPhase() {
+          let nextPhaseIndex = this.selectMenu.selectedIndex + 1;
+          while (nextPhaseIndex < this.sourceResolver.phases.length) {
+              const nextPhase = this.sourceResolver.getPhase(nextPhaseIndex);
+              if (nextPhase.type == "graph") {
+                  this.selectMenu.selectedIndex = nextPhaseIndex;
+                  window.sessionStorage.setItem("lastSelectedPhase", nextPhaseIndex.toString());
+                  this.displayPhase(nextPhase);
+                  break;
+              }
+              nextPhaseIndex += 1;
+          }
+      }
+      displayPreviousGraphPhase() {
+          let previousPhaseIndex = this.selectMenu.selectedIndex - 1;
+          while (previousPhaseIndex >= 0) {
+              const previousPhase = this.sourceResolver.getPhase(previousPhaseIndex);
+              if (previousPhase.type == "graph") {
+                  this.selectMenu.selectedIndex = previousPhaseIndex;
+                  window.sessionStorage.setItem("lastSelectedPhase", previousPhaseIndex.toString());
+                  this.displayPhase(previousPhase);
+                  break;
+              }
+              previousPhaseIndex -= 1;
+          }
       }
       hideCurrentPhase() {
           let rememberedSelection = null;
