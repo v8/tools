@@ -56,13 +56,13 @@ with Step(f'Getting V8 checkout in: {V8_GIT}'):
 
 def map_branch_name(branch):
   version = branch.split('-')[0]
-  if version == 'lkgr' or version == 'master' or version == 'main':
+  if version == 'lkgr' or version == 'main':
     return 'head'
   return f"v{version}"
 
 
 def filter_branch_name(name):
-  return name.endswith("-lkgr") or name == 'master' or name == 'main'
+  return name.endswith("-lkgr") or name == 'main'
 
 
 with Step('List Branches'):
