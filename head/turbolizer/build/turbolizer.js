@@ -7644,6 +7644,7 @@
   const DEFAULT_NODE_BUBBLE_RADIUS = 12;
   const NODE_INPUT_WIDTH = 50;
   const MINIMUM_NODE_OUTPUT_APPROACH = 15;
+  const MINIMUM_EDGE_SEPARATION = 20;
   const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
   class GNode {
       constructor(nodeLabel) {
@@ -7798,75 +7799,6 @@
       }
   }
   const nodeToStr = (n) => "N" + n.id;
-
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  const MINIMUM_EDGE_SEPARATION = 20;
-  class Edge {
-      constructor(target, index, source, type) {
-          this.target = target;
-          this.source = source;
-          this.index = index;
-          this.type = type;
-          this.backEdgeNumber = 0;
-          this.visible = false;
-      }
-      stringID() {
-          return this.source.id + "," + this.index + "," + this.target.id;
-      }
-      isVisible() {
-          return this.visible && this.source.visible && this.target.visible;
-      }
-      getInputHorizontalPosition(graph, showTypes) {
-          if (this.backEdgeNumber > 0) {
-              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
-          }
-          const source = this.source;
-          const target = this.target;
-          const index = this.index;
-          const inputX = target.x + target.getInputX(index);
-          const inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          if (inputApproach > outputApproach) {
-              return inputX;
-          }
-          else {
-              const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
-              return (target.x < source.x)
-                  ? (target.x + target.getTotalNodeWidth() + inputOffset)
-                  : (target.x - inputOffset);
-          }
-      }
-      generatePath(graph, showTypes) {
-          const target = this.target;
-          const source = this.source;
-          const inputX = target.x + target.getInputX(this.index);
-          const arrowheadHeight = 7;
-          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
-          const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-          let inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
-          let result = "M" + outputX + "," + outputY +
-              "L" + outputX + "," + outputApproach +
-              "L" + horizontalPos + "," + outputApproach;
-          if (horizontalPos != inputX) {
-              result += "L" + horizontalPos + "," + inputApproach;
-          }
-          else {
-              if (inputApproach < outputApproach) {
-                  inputApproach = outputApproach;
-              }
-          }
-          result += "L" + inputX + "," + inputApproach +
-              "L" + inputX + "," + inputY;
-          return result;
-      }
-      isBackEdge() {
-          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
-      }
-  }
-  const edgeToStr = (e) => e.stringID();
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   const DEFAULT_NODE_ROW_SEPARATION = 150;
@@ -8248,6 +8180,85 @@
           }
       });
   }
+
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  const BEZIER_CONSTANT = 0.3;
+  class Edge {
+      constructor(target, index, source, type) {
+          this.target = target;
+          this.source = source;
+          this.index = index;
+          this.type = type;
+          this.backEdgeNumber = 0;
+          this.visible = false;
+      }
+      stringID() {
+          return this.source.id + "," + this.index + "," + this.target.id;
+      }
+      isVisible() {
+          return this.visible && this.source.visible && this.target.visible;
+      }
+      getInputHorizontalPosition(graph, showTypes) {
+          if (this.backEdgeNumber > 0) {
+              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
+          }
+          const source = this.source;
+          const target = this.target;
+          const index = this.index;
+          const inputX = target.x + target.getInputX(index);
+          const inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          if (inputApproach > outputApproach) {
+              return inputX;
+          }
+          else {
+              const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
+              return (target.x < source.x)
+                  ? (target.x + target.getTotalNodeWidth() + inputOffset)
+                  : (target.x - inputOffset);
+          }
+      }
+      generatePath(graph, showTypes) {
+          const target = this.target;
+          const source = this.source;
+          const inputX = target.x + target.getInputX(this.index);
+          const arrowheadHeight = 7;
+          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
+          const outputX = source.x + source.getOutputX();
+          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+          let inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
+          let result;
+          if (inputY < outputY) {
+              result = `M ${outputX} ${outputY}
+                L ${outputX} ${outputApproach}
+                L ${horizontalPos} ${outputApproach}`;
+              if (horizontalPos != inputX) {
+                  result += `L ${horizontalPos} ${inputApproach}`;
+              }
+              else {
+                  if (inputApproach < outputApproach) {
+                      inputApproach = outputApproach;
+                  }
+              }
+              result += `L ${inputX} ${inputApproach}
+                 L ${inputX} ${inputY}`;
+          }
+          else {
+              const controlY = outputY + (inputY - outputY) * BEZIER_CONSTANT;
+              result = `M ${outputX} ${outputY}
+                C ${outputX} ${controlY},
+                  ${inputX} ${outputY},
+                  ${inputX} ${inputY}`;
+          }
+          return result;
+      }
+      isBackEdge() {
+          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
+      }
+  }
+  const edgeToStr = (e) => e.stringID();
 
   class Graph {
       constructor(data) {
