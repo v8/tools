@@ -916,8 +916,10 @@
   const DISASSEMBLY_COLLAPSE_ID = 'disassembly-shrink';
   const DISASSEMBLY_EXPAND_ID = 'disassembly-expand';
   const RANGES_PANE_ID = "ranges";
-  const RANGES_COLLAPSE_ID = "ranges-shrink";
-  const RANGES_EXPAND_ID = "ranges-expand";
+  const RANGES_COLLAPSE_VERT_ID = "ranges-shrink-vert";
+  const RANGES_EXPAND_VERT_ID = "ranges-expand-vert";
+  const RANGES_COLLAPSE_HOR_ID = "ranges-shrink-hor";
+  const RANGES_EXPAND_HOR_ID = "ranges-expand-hor";
   const UNICODE_BLOCK = '&#9611;';
   const PROF_COLS = [
       { perc: 0, col: { r: 255, g: 255, b: 255 } },
@@ -5858,8 +5860,6 @@
   var saturday = weekday(6);
 
   var sundays = sunday.range;
-  var mondays = monday.range;
-  var thursdays = thursday.range;
 
   var month = newInterval(function(date) {
     date.setDate(1);
@@ -5949,8 +5949,6 @@
   var utcSaturday = utcWeekday(6);
 
   var utcSundays = utcSunday.range;
-  var utcMondays = utcMonday.range;
-  var utcThursdays = utcThursday.range;
 
   var utcMonth = newInterval(function(date) {
     date.setUTCDate(1);
@@ -9488,6 +9486,57 @@
           this.blockBorderWidth = getNumberValue("--range-block-border");
       }
   }
+  // Manages the user's setting options regarding how the grid is displayed.
+  class UserSettings {
+      constructor() {
+          this.settings = new Map();
+      }
+      addSetting(settingName, value, resetFunction) {
+          this.settings.set(settingName, { value, resetFunction });
+      }
+      getToggleElement(settingName, settingLabel) {
+          const toggleEl = createElement("label", "range-toggle-setting", settingLabel);
+          const toggleInput = createElement("input", "range-toggle-setting");
+          toggleInput.id = "range-toggle-" + settingName;
+          toggleInput.setAttribute("type", "checkbox");
+          toggleInput.oninput = () => {
+              toggleInput.disabled = true;
+              this.set(settingName, toggleInput.checked);
+              this.reset(settingName);
+              toggleInput.disabled = false;
+          };
+          toggleEl.insertBefore(toggleInput, toggleEl.firstChild);
+          return toggleEl;
+      }
+      reset(settingName) {
+          const settingObject = this.settings.get(settingName);
+          window.sessionStorage.setItem(UserSettings.SESSION_STORAGE_PREFIX + settingName, settingObject.value.toString());
+          settingObject.resetFunction(settingObject.value);
+      }
+      get(settingName) {
+          return this.settings.get(settingName).value;
+      }
+      set(settingName, value) {
+          this.settings.get(settingName).value = value;
+      }
+      resetFromSessionStorage() {
+          this.settings.forEach((settingObject, settingName) => {
+              const storedString = window.sessionStorage.getItem(UserSettings.SESSION_STORAGE_PREFIX + settingName);
+              if (storedString) {
+                  const storedValue = storedString == "true" ? true : false;
+                  this.set(settingName, storedValue);
+                  if (storedValue) {
+                      const toggle = document.getElementById("range-toggle-" + settingName);
+                      if (!toggle.checked) {
+                          toggle.checked = storedValue;
+                          settingObject.resetFunction(storedValue);
+                      }
+                  }
+              }
+          });
+      }
+  }
+  UserSettings.SESSION_STORAGE_PREFIX = "ranges-setting-";
   // Store the required data from the blocks JSON.
   class BlocksData {
       constructor(blocks) {
@@ -9508,12 +9557,12 @@
       }
   }
   class Divs {
-      constructor() {
+      constructor(userSettings) {
           this.container = document.getElementById("ranges");
           this.resizerBar = document.getElementById("resizer-ranges");
           this.snapper = document.getElementById("show-hide-ranges");
           this.content = document.createElement("div");
-          this.content.appendChild(this.elementForTitle());
+          this.content.appendChild(this.elementForTitle(userSettings));
           this.showOnLoad = document.createElement("div");
           this.showOnLoad.style.visibility = "hidden";
           this.content.appendChild(this.showOnLoad);
@@ -9527,7 +9576,7 @@
           this.registers = createElement("div", "range-registers");
           this.registerHeaders.appendChild(this.registers);
       }
-      elementForTitle() {
+      elementForTitle(userSettings) {
           const titleEl = createElement("div", "range-title-div");
           const titleBar = createElement("div", "range-title");
           titleBar.appendChild(createElement("div", "", "Live Ranges"));
@@ -9538,6 +9587,7 @@
               + "\nand j, the index of the interval within the LiveRange, to give i:j.";
           titleEl.appendChild(titleBar);
           titleEl.appendChild(titleHelp);
+          titleEl.appendChild(userSettings.getToggleElement("landscapeMode", "Landscape Mode"));
           return titleEl;
       }
   }
@@ -10100,8 +10150,11 @@
               this.gridAccessor = new GridAccessor(this.sequenceView);
               this.intervalsAccessor = new IntervalElementsAccessor(this.sequenceView);
               this.cssVariables = new CSSVariables();
+              this.userSettings = new UserSettings();
+              // Indicates whether the RangeView is displayed beside or below the SequenceView.
+              this.userSettings.addSetting("landscapeMode", false, this.resetLandscapeMode.bind(this));
               this.blocksData = new BlocksData(blocks);
-              this.divs = new Divs();
+              this.divs = new Divs(this.userSettings);
               this.scrollHandler = new ScrollHandler(this.divs);
               this.numPositions = this.sequenceView.numInstructions * Constants.POSITIONS_PER_INSTRUCTION;
               this.rowConstructor = new RowConstructor(this);
@@ -10127,6 +10180,7 @@
               // panel is shown.
               window.dispatchEvent(new Event('resize'));
               setTimeout(() => {
+                  this.userSettings.resetFromSessionStorage();
                   this.scrollHandler.restoreScroll();
                   this.scrollHandler.syncHidden();
                   this.divs.showOnLoad.style.visibility = "visible";
@@ -10152,6 +10206,15 @@
       onresize() {
           if (this.isShown)
               this.scrollHandler.syncHidden();
+      }
+      resetLandscapeMode(isInLandscapeMode) {
+          // Used to communicate the setting to Resizer.
+          this.divs.container.dataset.landscapeMode = isInLandscapeMode.toString();
+          window.dispatchEvent(new Event('resize'));
+          // Required to adjust scrollbar spacing.
+          setTimeout(() => {
+              window.dispatchEvent(new Event('resize'));
+          }, 100);
       }
   }
 
@@ -10504,6 +10567,7 @@
           return pane;
       }
       hide() {
+          this.container.className = "";
           this.hideCurrentPhase();
           super.hide();
       }
@@ -10988,8 +11052,11 @@
           this.sourceCollapse = document.getElementById(SOURCE_COLLAPSE_ID);
           this.disassemblyExpand = document.getElementById(DISASSEMBLY_EXPAND_ID);
           this.disassemblyCollapse = document.getElementById(DISASSEMBLY_COLLAPSE_ID);
-          this.rangesExpand = document.getElementById(RANGES_EXPAND_ID);
-          this.rangesCollapse = document.getElementById(RANGES_COLLAPSE_ID);
+          this.rangesShowHide = document.getElementById("show-hide-ranges");
+          this.rangesExpandVert = document.getElementById(RANGES_EXPAND_VERT_ID);
+          this.rangesCollapseVert = document.getElementById(RANGES_COLLAPSE_VERT_ID);
+          this.rangesExpandHor = document.getElementById(RANGES_EXPAND_HOR_ID);
+          this.rangesCollapseHor = document.getElementById(RANGES_COLLAPSE_HOR_ID);
           document.getElementById("show-hide-source").addEventListener("click", () => {
               this.resizer.resizerLeft.classed("snapped", !this.resizer.resizerLeft.classed("snapped"));
               this.setSourceExpanded(!this.sourceExpand.classList.contains("invisible"));
@@ -11000,9 +11067,10 @@
               this.setDisassemblyExpanded(!this.disassemblyExpand.classList.contains("invisible"));
               this.resizer.updatePanes();
           });
-          document.getElementById("show-hide-ranges").addEventListener("click", () => {
+          this.rangesShowHide.dataset.expanded = "1";
+          this.rangesShowHide.addEventListener("click", () => {
               this.resizer.resizerRanges.classed("snapped", !this.resizer.resizerRanges.classed("snapped"));
-              this.setRangesExpanded(!this.rangesExpand.classList.contains("invisible"));
+              this.setRangesExpanded(this.rangesShowHide.dataset.expanded != "1");
               this.resizer.updatePanes();
           });
       }
@@ -11024,7 +11092,6 @@
           window.sessionStorage.setItem("expandedState-source", `${isSourceExpanded}`);
           this.sourceExpand.classList.toggle("invisible", isSourceExpanded);
           this.sourceCollapse.classList.toggle("invisible", !isSourceExpanded);
-          document.getElementById("show-hide-ranges").style.marginLeft = isSourceExpanded ? null : "40px";
       }
       setSourceExpanded(isSourceExpanded) {
           this.sourceUpdate(isSourceExpanded);
@@ -11038,11 +11105,35 @@
       setDisassemblyExpanded(isDisassemblyExpanded) {
           this.disassemblyUpdate(isDisassemblyExpanded);
           this.resizer.updateRightWidth();
+          this.resizer.updateRanges();
       }
       rangesUpdate(isRangesExpanded) {
           window.sessionStorage.setItem("expandedState-ranges", `${isRangesExpanded}`);
-          this.rangesExpand.classList.toggle("invisible", isRangesExpanded);
-          this.rangesCollapse.classList.toggle("invisible", !isRangesExpanded);
+          this.rangesShowHide.dataset.expanded = isRangesExpanded ? "1" : "0";
+          const landscapeMode = this.resizer.isRangesInLandscapeMode();
+          this.rangesExpandVert.classList.toggle("invisible", !landscapeMode || isRangesExpanded);
+          this.rangesCollapseVert.classList.toggle("invisible", !landscapeMode || !isRangesExpanded);
+          this.rangesExpandHor.classList.toggle("invisible", landscapeMode || isRangesExpanded);
+          this.rangesCollapseHor.classList.toggle("invisible", landscapeMode || !isRangesExpanded);
+          let left;
+          if (landscapeMode) {
+              left = this.resizer.sepLeft + this.resizer.RESIZER_SIZE;
+          }
+          else {
+              left = isRangesExpanded ? this.resizer.sepRangesX + this.resizer.RESIZER_SIZE
+                  : (this.resizer.sepRangesX - this.rangesShowHide.clientWidth
+                      - (2 * this.resizer.RESIZER_SIZE));
+          }
+          const marginLeft = parseInt(window.getComputedStyle(this.rangesShowHide, null)
+              .getPropertyValue('margin-left').slice(0, -2), 10);
+          const marginRight = parseInt(window.getComputedStyle(this.rangesShowHide, null)
+              .getPropertyValue('margin-right').slice(0, -2), 10);
+          const width = this.rangesShowHide.clientWidth + marginLeft + marginRight;
+          // The left value is bounded on both sides by another show/hide button of the same width. The
+          // max value must also account for its own width. marginRight is subtracted from both sides to
+          // reduce the separation between buttons.
+          const maxLeft = document.body.getBoundingClientRect().width - (2 * width) + marginRight;
+          this.rangesShowHide.style.left = Math.max(width - marginRight, Math.min(left, maxLeft)) + "px";
       }
       setRangesExpanded(isRangesExpanded) {
           this.rangesUpdate(isRangesExpanded);
@@ -11054,6 +11145,7 @@
           this.SOURCE_PANE_DEFAULT_PERCENT = 1 / 4;
           this.DISASSEMBLY_PANE_DEFAULT_PERCENT = 3 / 4;
           this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
+          this.RANGES_PANE_WIDTH_DEFAULT_PERCENT = 1 / 2;
           this.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
           this.RESIZER_SIZE = document.getElementById("resizer-ranges").offsetHeight;
           const resizer = this;
@@ -11077,20 +11169,27 @@
           if (window.sessionStorage.getItem("ranges-pane-height-percent") === null) {
               window.sessionStorage.setItem("ranges-pane-height-percent", `${this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT}`);
           }
+          if (window.sessionStorage.getItem("ranges-pane-width-percent") === null) {
+              window.sessionStorage.setItem("ranges-pane-width-percent", `${this.RANGES_PANE_WIDTH_DEFAULT_PERCENT}`);
+          }
           this.updateSizes();
           const dragResizeLeft = drag()
               .on('drag', function () {
-              const x = mouse(this.parentElement)[0];
+              const x = mouse(document.body)[0];
               resizer.sepLeft = Math.min(Math.max(0, x), resizer.sepRight);
+              if (resizer.sepLeft > resizer.sepRangesX) {
+                  resizer.sepRangesX = resizer.sepLeft;
+              }
               resizer.updatePanes();
           })
               .on('start', function () {
+              resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerLeft.classed("dragged", true);
           })
               .on('end', function () {
-              // If the panel is close enough to the left, treat it as if it was pulled all the way to the lefg.
-              const x = mouse(this.parentElement)[0];
-              if (x <= deadWidth) {
+              // If the panel is close enough to the left, treat it as if it was pulled all the way to the left.
+              const coords = mouse(document.body);
+              if (coords[0] <= deadWidth) {
                   resizer.sepLeft = 0;
                   resizer.updatePanes();
               }
@@ -11101,22 +11200,29 @@
               }
               resizer.snapper.setSourceExpanded(!resizer.isLeftSnapped());
               resizer.resizerLeft.classed("dragged", false);
+              if (!resizer.rangesInLandscapeMode) {
+                  resizer.dragRangesEnd(coords, resizer.sepRangesX >= resizer.sepRight - deadWidth);
+              }
           });
           resizer.resizerLeft.call(dragResizeLeft);
           const dragResizeRight = drag()
               .on('drag', function () {
-              const x = mouse(this.parentElement)[0];
+              const x = mouse(document.body)[0];
               resizer.sepRight = Math.max(resizer.sepLeft, Math.min(x, document.body.getBoundingClientRect().width));
+              if (resizer.sepRight < resizer.sepRangesX || resizer.isRangesSnapped()) {
+                  resizer.sepRangesX = resizer.sepRight;
+              }
               resizer.updatePanes();
           })
               .on('start', function () {
+              resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerRight.classed("dragged", true);
           })
               .on('end', function () {
               // If the panel is close enough to the right, treat it as if it was pulled all the way to the right.
-              const x = mouse(this.parentElement)[0];
+              const coords = mouse(document.body);
               const clientWidth = document.body.getBoundingClientRect().width;
-              if (x >= (clientWidth - deadWidth)) {
+              if (coords[0] >= (clientWidth - deadWidth)) {
                   resizer.sepRight = clientWidth - 1;
                   resizer.updatePanes();
               }
@@ -11127,31 +11233,27 @@
               }
               resizer.snapper.setDisassemblyExpanded(!resizer.isRightSnapped());
               resizer.resizerRight.classed("dragged", false);
+              if (!resizer.rangesInLandscapeMode) {
+                  resizer.dragRangesEnd(coords, resizer.sepRangesX >= resizer.sepRight - deadWidth);
+              }
           });
           resizer.resizerRight.call(dragResizeRight);
           const dragResizeRanges = drag()
               .on('drag', function () {
-              const y = mouse(this.parentElement)[1];
-              resizer.sepRangesHeight = Math.max(100, Math.min(y, window.innerHeight) - resizer.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE);
+              const coords = mouse(document.body);
+              resizer.sepRangesX = Math.max(resizer.sepLeft, Math.min(coords[0], resizer.sepRight));
+              resizer.sepRangesHeight = Math.max(100, Math.min(coords[1], window.innerHeight)
+                  - resizer.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE);
               resizer.updatePanes();
           })
               .on('start', function () {
+              resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerRanges.classed("dragged", true);
           })
               .on('end', function () {
-              // If the panel is close enough to the bottom, treat it as if it was pulled all the way to the bottom.
-              const y = mouse(this.parentElement)[1];
-              if (y >= (window.innerHeight - deadHeight)) {
-                  resizer.sepRangesHeight = window.innerHeight;
-                  resizer.updatePanes();
-              }
-              // Snap if dragged all the way to the bottom.
-              resizer.resizerRanges.classed("snapped", resizer.sepRangesHeight >= window.innerHeight - 1);
-              if (!resizer.isRangesSnapped()) {
-                  window.sessionStorage.setItem("ranges-pane-height-percent", `${resizer.sepRangesHeight / window.innerHeight}`);
-              }
-              resizer.snapper.setRangesExpanded(!resizer.isRangesSnapped());
-              resizer.resizerRanges.classed("dragged", false);
+              const coords = mouse(document.body);
+              const isSnappedX = !resizer.rangesInLandscapeMode && (coords[0] >= (resizer.sepRight - deadWidth));
+              resizer.dragRangesEnd(coords, isSnappedX);
           });
           resizer.resizerRanges.call(dragResizeRanges);
           window.onresize = function () {
@@ -11170,40 +11272,84 @@
       isRangesSnapped() {
           return this.resizerRanges.classed("snapped");
       }
+      isRangesInLandscapeMode() {
+          return this.ranges.dataset.landscapeMode == "true";
+      }
+      dragRangesEnd(coords, isSnappedX) {
+          // If the panel is close enough to the bottom, treat it as if it was pulled all the way to the
+          // bottom.
+          const isSnappedY = this.rangesInLandscapeMode
+              && (coords[1] >= (window.innerHeight - this.deadHeight));
+          if (isSnappedX || isSnappedY) {
+              if (isSnappedX) {
+                  this.sepRangesX = this.sepRight;
+              }
+              if (isSnappedY) {
+                  this.sepRangesHeight = window.innerHeight;
+              }
+              this.updatePanes();
+          }
+          // Snap if dragged all the way to the bottom.
+          this.resizerRanges.classed("snapped", (!this.rangesInLandscapeMode && (this.sepRangesX >= this.sepRight - 1))
+              || (this.rangesInLandscapeMode
+                  && (this.sepRangesHeight >= window.innerHeight - 1)));
+          if (!this.isRangesSnapped()) {
+              if (this.rangesInLandscapeMode) {
+                  window.sessionStorage.setItem("ranges-pane-height-percent", `${this.sepRangesHeight / window.innerHeight}`);
+              }
+              else {
+                  window.sessionStorage.setItem("ranges-pane-width-percent", `${(this.sepRangesX - this.sepLeft) / (this.sepRight - this.sepLeft)}`);
+              }
+          }
+          this.snapper.setRangesExpanded(!this.isRangesSnapped());
+          this.resizerRanges.classed("dragged", false);
+      }
       updateRangesPane() {
           const clientHeight = window.innerHeight;
           const rangesIsHidden = this.ranges.style.visibility == "hidden";
-          let resizerSize = this.RESIZER_SIZE;
-          if (rangesIsHidden) {
-              resizerSize = 0;
-              this.sepRangesHeight = clientHeight;
-          }
-          const rangeHeight = clientHeight - this.sepRangesHeight;
+          const resizerSize = rangesIsHidden ? 0 : this.RESIZER_SIZE;
+          const sepRangesHeight = rangesIsHidden ? clientHeight : this.sepRangesHeight;
+          const sepRangesX = rangesIsHidden ? this.sepRight : this.sepRangesX;
+          this.snapper.rangesUpdate(this.snapper.rangesShowHide.dataset.expanded == "1");
+          const inLandscapeMode = this.isRangesInLandscapeMode();
+          const rangeHeight = inLandscapeMode ? clientHeight - sepRangesHeight : clientHeight;
           this.ranges.style.height = rangeHeight + 'px';
           const panelWidth = this.sepRight - this.sepLeft - (2 * resizerSize);
-          this.ranges.style.width = panelWidth + 'px';
+          const rangeWidth = inLandscapeMode ? panelWidth : this.sepRight - sepRangesX;
+          this.ranges.style.width = rangeWidth + 'px';
           const multiview = document.getElementById("multiview");
           if (multiview && multiview.style) {
-              multiview.style.height = (this.sepRangesHeight - resizerSize) + 'px';
-              multiview.style.width = panelWidth + 'px';
+              multiview.style.height = (inLandscapeMode ? sepRangesHeight - resizerSize : clientHeight) + 'px';
+              const midWidth = inLandscapeMode ? panelWidth : sepRangesX - this.sepLeft - (3 * resizerSize);
+              multiview.style.width = midWidth + 'px';
+              if (inLandscapeMode) {
+                  this.middle.classList.remove("display-inline-flex");
+              }
+              else {
+                  this.middle.classList.add("display-inline-flex");
+              }
           }
           // Resize the range grid and labels.
           const rangeGrid = this.ranges.getElementsByClassName("range-grid")[0];
           if (rangeGrid) {
               const yAxis = this.ranges.getElementsByClassName("range-y-axis")[0];
               const rangeHeader = this.ranges.getElementsByClassName("range-header")[0];
-              const gridWidth = panelWidth - yAxis.clientWidth;
+              const gridWidth = rangeWidth - yAxis.clientWidth;
               rangeGrid.style.width = Math.floor(gridWidth - 1) + 'px';
               // Take live ranges' right scrollbar into account.
               rangeHeader.style.width = (gridWidth - rangeGrid.offsetWidth + rangeGrid.clientWidth - 1) + 'px';
-              // Set resizer to horizontal.
-              this.resizerRanges.style('width', panelWidth + 'px');
+              this.resizerRanges.style('width', inLandscapeMode ? rangeWidth + 'px' : resizerSize + 'px');
+              this.resizerRanges.style('height', inLandscapeMode ? resizerSize + 'px' : clientHeight + 'px');
               const rangeTitle = this.ranges.getElementsByClassName("range-title-div")[0];
               const rangeHeaderLabel = this.ranges.getElementsByClassName("range-header-label-x")[0];
               const gridHeight = rangeHeight - rangeHeader.clientHeight - rangeTitle.clientHeight - rangeHeaderLabel.clientHeight;
               rangeGrid.style.height = gridHeight + 'px';
               // Take live ranges' bottom scrollbar into account.
               yAxis.style.height = (gridHeight - rangeGrid.offsetHeight + rangeGrid.clientHeight) + 'px';
+          }
+          else {
+              this.resizerRanges.style('width', '0px');
+              this.resizerRanges.style('height', '0px');
           }
           this.resizerRanges.style('ranges', this.ranges.style.height);
       }
@@ -11218,10 +11364,13 @@
       updateRanges() {
           if (this.isRangesSnapped()) {
               this.sepRangesHeight = window.innerHeight;
+              this.sepRangesX = this.sepRight;
           }
           else {
               const sepRangesHeight = window.sessionStorage.getItem("ranges-pane-height-percent");
               this.sepRangesHeight = window.innerHeight * Number.parseFloat(sepRangesHeight);
+              const sepRangesWidth = window.sessionStorage.getItem("ranges-pane-width-percent");
+              this.sepRangesX = this.sepLeft + ((this.sepRight - this.sepLeft) * Number.parseFloat(sepRangesWidth));
           }
       }
       updateLeftWidth() {
