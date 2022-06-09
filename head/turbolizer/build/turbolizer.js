@@ -1,77 +1,64 @@
 (function () {
   'use strict';
 
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  const MAX_RANK_SENTINEL = 0;
+  const SOURCE_PANE_ID = "left";
+  const SOURCE_COLLAPSE_ID = "source-shrink";
+  const SOURCE_EXPAND_ID = "source-expand";
+  const INTERMEDIATE_PANE_ID = "middle";
+  const GENERATED_PANE_ID = "right";
+  const DISASSEMBLY_COLLAPSE_ID = "disassembly-shrink";
+  const DISASSEMBLY_EXPAND_ID = "disassembly-expand";
+  const RANGES_PANE_ID = "ranges";
+  const RANGES_COLLAPSE_VERT_ID = "ranges-shrink-vert";
+  const RANGES_EXPAND_VERT_ID = "ranges-expand-vert";
+  const RANGES_COLLAPSE_HOR_ID = "ranges-shrink-hor";
+  const RANGES_EXPAND_HOR_ID = "ranges-expand-hor";
+  const UNICODE_BLOCK = "&#9611;";
+  const PROF_COLS = [
+      { perc: 0, col: { r: 255, g: 255, b: 255 } },
+      { perc: 0.5, col: { r: 255, g: 255, b: 128 } },
+      { perc: 5, col: { r: 255, g: 128, b: 0 } },
+      { perc: 15, col: { r: 255, g: 0, b: 0 } },
+      { perc: 100, col: { r: 0, g: 0, b: 0 } }
+  ];
+
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   function anyToString(x) {
-      return "" + x;
-  }
-  function computeScrollTop(container, element) {
-      const height = container.offsetHeight;
-      const margin = Math.floor(height / 4);
-      const pos = element.offsetTop;
-      const currentScrollTop = container.scrollTop;
-      if (pos < currentScrollTop + margin) {
-          return Math.max(0, pos - margin);
-      }
-      else if (pos > (currentScrollTop + 3 * margin)) {
-          return Math.max(0, pos - 3 * margin);
-      }
-      return pos;
-  }
-  class ViewElements {
-      constructor(container) {
-          this.container = container;
-          this.scrollTop = undefined;
-      }
-      consider(element, doConsider) {
-          if (!doConsider)
-              return;
-          const newScrollTop = computeScrollTop(this.container, element);
-          if (isNaN(newScrollTop)) {
-              console.log("NOO");
-          }
-          if (this.scrollTop === undefined) {
-              this.scrollTop = newScrollTop;
-          }
-          else {
-              this.scrollTop = Math.min(this.scrollTop, newScrollTop);
-          }
-      }
-      apply(doApply) {
-          if (!doApply || this.scrollTop === undefined)
-              return;
-          this.container.scrollTop = this.scrollTop;
-      }
+      return `${x}`;
   }
   function sortUnique(arr, f, equal) {
       if (arr.length == 0)
           return arr;
       arr = arr.sort(f);
-      const ret = [arr[0]];
+      const uniqueArr = [arr[0]];
       for (let i = 1; i < arr.length; i++) {
           if (!equal(arr[i - 1], arr[i])) {
-              ret.push(arr[i]);
+              uniqueArr.push(arr[i]);
           }
       }
-      return ret;
+      return uniqueArr;
   }
   // Partial application without binding the receiver
-  function partial(f, ...arguments1) {
+  function partial(func, ...arguments1) {
       return function (...arguments2) {
-          f.apply(this, [...arguments1, ...arguments2]);
+          func.apply(this, [...arguments1, ...arguments2]);
       };
   }
   function isIterable(obj) {
-      return obj != null && obj != undefined
-          && typeof obj != 'string' && typeof obj[Symbol.iterator] === 'function';
+      return obj !== null && obj !== undefined
+          && typeof obj !== "string" && typeof obj[Symbol.iterator] === "function";
   }
   function alignUp(raw, multiple) {
       return Math.floor((raw + multiple - 1) / multiple) * multiple;
   }
   function measureText(text) {
-      const textMeasure = document.getElementById('text-measure');
+      const textMeasure = document.getElementById("text-measure");
       if (textMeasure instanceof SVGTSpanElement) {
           textMeasure.textContent = text;
           return {
@@ -82,13 +69,13 @@
       return { width: 0, height: 0 };
   }
   // Interpolate between the given start and end values by a fraction of val/max.
-  function interpolate(val, max, start, end) {
+  function interpolate$1(val, max, start, end) {
       return start + (end - start) * (val / max);
   }
   function createElement(tag, cls, content) {
       const el = document.createElement(tag);
       el.className = cls;
-      if (content != undefined)
+      if (content !== undefined)
           el.innerText = content;
       return el;
   }
@@ -904,31 +891,6 @@
       }
   }
 
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
-  const MAX_RANK_SENTINEL = 0;
-  const SOURCE_PANE_ID = 'left';
-  const SOURCE_COLLAPSE_ID = 'source-shrink';
-  const SOURCE_EXPAND_ID = 'source-expand';
-  const INTERMEDIATE_PANE_ID = 'middle';
-  const GENERATED_PANE_ID = 'right';
-  const DISASSEMBLY_COLLAPSE_ID = 'disassembly-shrink';
-  const DISASSEMBLY_EXPAND_ID = 'disassembly-expand';
-  const RANGES_PANE_ID = "ranges";
-  const RANGES_COLLAPSE_VERT_ID = "ranges-shrink-vert";
-  const RANGES_EXPAND_VERT_ID = "ranges-expand-vert";
-  const RANGES_COLLAPSE_HOR_ID = "ranges-shrink-hor";
-  const RANGES_EXPAND_HOR_ID = "ranges-expand-hor";
-  const UNICODE_BLOCK = '&#9611;';
-  const PROF_COLS = [
-      { perc: 0, col: { r: 255, g: 255, b: 255 } },
-      { perc: 0.5, col: { r: 255, g: 255, b: 128 } },
-      { perc: 5, col: { r: 255, g: 128, b: 0 } },
-      { perc: 15, col: { r: 255, g: 0, b: 0 } },
-      { perc: 100, col: { r: 0, g: 0, b: 0 } }
-  ];
-
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
@@ -999,6 +961,48 @@
           return result;
       }
       [Symbol.iterator]() { return this.selection.values(); }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class ViewElements {
+      constructor(container) {
+          this.container = container;
+          this.scrollTop = undefined;
+      }
+      consider(element, doConsider) {
+          if (!doConsider)
+              return;
+          const newScrollTop = this.computeScrollTop(element);
+          if (isNaN(newScrollTop)) {
+              console.warn("New scroll top value is NaN");
+          }
+          if (this.scrollTop === undefined) {
+              this.scrollTop = newScrollTop;
+          }
+          else {
+              this.scrollTop = Math.min(this.scrollTop, newScrollTop);
+          }
+      }
+      apply(doApply) {
+          if (!doApply || this.scrollTop === undefined)
+              return;
+          this.container.scrollTop = this.scrollTop;
+      }
+      computeScrollTop(element) {
+          const height = this.container.offsetHeight;
+          const margin = Math.floor(height / 4);
+          const pos = element.offsetTop;
+          const currentScrollTop = this.container.scrollTop;
+          if (pos < currentScrollTop + margin) {
+              return Math.max(0, pos - margin);
+          }
+          else if (pos > (currentScrollTop + 3 * margin)) {
+              return Math.max(0, pos - 3 * margin);
+          }
+          return pos;
+      }
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
@@ -1268,7 +1272,7 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
-  const toolboxHTML = `<div id="disassembly-toolbox">
+  const toolboxHTML$1 = `<div id="disassembly-toolbox">
 <form>
   <label><input id="show-instruction-address" type="checkbox" name="instruction-address">Show addresses</label>
   <label><input id="show-instruction-binary" type="checkbox" name="instruction-binary">Show binary literal</label>
@@ -1276,16 +1280,6 @@
 </form>
 </div>`;
   class DisassemblyView extends TextView {
-      createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "disassembly");
-          pane.innerHTML =
-              `<pre id='disassembly-text-pre' class='prettyprint prettyprinted'>
-       <ul class='disassembly-list nolinenums noindent'>
-       </ul>
-     </pre>`;
-          return pane;
-      }
       constructor(parentId, broker) {
           super(parentId, broker);
           const view = this;
@@ -1468,7 +1462,7 @@
           broker.addInstructionHandler(instructionSelectionHandler);
           const toolbox = document.createElement("div");
           toolbox.id = "toolbox-anchor";
-          toolbox.innerHTML = toolboxHTML;
+          toolbox.innerHTML = toolboxHTML$1;
           view.divNode.insertBefore(toolbox, view.divNode.firstChild);
           const instructionAddressInput = view.divNode.querySelector("#show-instruction-address");
           const lastShowInstructionAddress = window.sessionStorage.getItem("show-instruction-address");
@@ -1501,6 +1495,16 @@
           };
           highlightGapInstructionsInput.addEventListener("change", highlightGapInstructionsHandler);
           this.highlightGapInstructionsHandler = highlightGapInstructionsHandler;
+      }
+      createViewElement() {
+          const pane = document.createElement('div');
+          pane.setAttribute('id', "disassembly");
+          pane.innerHTML =
+              `<pre id='disassembly-text-pre' class='prettyprint prettyprinted'>
+       <ul class='disassembly-list nolinenums noindent'>
+       </ul>
+     </pre>`;
+          return pane;
       }
       updateSelection(scrollIntoView = false) {
           super.updateSelection(scrollIntoView);
@@ -1597,9 +1601,9 @@
                                   const col2 = PROF_COLS[i + 1].col;
                                   const val = perc - PROF_COLS[i].perc;
                                   const max = PROF_COLS[i + 1].perc - PROF_COLS[i].perc;
-                                  col.r = Math.round(interpolate(val, max, col1.r, col2.r));
-                                  col.g = Math.round(interpolate(val, max, col1.g, col2.g));
-                                  col.b = Math.round(interpolate(val, max, col1.b, col2.b));
+                                  col.r = Math.round(interpolate$1(val, max, col1.r, col2.r));
+                                  col.g = Math.round(interpolate$1(val, max, col1.g, col2.g));
+                                  col.b = Math.round(interpolate$1(val, max, col1.b, col2.b));
                                   break;
                               }
                           }
@@ -1624,7 +1628,7 @@
       }
   }
 
-  function ascending(a, b) {
+  function ascending$1(a, b) {
     return a < b ? -1 : a > b ? 1 : a >= b ? 0 : NaN;
   }
 
@@ -1656,13 +1660,13 @@
 
   function ascendingComparator(f) {
     return function(d, x) {
-      return ascending(f(d), x);
+      return ascending$1(f(d), x);
     };
   }
 
-  var ascendingBisect = bisector(ascending);
+  bisector(ascending$1);
 
-  var noop = {value: function() {}};
+  var noop$1 = {value: function() {}};
 
   function dispatch() {
     for (var i = 0, n = arguments.length, _ = {}, t; i < n; ++i) {
@@ -1676,7 +1680,7 @@
     this._ = _;
   }
 
-  function parseTypenames(typenames, types) {
+  function parseTypenames$1(typenames, types) {
     return typenames.trim().split(/^|\s+/).map(function(t) {
       var name = "", i = t.indexOf(".");
       if (i >= 0) name = t.slice(i + 1), t = t.slice(0, i);
@@ -1689,14 +1693,14 @@
     constructor: Dispatch,
     on: function(typename, callback) {
       var _ = this._,
-          T = parseTypenames(typename + "", _),
+          T = parseTypenames$1(typename + "", _),
           t,
           i = -1,
           n = T.length;
 
       // If no callback was specified, return the callback of the given type and name.
       if (arguments.length < 2) {
-        while (++i < n) if ((t = (typename = T[i]).type) && (t = get(_[t], typename.name))) return t;
+        while (++i < n) if ((t = (typename = T[i]).type) && (t = get$1(_[t], typename.name))) return t;
         return;
       }
 
@@ -1704,8 +1708,8 @@
       // Otherwise, if a null callback was specified, remove callbacks of the given name.
       if (callback != null && typeof callback !== "function") throw new Error("invalid callback: " + callback);
       while (++i < n) {
-        if (t = (typename = T[i]).type) _[t] = set(_[t], typename.name, callback);
-        else if (callback == null) for (t in _) _[t] = set(_[t], typename.name, null);
+        if (t = (typename = T[i]).type) _[t] = set$1(_[t], typename.name, callback);
+        else if (callback == null) for (t in _) _[t] = set$1(_[t], typename.name, null);
       }
 
       return this;
@@ -1726,7 +1730,7 @@
     }
   };
 
-  function get(type, name) {
+  function get$1(type, name) {
     for (var i = 0, n = type.length, c; i < n; ++i) {
       if ((c = type[i]).name === name) {
         return c.value;
@@ -1734,10 +1738,10 @@
     }
   }
 
-  function set(type, name, callback) {
+  function set$1(type, name, callback) {
     for (var i = 0, n = type.length; i < n; ++i) {
       if (type[i].name === name) {
-        type[i] = noop, type = type.slice(0, i).concat(type.slice(i + 1));
+        type[i] = noop$1, type = type.slice(0, i).concat(type.slice(i + 1));
         break;
       }
     }
@@ -1804,7 +1808,7 @@
       }
     }
 
-    return new Selection(subgroups, this._parents);
+    return new Selection$1(subgroups, this._parents);
   }
 
   function empty() {
@@ -1829,7 +1833,7 @@
       }
     }
 
-    return new Selection(subgroups, parents);
+    return new Selection$1(subgroups, parents);
   }
 
   var matcher = function(selector) {
@@ -1839,12 +1843,12 @@
   };
 
   if (typeof document !== "undefined") {
-    var element = document.documentElement;
-    if (!element.matches) {
-      var vendorMatches = element.webkitMatchesSelector
-          || element.msMatchesSelector
-          || element.mozMatchesSelector
-          || element.oMatchesSelector;
+    var element$1 = document.documentElement;
+    if (!element$1.matches) {
+      var vendorMatches = element$1.webkitMatchesSelector
+          || element$1.msMatchesSelector
+          || element$1.mozMatchesSelector
+          || element$1.oMatchesSelector;
       matcher = function(selector) {
         return function() {
           return vendorMatches.call(this, selector);
@@ -1866,7 +1870,7 @@
       }
     }
 
-    return new Selection(subgroups, this._parents);
+    return new Selection$1(subgroups, this._parents);
   }
 
   function sparse(update) {
@@ -1874,7 +1878,7 @@
   }
 
   function selection_enter() {
-    return new Selection(this._enter || this._groups.map(sparse), this._parents);
+    return new Selection$1(this._enter || this._groups.map(sparse), this._parents);
   }
 
   function EnterNode(parent, datum) {
@@ -1893,7 +1897,7 @@
     querySelectorAll: function(selector) { return this._parent.querySelectorAll(selector); }
   };
 
-  function constant$1(x) {
+  function constant$3(x) {
     return function() {
       return x;
     };
@@ -1982,7 +1986,7 @@
         parents = this._parents,
         groups = this._groups;
 
-    if (typeof value !== "function") value = constant$1(value);
+    if (typeof value !== "function") value = constant$3(value);
 
     for (var m = groups.length, update = new Array(m), enter = new Array(m), exit = new Array(m), j = 0; j < m; ++j) {
       var parent = parents[j],
@@ -2008,19 +2012,19 @@
       }
     }
 
-    update = new Selection(update, parents);
+    update = new Selection$1(update, parents);
     update._enter = enter;
     update._exit = exit;
     return update;
   }
 
   function selection_exit() {
-    return new Selection(this._exit || this._groups.map(sparse), this._parents);
+    return new Selection$1(this._exit || this._groups.map(sparse), this._parents);
   }
 
-  function selection_merge(selection$$1) {
+  function selection_merge(selection) {
 
-    for (var groups0 = this._groups, groups1 = selection$$1._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
+    for (var groups0 = this._groups, groups1 = selection._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
       for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
         if (node = group0[i] || group1[i]) {
           merge[i] = node;
@@ -2032,7 +2036,7 @@
       merges[j] = groups0[j];
     }
 
-    return new Selection(merges, this._parents);
+    return new Selection$1(merges, this._parents);
   }
 
   function selection_order() {
@@ -2050,7 +2054,7 @@
   }
 
   function selection_sort(compare) {
-    if (!compare) compare = ascending$1;
+    if (!compare) compare = ascending;
 
     function compareNode(a, b) {
       return a && b ? compare(a.__data__, b.__data__) : !a - !b;
@@ -2065,10 +2069,10 @@
       sortgroup.sort(compareNode);
     }
 
-    return new Selection(sortgroups, this._parents).order();
+    return new Selection$1(sortgroups, this._parents).order();
   }
 
-  function ascending$1(a, b) {
+  function ascending(a, b) {
     return a < b ? -1 : a > b ? 1 : a >= b ? 0 : NaN;
   }
 
@@ -2118,31 +2122,31 @@
     return this;
   }
 
-  function attrRemove(name) {
+  function attrRemove$1(name) {
     return function() {
       this.removeAttribute(name);
     };
   }
 
-  function attrRemoveNS(fullname) {
+  function attrRemoveNS$1(fullname) {
     return function() {
       this.removeAttributeNS(fullname.space, fullname.local);
     };
   }
 
-  function attrConstant(name, value) {
+  function attrConstant$1(name, value) {
     return function() {
       this.setAttribute(name, value);
     };
   }
 
-  function attrConstantNS(fullname, value) {
+  function attrConstantNS$1(fullname, value) {
     return function() {
       this.setAttributeNS(fullname.space, fullname.local, value);
     };
   }
 
-  function attrFunction(name, value) {
+  function attrFunction$1(name, value) {
     return function() {
       var v = value.apply(this, arguments);
       if (v == null) this.removeAttribute(name);
@@ -2150,7 +2154,7 @@
     };
   }
 
-  function attrFunctionNS(fullname, value) {
+  function attrFunctionNS$1(fullname, value) {
     return function() {
       var v = value.apply(this, arguments);
       if (v == null) this.removeAttributeNS(fullname.space, fullname.local);
@@ -2169,9 +2173,9 @@
     }
 
     return this.each((value == null
-        ? (fullname.local ? attrRemoveNS : attrRemove) : (typeof value === "function"
-        ? (fullname.local ? attrFunctionNS : attrFunction)
-        : (fullname.local ? attrConstantNS : attrConstant)))(fullname, value));
+        ? (fullname.local ? attrRemoveNS$1 : attrRemove$1) : (typeof value === "function"
+        ? (fullname.local ? attrFunctionNS$1 : attrFunction$1)
+        : (fullname.local ? attrConstantNS$1 : attrConstant$1)))(fullname, value));
   }
 
   function defaultView(node) {
@@ -2180,19 +2184,19 @@
         || node.defaultView; // node is a Document
   }
 
-  function styleRemove(name) {
+  function styleRemove$1(name) {
     return function() {
       this.style.removeProperty(name);
     };
   }
 
-  function styleConstant(name, value, priority) {
+  function styleConstant$1(name, value, priority) {
     return function() {
       this.style.setProperty(name, value, priority);
     };
   }
 
-  function styleFunction(name, value, priority) {
+  function styleFunction$1(name, value, priority) {
     return function() {
       var v = value.apply(this, arguments);
       if (v == null) this.style.removeProperty(name);
@@ -2203,9 +2207,9 @@
   function selection_style(name, value, priority) {
     return arguments.length > 1
         ? this.each((value == null
-              ? styleRemove : typeof value === "function"
-              ? styleFunction
-              : styleConstant)(name, value, priority == null ? "" : priority))
+              ? styleRemove$1 : typeof value === "function"
+              ? styleFunction$1
+              : styleConstant$1)(name, value, priority == null ? "" : priority))
         : styleValue(this.node(), name);
   }
 
@@ -2323,13 +2327,13 @@
     this.textContent = "";
   }
 
-  function textConstant(value) {
+  function textConstant$1(value) {
     return function() {
       this.textContent = value;
     };
   }
 
-  function textFunction(value) {
+  function textFunction$1(value) {
     return function() {
       var v = value.apply(this, arguments);
       this.textContent = v == null ? "" : v;
@@ -2340,8 +2344,8 @@
     return arguments.length
         ? this.each(value == null
             ? textRemove : (typeof value === "function"
-            ? textFunction
-            : textConstant)(value))
+            ? textFunction$1
+            : textConstant$1)(value))
         : this.node().textContent;
   }
 
@@ -2438,8 +2442,8 @@
   var event = null;
 
   if (typeof document !== "undefined") {
-    var element$1 = document.documentElement;
-    if (!("onmouseenter" in element$1)) {
+    var element = document.documentElement;
+    if (!("onmouseenter" in element)) {
       filterEvents = {mouseenter: "mouseover", mouseleave: "mouseout"};
     }
   }
@@ -2466,7 +2470,7 @@
     };
   }
 
-  function parseTypenames$1(typenames) {
+  function parseTypenames(typenames) {
     return typenames.trim().split(/^|\s+/).map(function(t) {
       var name = "", i = t.indexOf(".");
       if (i >= 0) name = t.slice(i + 1), t = t.slice(0, i);
@@ -2510,7 +2514,7 @@
   }
 
   function selection_on(typename, value, capture) {
-    var typenames = parseTypenames$1(typename + ""), i, n = typenames.length, t;
+    var typenames = parseTypenames(typename + ""), i, n = typenames.length, t;
 
     if (arguments.length < 2) {
       var on = this.node().__on;
@@ -2576,17 +2580,17 @@
 
   var root = [null];
 
-  function Selection(groups, parents) {
+  function Selection$1(groups, parents) {
     this._groups = groups;
     this._parents = parents;
   }
 
   function selection() {
-    return new Selection([[document.documentElement]], root);
+    return new Selection$1([[document.documentElement]], root);
   }
 
-  Selection.prototype = selection.prototype = {
-    constructor: Selection,
+  Selection$1.prototype = selection.prototype = {
+    constructor: Selection$1,
     select: selection_select,
     selectAll: selection_selectAll,
     filter: selection_filter,
@@ -2621,9 +2625,33 @@
 
   function select(selector) {
     return typeof selector === "string"
-        ? new Selection([[document.querySelector(selector)]], [document.documentElement])
-        : new Selection([[selector]], root);
+        ? new Selection$1([[document.querySelector(selector)]], [document.documentElement])
+        : new Selection$1([[selector]], root);
   }
+
+  var nextId = 0;
+
+  function Local() {
+    this._ = "@" + (++nextId).toString(36);
+  }
+
+  Local.prototype = {
+    constructor: Local,
+    get: function(node) {
+      var id = this._;
+      while (!(id in node)) if (!(node = node.parentNode)) return;
+      return node[id];
+    },
+    set: function(node, value) {
+      return node[this._] = value;
+    },
+    remove: function(node) {
+      return this._ in node && delete node[this._];
+    },
+    toString: function() {
+      return this._;
+    }
+  };
 
   function sourceEvent() {
     var current = event, source;
@@ -2631,7 +2659,7 @@
     return current;
   }
 
-  function point(node, event) {
+  function point$4(node, event) {
     var svg = node.ownerSVGElement || node;
 
     if (svg.createSVGPoint) {
@@ -2648,13 +2676,13 @@
   function mouse(node) {
     var event = sourceEvent();
     if (event.changedTouches) event = event.changedTouches[0];
-    return point(node, event);
+    return point$4(node, event);
   }
 
   function selectAll(selector) {
     return typeof selector === "string"
-        ? new Selection([document.querySelectorAll(selector)], [document.documentElement])
-        : new Selection([selector == null ? [] : selector], root);
+        ? new Selection$1([document.querySelectorAll(selector)], [document.documentElement])
+        : new Selection$1([selector == null ? [] : selector], root);
   }
 
   function touch(node, touches, identifier) {
@@ -2662,27 +2690,27 @@
 
     for (var i = 0, n = touches ? touches.length : 0, touch; i < n; ++i) {
       if ((touch = touches[i]).identifier === identifier) {
-        return point(node, touch);
+        return point$4(node, touch);
       }
     }
 
     return null;
   }
 
-  function nopropagation() {
+  function nopropagation$1() {
     event.stopImmediatePropagation();
   }
 
-  function noevent() {
+  function noevent$1() {
     event.preventDefault();
     event.stopImmediatePropagation();
   }
 
   function dragDisable(view) {
     var root = view.document.documentElement,
-        selection$$1 = select(view).on("dragstart.drag", noevent, true);
+        selection = select(view).on("dragstart.drag", noevent$1, true);
     if ("onselectstart" in root) {
-      selection$$1.on("selectstart.drag", noevent, true);
+      selection.on("selectstart.drag", noevent$1, true);
     } else {
       root.__noselect = root.style.MozUserSelect;
       root.style.MozUserSelect = "none";
@@ -2691,13 +2719,13 @@
 
   function yesdrag(view, noclick) {
     var root = view.document.documentElement,
-        selection$$1 = select(view).on("dragstart.drag", null);
+        selection = select(view).on("dragstart.drag", null);
     if (noclick) {
-      selection$$1.on("click.drag", noevent, true);
-      setTimeout(function() { selection$$1.on("click.drag", null); }, 0);
+      selection.on("click.drag", noevent$1, true);
+      setTimeout(function() { selection.on("click.drag", null); }, 0);
     }
     if ("onselectstart" in root) {
-      selection$$1.on("selectstart.drag", null);
+      selection.on("selectstart.drag", null);
     } else {
       root.style.MozUserSelect = root.__noselect;
       delete root.__noselect;
@@ -2729,7 +2757,7 @@
   };
 
   // Ignore right-click, since that should open the context menu.
-  function defaultFilter() {
+  function defaultFilter$1() {
     return !event.button;
   }
 
@@ -2741,15 +2769,15 @@
     return d == null ? {x: event.x, y: event.y} : d;
   }
 
-  function defaultTouchable() {
+  function defaultTouchable$1() {
     return "ontouchstart" in this;
   }
 
   function drag() {
-    var filter = defaultFilter,
+    var filter = defaultFilter$1,
         container = defaultContainer,
         subject = defaultSubject,
-        touchable = defaultTouchable,
+        touchable = defaultTouchable$1,
         gestures = {},
         listeners = dispatch("start", "drag", "end"),
         active = 0,
@@ -2759,8 +2787,8 @@
         touchending,
         clickDistance2 = 0;
 
-    function drag(selection$$1) {
-      selection$$1
+    function drag(selection) {
+      selection
           .on("mousedown.drag", mousedowned)
         .filter(touchable)
           .on("touchstart.drag", touchstarted)
@@ -2776,7 +2804,7 @@
       if (!gesture) return;
       select(event.view).on("mousemove.drag", mousemoved, true).on("mouseup.drag", mouseupped, true);
       dragDisable(event.view);
-      nopropagation();
+      nopropagation$1();
       mousemoving = false;
       mousedownx = event.clientX;
       mousedowny = event.clientY;
@@ -2784,7 +2812,7 @@
     }
 
     function mousemoved() {
-      noevent();
+      noevent$1();
       if (!mousemoving) {
         var dx = event.clientX - mousedownx, dy = event.clientY - mousedowny;
         mousemoving = dx * dx + dy * dy > clickDistance2;
@@ -2795,52 +2823,52 @@
     function mouseupped() {
       select(event.view).on("mousemove.drag mouseup.drag", null);
       yesdrag(event.view, mousemoving);
-      noevent();
+      noevent$1();
       gestures.mouse("end");
     }
 
     function touchstarted() {
       if (!filter.apply(this, arguments)) return;
-      var touches$$1 = event.changedTouches,
+      var touches = event.changedTouches,
           c = container.apply(this, arguments),
-          n = touches$$1.length, i, gesture;
+          n = touches.length, i, gesture;
 
       for (i = 0; i < n; ++i) {
-        if (gesture = beforestart(touches$$1[i].identifier, c, touch, this, arguments)) {
-          nopropagation();
+        if (gesture = beforestart(touches[i].identifier, c, touch, this, arguments)) {
+          nopropagation$1();
           gesture("start");
         }
       }
     }
 
     function touchmoved() {
-      var touches$$1 = event.changedTouches,
-          n = touches$$1.length, i, gesture;
+      var touches = event.changedTouches,
+          n = touches.length, i, gesture;
 
       for (i = 0; i < n; ++i) {
-        if (gesture = gestures[touches$$1[i].identifier]) {
-          noevent();
+        if (gesture = gestures[touches[i].identifier]) {
+          noevent$1();
           gesture("drag");
         }
       }
     }
 
     function touchended() {
-      var touches$$1 = event.changedTouches,
-          n = touches$$1.length, i, gesture;
+      var touches = event.changedTouches,
+          n = touches.length, i, gesture;
 
       if (touchending) clearTimeout(touchending);
       touchending = setTimeout(function() { touchending = null; }, 500); // Ghost clicks are delayed!
       for (i = 0; i < n; ++i) {
-        if (gesture = gestures[touches$$1[i].identifier]) {
-          nopropagation();
+        if (gesture = gestures[touches[i].identifier]) {
+          nopropagation$1();
           gesture("end");
         }
       }
     }
 
-    function beforestart(id, container, point$$1, that, args) {
-      var p = point$$1(container, id), s, dx, dy,
+    function beforestart(id, container, point, that, args) {
+      var p = point(container, id), s, dx, dy,
           sublisteners = listeners.copy();
 
       if (!customEvent(new DragEvent(drag, "beforestart", s, id, active, p[0], p[1], 0, 0, sublisteners), function() {
@@ -2855,7 +2883,7 @@
         switch (type) {
           case "start": gestures[id] = gesture, n = active++; break;
           case "end": delete gestures[id], --active; // nobreak
-          case "drag": p = point$$1(container, id), n = active; break;
+          case "drag": p = point(container, id), n = active; break;
         }
         customEvent(new DragEvent(drag, type, s, id, n, p[0] + dx, p[1] + dy, p[0] - p0[0], p[1] - p0[1], sublisteners), sublisteners.apply, sublisteners, [type, that, args]);
       };
@@ -3248,10 +3276,10 @@
       Xn = 0.96422,
       Yn = 1,
       Zn = 0.82521,
-      t0 = 4 / 29,
-      t1 = 6 / 29,
-      t2 = 3 * t1 * t1,
-      t3 = t1 * t1 * t1;
+      t0$1 = 4 / 29,
+      t1$1 = 6 / 29,
+      t2 = 3 * t1$1 * t1$1,
+      t3 = t1$1 * t1$1 * t1$1;
 
   function labConvert(o) {
     if (o instanceof Lab) return new Lab(o.l, o.a, o.b, o.opacity);
@@ -3307,11 +3335,11 @@
   }));
 
   function xyz2lab(t) {
-    return t > t3 ? Math.pow(t, 1 / 3) : t / t2 + t0;
+    return t > t3 ? Math.pow(t, 1 / 3) : t / t2 + t0$1;
   }
 
   function lab2xyz(t) {
-    return t > t1 ? t * t * t : t2 * (t - t0);
+    return t > t1$1 ? t * t * t : t2 * (t - t0$1);
   }
 
   function lrgb2rgb(x) {
@@ -3376,7 +3404,7 @@
     return new Cubehelix(h < 0 ? h + 360 : h, s, l, o.opacity);
   }
 
-  function cubehelix(h, s, l, opacity) {
+  function cubehelix$1(h, s, l, opacity) {
     return arguments.length === 1 ? cubehelixConvert(h) : new Cubehelix(h, s, l, opacity == null ? 1 : opacity);
   }
 
@@ -3387,7 +3415,7 @@
     this.opacity = +opacity;
   }
 
-  define(Cubehelix, cubehelix, extend(Color, {
+  define(Cubehelix, cubehelix$1, extend(Color, {
     brighter: function(k) {
       k = k == null ? brighter : Math.pow(brighter, k);
       return new Cubehelix(this.h, this.s, this.l * k, this.opacity);
@@ -3431,7 +3459,7 @@
     };
   }
 
-  function constant$3(x) {
+  function constant$1(x) {
     return function() {
       return x;
     };
@@ -3451,27 +3479,27 @@
 
   function hue(a, b) {
     var d = b - a;
-    return d ? linear(a, d > 180 || d < -180 ? d - 360 * Math.round(d / 360) : d) : constant$3(isNaN(a) ? b : a);
+    return d ? linear(a, d > 180 || d < -180 ? d - 360 * Math.round(d / 360) : d) : constant$1(isNaN(a) ? b : a);
   }
 
   function gamma(y) {
     return (y = +y) === 1 ? nogamma : function(a, b) {
-      return b - a ? exponential(a, b, y) : constant$3(isNaN(a) ? b : a);
+      return b - a ? exponential(a, b, y) : constant$1(isNaN(a) ? b : a);
     };
   }
 
   function nogamma(a, b) {
     var d = b - a;
-    return d ? linear(a, d) : constant$3(isNaN(a) ? b : a);
+    return d ? linear(a, d) : constant$1(isNaN(a) ? b : a);
   }
 
   var interpolateRgb = (function rgbGamma(y) {
-    var color$$1 = gamma(y);
+    var color = gamma(y);
 
-    function rgb$$1(start, end) {
-      var r = color$$1((start = rgb(start)).r, (end = rgb(end)).r),
-          g = color$$1(start.g, end.g),
-          b = color$$1(start.b, end.b),
+    function rgb$1(start, end) {
+      var r = color((start = rgb(start)).r, (end = rgb(end)).r),
+          g = color(start.g, end.g),
+          b = color(start.b, end.b),
           opacity = nogamma(start.opacity, end.opacity);
       return function(t) {
         start.r = r(t);
@@ -3482,9 +3510,9 @@
       };
     }
 
-    rgb$$1.gamma = rgbGamma;
+    rgb$1.gamma = rgbGamma;
 
-    return rgb$$1;
+    return rgb$1;
   })(1);
 
   function rgbSpline(spline) {
@@ -3493,29 +3521,29 @@
           r = new Array(n),
           g = new Array(n),
           b = new Array(n),
-          i, color$$1;
+          i, color;
       for (i = 0; i < n; ++i) {
-        color$$1 = rgb(colors[i]);
-        r[i] = color$$1.r || 0;
-        g[i] = color$$1.g || 0;
-        b[i] = color$$1.b || 0;
+        color = rgb(colors[i]);
+        r[i] = color.r || 0;
+        g[i] = color.g || 0;
+        b[i] = color.b || 0;
       }
       r = spline(r);
       g = spline(g);
       b = spline(b);
-      color$$1.opacity = 1;
+      color.opacity = 1;
       return function(t) {
-        color$$1.r = r(t);
-        color$$1.g = g(t);
-        color$$1.b = b(t);
-        return color$$1 + "";
+        color.r = r(t);
+        color.g = g(t);
+        color.b = b(t);
+        return color + "";
       };
     };
   }
 
   var rgbBasis = rgbSpline(basis$1);
 
-  function interpolateNumber(a, b) {
+  function reinterpolate(a, b) {
     return a = +a, b -= a, function(t) {
       return a + b * t;
     };
@@ -3561,7 +3589,7 @@
         else s[++i] = bm;
       } else { // interpolate non-matching numbers
         s[++i] = null;
-        q.push({i: i, x: interpolateNumber(am, bm)});
+        q.push({i: i, x: reinterpolate(am, bm)});
       }
       bi = reB.lastIndex;
     }
@@ -3644,7 +3672,7 @@
     function translate(xa, ya, xb, yb, s, q) {
       if (xa !== xb || ya !== yb) {
         var i = s.push("translate(", null, pxComma, null, pxParen);
-        q.push({i: i - 4, x: interpolateNumber(xa, xb)}, {i: i - 2, x: interpolateNumber(ya, yb)});
+        q.push({i: i - 4, x: reinterpolate(xa, xb)}, {i: i - 2, x: reinterpolate(ya, yb)});
       } else if (xb || yb) {
         s.push("translate(" + xb + pxComma + yb + pxParen);
       }
@@ -3653,7 +3681,7 @@
     function rotate(a, b, s, q) {
       if (a !== b) {
         if (a - b > 180) b += 360; else if (b - a > 180) a += 360; // shortest path
-        q.push({i: s.push(pop(s) + "rotate(", null, degParen) - 2, x: interpolateNumber(a, b)});
+        q.push({i: s.push(pop(s) + "rotate(", null, degParen) - 2, x: reinterpolate(a, b)});
       } else if (b) {
         s.push(pop(s) + "rotate(" + b + degParen);
       }
@@ -3661,7 +3689,7 @@
 
     function skewX(a, b, s, q) {
       if (a !== b) {
-        q.push({i: s.push(pop(s) + "skewX(", null, degParen) - 2, x: interpolateNumber(a, b)});
+        q.push({i: s.push(pop(s) + "skewX(", null, degParen) - 2, x: reinterpolate(a, b)});
       } else if (b) {
         s.push(pop(s) + "skewX(" + b + degParen);
       }
@@ -3670,7 +3698,7 @@
     function scale(xa, ya, xb, yb, s, q) {
       if (xa !== xb || ya !== yb) {
         var i = s.push(pop(s) + "scale(", null, ",", null, ")");
-        q.push({i: i - 4, x: interpolateNumber(xa, xb)}, {i: i - 2, x: interpolateNumber(ya, yb)});
+        q.push({i: i - 4, x: reinterpolate(xa, xb)}, {i: i - 2, x: reinterpolate(ya, yb)});
       } else if (xb !== 1 || yb !== 1) {
         s.push(pop(s) + "scale(" + xb + "," + yb + ")");
       }
@@ -3699,7 +3727,7 @@
   var rho = Math.SQRT2,
       rho2 = 2,
       rho4 = 4,
-      epsilon2 = 1e-12;
+      epsilon2$1 = 1e-12;
 
   function cosh(x) {
     return ((x = Math.exp(x)) + 1 / x) / 2;
@@ -3725,7 +3753,7 @@
         S;
 
     // Special case for u0 ≅ u1.
-    if (d2 < epsilon2) {
+    if (d2 < epsilon2$1) {
       S = Math.log(w1 / w0) / rho;
       i = function(t) {
         return [
@@ -3761,12 +3789,12 @@
     return i;
   }
 
-  function cubehelix$1(hue$$1) {
+  function cubehelix(hue) {
     return (function cubehelixGamma(y) {
       y = +y;
 
-      function cubehelix$$1(start, end) {
-        var h = hue$$1((start = cubehelix(start)).h, (end = cubehelix(end)).h),
+      function cubehelix(start, end) {
+        var h = hue((start = cubehelix$1(start)).h, (end = cubehelix$1(end)).h),
             s = nogamma(start.s, end.s),
             l = nogamma(start.l, end.l),
             opacity = nogamma(start.opacity, end.opacity);
@@ -3779,17 +3807,17 @@
         };
       }
 
-      cubehelix$$1.gamma = cubehelixGamma;
+      cubehelix.gamma = cubehelixGamma;
 
-      return cubehelix$$1;
+      return cubehelix;
     })(1);
   }
 
-  cubehelix$1(hue);
-  var cubehelixLong = cubehelix$1(nogamma);
+  cubehelix(hue);
+  var cubehelixLong = cubehelix(nogamma);
 
   var frame = 0, // is an animation frame pending?
-      timeout = 0, // is a timeout pending?
+      timeout$1 = 0, // is a timeout pending?
       interval = 0, // are any timers active?
       pokeDelay = 1000, // how frequently we check for clock skew
       taskHead,
@@ -3856,7 +3884,7 @@
 
   function wake() {
     clockNow = (clockLast = clock.now()) + clockSkew;
-    frame = timeout = 0;
+    frame = timeout$1 = 0;
     try {
       timerFlush();
     } finally {
@@ -3888,10 +3916,10 @@
 
   function sleep(time) {
     if (frame) return; // Soonest alarm already set, or will be.
-    if (timeout) timeout = clearTimeout(timeout);
+    if (timeout$1) timeout$1 = clearTimeout(timeout$1);
     var delay = time - clockNow; // Strictly less than if we recomputed clockNow.
     if (delay > 24) {
-      if (time < Infinity) timeout = setTimeout(wake, time - clock.now() - clockSkew);
+      if (time < Infinity) timeout$1 = setTimeout(wake, time - clock.now() - clockSkew);
       if (interval) interval = clearInterval(interval);
     } else {
       if (!interval) clockLast = clock.now(), interval = setInterval(poke, pokeDelay);
@@ -3899,7 +3927,7 @@
     }
   }
 
-  function timeout$1(callback, delay, time) {
+  function timeout(callback, delay, time) {
     var t = new Timer;
     delay = delay == null ? 0 : +delay;
     t.restart(function(elapsed) {
@@ -3924,7 +3952,7 @@
     var schedules = node.__transition;
     if (!schedules) node.__transition = {};
     else if (id in schedules) return;
-    create$1(node, id, {
+    create(node, id, {
       name: name,
       index: index, // For context during callback.
       group: group, // For context during callback.
@@ -3940,24 +3968,24 @@
   }
 
   function init(node, id) {
-    var schedule = get$1(node, id);
+    var schedule = get(node, id);
     if (schedule.state > CREATED) throw new Error("too late; already scheduled");
     return schedule;
   }
 
-  function set$1(node, id) {
-    var schedule = get$1(node, id);
+  function set(node, id) {
+    var schedule = get(node, id);
     if (schedule.state > STARTING) throw new Error("too late; already started");
     return schedule;
   }
 
-  function get$1(node, id) {
+  function get(node, id) {
     var schedule = node.__transition;
     if (!schedule || !(schedule = schedule[id])) throw new Error("transition not found");
     return schedule;
   }
 
-  function create$1(node, id, self) {
+  function create(node, id, self) {
     var schedules = node.__transition,
         tween;
 
@@ -3987,7 +4015,7 @@
         // While this element already has a starting transition during this frame,
         // defer starting an interrupting transition until that transition has a
         // chance to tick (and possibly end); see d3/d3-transition#54!
-        if (o.state === STARTED) return timeout$1(start);
+        if (o.state === STARTED) return timeout(start);
 
         // Interrupt the active transition, if any.
         // Dispatch the interrupt event.
@@ -4012,7 +4040,7 @@
       // Note the transition may be canceled after start and before the first tick!
       // Note this must be scheduled before the start event; see d3/d3-transition#16!
       // Assuming this is successful, subsequent callbacks go straight to tick.
-      timeout$1(function() {
+      timeout(function() {
         if (self.state === STARTED) {
           self.state = RUNNING;
           self.timer.restart(tick, self.delay, self.time);
@@ -4064,7 +4092,7 @@
 
   function interrupt(node, name) {
     var schedules = node.__transition,
-        schedule$$1,
+        schedule,
         active,
         empty = true,
         i;
@@ -4074,11 +4102,11 @@
     name = name == null ? null : name + "";
 
     for (i in schedules) {
-      if ((schedule$$1 = schedules[i]).name !== name) { empty = false; continue; }
-      active = schedule$$1.state > STARTING && schedule$$1.state < ENDING;
-      schedule$$1.state = ENDED;
-      schedule$$1.timer.stop();
-      if (active) schedule$$1.on.call("interrupt", node, node.__data__, schedule$$1.index, schedule$$1.group);
+      if ((schedule = schedules[i]).name !== name) { empty = false; continue; }
+      active = schedule.state > STARTING && schedule.state < ENDING;
+      schedule.state = ENDED;
+      schedule.timer.stop();
+      if (active) schedule.on.call("interrupt", node, node.__data__, schedule.index, schedule.group);
       delete schedules[i];
     }
 
@@ -4094,8 +4122,8 @@
   function tweenRemove(id, name) {
     var tween0, tween1;
     return function() {
-      var schedule$$1 = set$1(this, id),
-          tween = schedule$$1.tween;
+      var schedule = set(this, id),
+          tween = schedule.tween;
 
       // If this node shared tween with the previous node,
       // just assign the updated shared tween and we’re done!
@@ -4111,7 +4139,7 @@
         }
       }
 
-      schedule$$1.tween = tween1;
+      schedule.tween = tween1;
     };
   }
 
@@ -4119,8 +4147,8 @@
     var tween0, tween1;
     if (typeof value !== "function") throw new Error;
     return function() {
-      var schedule$$1 = set$1(this, id),
-          tween = schedule$$1.tween;
+      var schedule = set(this, id),
+          tween = schedule.tween;
 
       // If this node shared tween with the previous node,
       // just assign the updated shared tween and we’re done!
@@ -4136,7 +4164,7 @@
         if (i === n) tween1.push(t);
       }
 
-      schedule$$1.tween = tween1;
+      schedule.tween = tween1;
     };
   }
 
@@ -4146,7 +4174,7 @@
     name += "";
 
     if (arguments.length < 2) {
-      var tween = get$1(this.node(), id).tween;
+      var tween = get(this.node(), id).tween;
       for (var i = 0, n = tween.length, t; i < n; ++i) {
         if ((t = tween[i]).name === name) {
           return t.value;
@@ -4162,36 +4190,36 @@
     var id = transition._id;
 
     transition.each(function() {
-      var schedule$$1 = set$1(this, id);
-      (schedule$$1.value || (schedule$$1.value = {}))[name] = value.apply(this, arguments);
+      var schedule = set(this, id);
+      (schedule.value || (schedule.value = {}))[name] = value.apply(this, arguments);
     });
 
     return function(node) {
-      return get$1(node, id).value[name];
+      return get(node, id).value[name];
     };
   }
 
-  function interpolate$1(a, b) {
+  function interpolate(a, b) {
     var c;
-    return (typeof b === "number" ? interpolateNumber
+    return (typeof b === "number" ? reinterpolate
         : b instanceof color ? interpolateRgb
         : (c = color(b)) ? (b = c, interpolateRgb)
         : interpolateString)(a, b);
   }
 
-  function attrRemove$1(name) {
+  function attrRemove(name) {
     return function() {
       this.removeAttribute(name);
     };
   }
 
-  function attrRemoveNS$1(fullname) {
+  function attrRemoveNS(fullname) {
     return function() {
       this.removeAttributeNS(fullname.space, fullname.local);
     };
   }
 
-  function attrConstant$1(name, interpolate, value1) {
+  function attrConstant(name, interpolate, value1) {
     var value00,
         interpolate0;
     return function() {
@@ -4202,7 +4230,7 @@
     };
   }
 
-  function attrConstantNS$1(fullname, interpolate, value1) {
+  function attrConstantNS(fullname, interpolate, value1) {
     var value00,
         interpolate0;
     return function() {
@@ -4213,7 +4241,7 @@
     };
   }
 
-  function attrFunction$1(name, interpolate, value) {
+  function attrFunction(name, interpolate, value) {
     var value00,
         value10,
         interpolate0;
@@ -4227,7 +4255,7 @@
     };
   }
 
-  function attrFunctionNS$1(fullname, interpolate, value) {
+  function attrFunctionNS(fullname, interpolate, value) {
     var value00,
         value10,
         interpolate0;
@@ -4242,11 +4270,11 @@
   }
 
   function transition_attr(name, value) {
-    var fullname = namespace(name), i = fullname === "transform" ? interpolateTransformSvg : interpolate$1;
+    var fullname = namespace(name), i = fullname === "transform" ? interpolateTransformSvg : interpolate;
     return this.attrTween(name, typeof value === "function"
-        ? (fullname.local ? attrFunctionNS$1 : attrFunction$1)(fullname, i, tweenValue(this, "attr." + name, value))
-        : value == null ? (fullname.local ? attrRemoveNS$1 : attrRemove$1)(fullname)
-        : (fullname.local ? attrConstantNS$1 : attrConstant$1)(fullname, i, value + ""));
+        ? (fullname.local ? attrFunctionNS : attrFunction)(fullname, i, tweenValue(this, "attr." + name, value))
+        : value == null ? (fullname.local ? attrRemoveNS : attrRemove)(fullname)
+        : (fullname.local ? attrConstantNS : attrConstant)(fullname, i, value + ""));
   }
 
   function attrTweenNS(fullname, value) {
@@ -4299,18 +4327,18 @@
         ? this.each((typeof value === "function"
             ? delayFunction
             : delayConstant)(id, value))
-        : get$1(this.node(), id).delay;
+        : get(this.node(), id).delay;
   }
 
   function durationFunction(id, value) {
     return function() {
-      set$1(this, id).duration = +value.apply(this, arguments);
+      set(this, id).duration = +value.apply(this, arguments);
     };
   }
 
   function durationConstant(id, value) {
     return value = +value, function() {
-      set$1(this, id).duration = value;
+      set(this, id).duration = value;
     };
   }
 
@@ -4321,13 +4349,13 @@
         ? this.each((typeof value === "function"
             ? durationFunction
             : durationConstant)(id, value))
-        : get$1(this.node(), id).duration;
+        : get(this.node(), id).duration;
   }
 
   function easeConstant(id, value) {
     if (typeof value !== "function") throw new Error;
     return function() {
-      set$1(this, id).ease = value;
+      set(this, id).ease = value;
     };
   }
 
@@ -4336,7 +4364,7 @@
 
     return arguments.length
         ? this.each(easeConstant(id, value))
-        : get$1(this.node(), id).ease;
+        : get(this.node(), id).ease;
   }
 
   function transition_filter(match) {
@@ -4353,10 +4381,10 @@
     return new Transition(subgroups, this._parents, this._name, this._id);
   }
 
-  function transition_merge(transition$$1) {
-    if (transition$$1._id !== this._id) throw new Error;
+  function transition_merge(transition) {
+    if (transition._id !== this._id) throw new Error;
 
-    for (var groups0 = this._groups, groups1 = transition$$1._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
+    for (var groups0 = this._groups, groups1 = transition._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
       for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
         if (node = group0[i] || group1[i]) {
           merge[i] = node;
@@ -4380,17 +4408,17 @@
   }
 
   function onFunction(id, name, listener) {
-    var on0, on1, sit = start(name) ? init : set$1;
+    var on0, on1, sit = start(name) ? init : set;
     return function() {
-      var schedule$$1 = sit(this, id),
-          on = schedule$$1.on;
+      var schedule = sit(this, id),
+          on = schedule.on;
 
       // If this node shared a dispatch with the previous node,
       // just assign the updated shared dispatch and we’re done!
       // Otherwise, copy-on-write.
       if (on !== on0) (on1 = (on0 = on).copy()).on(name, listener);
 
-      schedule$$1.on = on1;
+      schedule.on = on1;
     };
   }
 
@@ -4398,7 +4426,7 @@
     var id = this._id;
 
     return arguments.length < 2
-        ? get$1(this.node(), id).on.on(name)
+        ? get(this.node(), id).on.on(name)
         : this.each(onFunction(id, name, listener));
   }
 
@@ -4414,18 +4442,18 @@
     return this.on("end.remove", removeFunction(this._id));
   }
 
-  function transition_select(select$$1) {
+  function transition_select(select) {
     var name = this._name,
         id = this._id;
 
-    if (typeof select$$1 !== "function") select$$1 = selector(select$$1);
+    if (typeof select !== "function") select = selector(select);
 
     for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) {
       for (var group = groups[j], n = group.length, subgroup = subgroups[j] = new Array(n), node, subnode, i = 0; i < n; ++i) {
-        if ((node = group[i]) && (subnode = select$$1.call(node, node.__data__, i, group))) {
+        if ((node = group[i]) && (subnode = select.call(node, node.__data__, i, group))) {
           if ("__data__" in node) subnode.__data__ = node.__data__;
           subgroup[i] = subnode;
-          schedule(subgroup[i], name, id, i, subgroup, get$1(node, id));
+          schedule(subgroup[i], name, id, i, subgroup, get(node, id));
         }
       }
     }
@@ -4433,16 +4461,16 @@
     return new Transition(subgroups, this._parents, name, id);
   }
 
-  function transition_selectAll(select$$1) {
+  function transition_selectAll(select) {
     var name = this._name,
         id = this._id;
 
-    if (typeof select$$1 !== "function") select$$1 = selectorAll(select$$1);
+    if (typeof select !== "function") select = selectorAll(select);
 
     for (var groups = this._groups, m = groups.length, subgroups = [], parents = [], j = 0; j < m; ++j) {
       for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) {
         if (node = group[i]) {
-          for (var children = select$$1.call(node, node.__data__, i, group), child, inherit = get$1(node, id), k = 0, l = children.length; k < l; ++k) {
+          for (var children = select.call(node, node.__data__, i, group), child, inherit = get(node, id), k = 0, l = children.length; k < l; ++k) {
             if (child = children[k]) {
               schedule(child, name, id, k, children, inherit);
             }
@@ -4456,13 +4484,13 @@
     return new Transition(subgroups, parents, name, id);
   }
 
-  var Selection$1 = selection.prototype.constructor;
+  var Selection = selection.prototype.constructor;
 
   function transition_selection() {
-    return new Selection$1(this._groups, this._parents);
+    return new Selection(this._groups, this._parents);
   }
 
-  function styleRemove$1(name, interpolate) {
+  function styleRemove(name, interpolate) {
     var value00,
         value10,
         interpolate0;
@@ -4481,7 +4509,7 @@
     };
   }
 
-  function styleConstant$1(name, interpolate, value1) {
+  function styleConstant(name, interpolate, value1) {
     var value00,
         interpolate0;
     return function() {
@@ -4492,7 +4520,7 @@
     };
   }
 
-  function styleFunction$1(name, interpolate, value) {
+  function styleFunction(name, interpolate, value) {
     var value00,
         value10,
         interpolate0;
@@ -4507,13 +4535,13 @@
   }
 
   function transition_style(name, value, priority) {
-    var i = (name += "") === "transform" ? interpolateTransformCss : interpolate$1;
+    var i = (name += "") === "transform" ? interpolateTransformCss : interpolate;
     return value == null ? this
-            .styleTween(name, styleRemove$1(name, i))
+            .styleTween(name, styleRemove(name, i))
             .on("end.style." + name, styleRemoveEnd(name))
         : this.styleTween(name, typeof value === "function"
-            ? styleFunction$1(name, i, tweenValue(this, "style." + name, value))
-            : styleConstant$1(name, i, value + ""), priority);
+            ? styleFunction(name, i, tweenValue(this, "style." + name, value))
+            : styleConstant(name, i, value + ""), priority);
   }
 
   function styleTween(name, value, priority) {
@@ -4535,13 +4563,13 @@
     return this.tween(key, styleTween(name, value, priority == null ? "" : priority));
   }
 
-  function textConstant$1(value) {
+  function textConstant(value) {
     return function() {
       this.textContent = value;
     };
   }
 
-  function textFunction$1(value) {
+  function textFunction(value) {
     return function() {
       var value1 = value(this);
       this.textContent = value1 == null ? "" : value1;
@@ -4550,8 +4578,8 @@
 
   function transition_text(value) {
     return this.tween("text", typeof value === "function"
-        ? textFunction$1(tweenValue(this, "text", value))
-        : textConstant$1(value == null ? "" : value + ""));
+        ? textFunction(tweenValue(this, "text", value))
+        : textConstant(value == null ? "" : value + ""));
   }
 
   function transition_transition() {
@@ -4562,7 +4590,7 @@
     for (var groups = this._groups, m = groups.length, j = 0; j < m; ++j) {
       for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) {
         if (node = group[i]) {
-          var inherit = get$1(node, id0);
+          var inherit = get(node, id0);
           schedule(node, name, id1, i, group, {
             time: inherit.time + inherit.delay + inherit.duration,
             delay: 0,
@@ -4585,17 +4613,13 @@
     this._id = id;
   }
 
-  function transition(name) {
-    return selection().transition(name);
-  }
-
   function newId() {
     return ++id;
   }
 
   var selection_prototype = selection.prototype;
 
-  Transition.prototype = transition.prototype = {
+  Transition.prototype = {
     constructor: Transition,
     select: transition_select,
     selectAll: transition_selectAll,
@@ -4626,9 +4650,126 @@
     return ((t *= 2) <= 1 ? t * t * t : (t -= 2) * t * t + 2) / 2;
   }
 
-  var pi = Math.PI;
+  var exponent$1 = 3;
 
-  var tau = 2 * Math.PI;
+  ((function custom(e) {
+    e = +e;
+
+    function polyIn(t) {
+      return Math.pow(t, e);
+    }
+
+    polyIn.exponent = custom;
+
+    return polyIn;
+  }))(exponent$1);
+
+  ((function custom(e) {
+    e = +e;
+
+    function polyOut(t) {
+      return 1 - Math.pow(1 - t, e);
+    }
+
+    polyOut.exponent = custom;
+
+    return polyOut;
+  }))(exponent$1);
+
+  ((function custom(e) {
+    e = +e;
+
+    function polyInOut(t) {
+      return ((t *= 2) <= 1 ? Math.pow(t, e) : 2 - Math.pow(2 - t, e)) / 2;
+    }
+
+    polyInOut.exponent = custom;
+
+    return polyInOut;
+  }))(exponent$1);
+
+  var overshoot = 1.70158;
+
+  ((function custom(s) {
+    s = +s;
+
+    function backIn(t) {
+      return t * t * ((s + 1) * t - s);
+    }
+
+    backIn.overshoot = custom;
+
+    return backIn;
+  }))(overshoot);
+
+  ((function custom(s) {
+    s = +s;
+
+    function backOut(t) {
+      return --t * t * ((s + 1) * t + s) + 1;
+    }
+
+    backOut.overshoot = custom;
+
+    return backOut;
+  }))(overshoot);
+
+  ((function custom(s) {
+    s = +s;
+
+    function backInOut(t) {
+      return ((t *= 2) < 1 ? t * t * ((s + 1) * t - s) : (t -= 2) * t * ((s + 1) * t + s) + 2) / 2;
+    }
+
+    backInOut.overshoot = custom;
+
+    return backInOut;
+  }))(overshoot);
+
+  var tau$2 = 2 * Math.PI,
+      amplitude = 1,
+      period = 0.3;
+
+  ((function custom(a, p) {
+    var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau$2);
+
+    function elasticIn(t) {
+      return a * Math.pow(2, 10 * --t) * Math.sin((s - t) / p);
+    }
+
+    elasticIn.amplitude = function(a) { return custom(a, p * tau$2); };
+    elasticIn.period = function(p) { return custom(a, p); };
+
+    return elasticIn;
+  }))(amplitude, period);
+
+  ((function custom(a, p) {
+    var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau$2);
+
+    function elasticOut(t) {
+      return 1 - a * Math.pow(2, -10 * (t = +t)) * Math.sin((t + s) / p);
+    }
+
+    elasticOut.amplitude = function(a) { return custom(a, p * tau$2); };
+    elasticOut.period = function(p) { return custom(a, p); };
+
+    return elasticOut;
+  }))(amplitude, period);
+
+  ((function custom(a, p) {
+    var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau$2);
+
+    function elasticInOut(t) {
+      return ((t = t * 2 - 1) < 0
+          ? a * Math.pow(2, 10 * t) * Math.sin((s - t) / p)
+          : 2 - a * Math.pow(2, -10 * t) * Math.sin((s + t) / p)) / 2;
+    }
+
+    elasticInOut.amplitude = function(a) { return custom(a, p * tau$2); };
+    elasticInOut.period = function(p) { return custom(a, p); };
+
+    return elasticInOut;
+  }))(amplitude, period);
 
   var defaultTiming = {
     time: null, // Set on use.
@@ -4671,15 +4812,136 @@
   selection.prototype.interrupt = selection_interrupt;
   selection.prototype.transition = selection_transition;
 
-  var pi$1 = Math.PI;
+  var pi$1 = Math.PI,
+      tau$1 = 2 * pi$1,
+      epsilon$2 = 1e-6,
+      tauEpsilon = tau$1 - epsilon$2;
 
-  var pi$2 = Math.PI;
+  function Path() {
+    this._x0 = this._y0 = // start of current subpath
+    this._x1 = this._y1 = null; // end of current subpath
+    this._ = "";
+  }
+
+  Path.prototype = {
+    constructor: Path,
+    moveTo: function(x, y) {
+      this._ += "M" + (this._x0 = this._x1 = +x) + "," + (this._y0 = this._y1 = +y);
+    },
+    closePath: function() {
+      if (this._x1 !== null) {
+        this._x1 = this._x0, this._y1 = this._y0;
+        this._ += "Z";
+      }
+    },
+    lineTo: function(x, y) {
+      this._ += "L" + (this._x1 = +x) + "," + (this._y1 = +y);
+    },
+    quadraticCurveTo: function(x1, y1, x, y) {
+      this._ += "Q" + (+x1) + "," + (+y1) + "," + (this._x1 = +x) + "," + (this._y1 = +y);
+    },
+    bezierCurveTo: function(x1, y1, x2, y2, x, y) {
+      this._ += "C" + (+x1) + "," + (+y1) + "," + (+x2) + "," + (+y2) + "," + (this._x1 = +x) + "," + (this._y1 = +y);
+    },
+    arcTo: function(x1, y1, x2, y2, r) {
+      x1 = +x1, y1 = +y1, x2 = +x2, y2 = +y2, r = +r;
+      var x0 = this._x1,
+          y0 = this._y1,
+          x21 = x2 - x1,
+          y21 = y2 - y1,
+          x01 = x0 - x1,
+          y01 = y0 - y1,
+          l01_2 = x01 * x01 + y01 * y01;
+
+      // Is the radius negative? Error.
+      if (r < 0) throw new Error("negative radius: " + r);
+
+      // Is this path empty? Move to (x1,y1).
+      if (this._x1 === null) {
+        this._ += "M" + (this._x1 = x1) + "," + (this._y1 = y1);
+      }
+
+      // Or, is (x1,y1) coincident with (x0,y0)? Do nothing.
+      else if (!(l01_2 > epsilon$2));
+
+      // Or, are (x0,y0), (x1,y1) and (x2,y2) collinear?
+      // Equivalently, is (x1,y1) coincident with (x2,y2)?
+      // Or, is the radius zero? Line to (x1,y1).
+      else if (!(Math.abs(y01 * x21 - y21 * x01) > epsilon$2) || !r) {
+        this._ += "L" + (this._x1 = x1) + "," + (this._y1 = y1);
+      }
+
+      // Otherwise, draw an arc!
+      else {
+        var x20 = x2 - x0,
+            y20 = y2 - y0,
+            l21_2 = x21 * x21 + y21 * y21,
+            l20_2 = x20 * x20 + y20 * y20,
+            l21 = Math.sqrt(l21_2),
+            l01 = Math.sqrt(l01_2),
+            l = r * Math.tan((pi$1 - Math.acos((l21_2 + l01_2 - l20_2) / (2 * l21 * l01))) / 2),
+            t01 = l / l01,
+            t21 = l / l21;
+
+        // If the start tangent is not coincident with (x0,y0), line to.
+        if (Math.abs(t01 - 1) > epsilon$2) {
+          this._ += "L" + (x1 + t01 * x01) + "," + (y1 + t01 * y01);
+        }
+
+        this._ += "A" + r + "," + r + ",0,0," + (+(y01 * x20 > x01 * y20)) + "," + (this._x1 = x1 + t21 * x21) + "," + (this._y1 = y1 + t21 * y21);
+      }
+    },
+    arc: function(x, y, r, a0, a1, ccw) {
+      x = +x, y = +y, r = +r;
+      var dx = r * Math.cos(a0),
+          dy = r * Math.sin(a0),
+          x0 = x + dx,
+          y0 = y + dy,
+          cw = 1 ^ ccw,
+          da = ccw ? a0 - a1 : a1 - a0;
+
+      // Is the radius negative? Error.
+      if (r < 0) throw new Error("negative radius: " + r);
+
+      // Is this path empty? Move to (x0,y0).
+      if (this._x1 === null) {
+        this._ += "M" + x0 + "," + y0;
+      }
+
+      // Or, is (x0,y0) not coincident with the previous point? Line to (x0,y0).
+      else if (Math.abs(this._x1 - x0) > epsilon$2 || Math.abs(this._y1 - y0) > epsilon$2) {
+        this._ += "L" + x0 + "," + y0;
+      }
+
+      // Is this arc empty? We’re done.
+      if (!r) return;
+
+      // Does the angle go the wrong way? Flip the direction.
+      if (da < 0) da = da % tau$1 + tau$1;
+
+      // Is this a complete circle? Draw two arcs to complete the circle.
+      if (da > tauEpsilon) {
+        this._ += "A" + r + "," + r + ",0,1," + cw + "," + (x - dx) + "," + (y - dy) + "A" + r + "," + r + ",0,1," + cw + "," + (this._x1 = x0) + "," + (this._y1 = y0);
+      }
+
+      // Is this arc non-empty? Draw an arc!
+      else if (da > epsilon$2) {
+        this._ += "A" + r + "," + r + ",0," + (+(da >= pi$1)) + "," + cw + "," + (this._x1 = x + r * Math.cos(a1)) + "," + (this._y1 = y + r * Math.sin(a1));
+      }
+    },
+    rect: function(x, y, w, h) {
+      this._ += "M" + (this._x0 = this._x1 = +x) + "," + (this._y0 = this._y1 = +y) + "h" + (+w) + "v" + (+h) + "h" + (-w) + "Z";
+    },
+    toString: function() {
+      return this._;
+    }
+  };
 
   var prefix = "$";
 
   function Map$1() {}
 
-  Map$1.prototype = map$1.prototype = {
+  Map$1.prototype = map.prototype = {
     constructor: Map$1,
     has: function(key) {
       return (prefix + key) in this;
@@ -4727,7 +4989,7 @@
     }
   };
 
-  function map$1(object, f) {
+  function map(object, f) {
     var map = new Map$1;
 
     // Copy constructor.
@@ -4751,9 +5013,9 @@
 
   function Set$1() {}
 
-  var proto = map$1.prototype;
+  var proto = map.prototype;
 
-  Set$1.prototype = set$2.prototype = {
+  Set$1.prototype = {
     constructor: Set$1,
     has: proto.has,
     add: function(value) {
@@ -4768,24 +5030,6 @@
     empty: proto.empty,
     each: proto.each
   };
-
-  function set$2(object, f) {
-    var set = new Set$1;
-
-    // Copy constructor.
-    if (object instanceof Set$1) object.each(function(value) { set.add(value); });
-
-    // Otherwise, assume it’s an array.
-    else if (object) {
-      var i = -1, n = object.length;
-      if (f == null) while (++i < n) set.add(object[i]);
-      else while (++i < n) set.add(f(object[i], i, object));
-    }
-
-    return set;
-  }
-
-  // TODO Optimize edge cases.
 
   var EOL = {},
       EOF = {},
@@ -4915,17 +5159,17 @@
     };
   }
 
-  var csv = dsvFormat(",");
+  dsvFormat(",");
 
-  var tsv = dsvFormat("\t");
+  dsvFormat("\t");
 
   function tree_add(d) {
     var x = +this._x.call(null, d),
         y = +this._y.call(null, d);
-    return add(this.cover(x, y), x, y, d);
+    return add$1(this.cover(x, y), x, y, d);
   }
 
-  function add(tree, x, y, d) {
+  function add$1(tree, x, y, d) {
     if (isNaN(x) || isNaN(y)) return tree; // ignore invalid points
 
     var parent,
@@ -4999,7 +5243,7 @@
 
     // Add the new points.
     for (i = 0; i < n; ++i) {
-      add(this, xz[i], yz[i], data[i]);
+      add$1(this, xz[i], yz[i], data[i]);
     }
 
     return this;
@@ -5265,25 +5509,12 @@
     return this;
   }
 
-  function defaultX$1(d) {
-    return d[0];
-  }
-
   function tree_x(_) {
     return arguments.length ? (this._x = _, this) : this._x;
   }
 
-  function defaultY$1(d) {
-    return d[1];
-  }
-
   function tree_y(_) {
     return arguments.length ? (this._y = _, this) : this._y;
-  }
-
-  function quadtree(nodes, x, y) {
-    var tree = new Quadtree(x == null ? defaultX$1 : x, y == null ? defaultY$1 : y, NaN, NaN, NaN, NaN);
-    return nodes == null ? tree : tree.addAll(nodes);
   }
 
   function Quadtree(x, y, x0, y0, x1, y1) {
@@ -5302,7 +5533,7 @@
     return copy;
   }
 
-  var treeProto = quadtree.prototype = Quadtree.prototype;
+  var treeProto = Quadtree.prototype;
 
   treeProto.copy = function() {
     var copy = new Quadtree(this._x, this._y, this._x0, this._y0, this._x1, this._y1),
@@ -5342,8 +5573,6 @@
   treeProto.x = tree_x;
   treeProto.y = tree_y;
 
-  var initialAngle = Math.PI * (3 - Math.sqrt(5));
-
   // Computes the decimal coefficient and exponent of the specified number x with
   // significant digits p, where x is positive and p is in [1, 21] or undefined.
   // For example, formatDecimal(1.23) returns ["123", 0].
@@ -5359,7 +5588,7 @@
     ];
   }
 
-  function exponent$1(x) {
+  function exponent(x) {
     return x = formatDecimal(Math.abs(x)), x ? x[1] : NaN;
   }
 
@@ -5480,17 +5709,17 @@
     "x": function(x) { return Math.round(x).toString(16); }
   };
 
-  function identity$3(x) {
+  function identity$1(x) {
     return x;
   }
 
   var prefixes = ["y","z","a","f","p","n","µ","m","","k","M","G","T","P","E","Z","Y"];
 
-  function formatLocale(locale) {
-    var group = locale.grouping && locale.thousands ? formatGroup(locale.grouping, locale.thousands) : identity$3,
+  function formatLocale$1(locale) {
+    var group = locale.grouping && locale.thousands ? formatGroup(locale.grouping, locale.thousands) : identity$1,
         currency = locale.currency,
         decimal = locale.decimal,
-        numerals = locale.numerals ? formatNumerals(locale.numerals) : identity$3,
+        numerals = locale.numerals ? formatNumerals(locale.numerals) : identity$1,
         percent = locale.percent || "%";
 
     function newFormat(specifier) {
@@ -5604,7 +5833,7 @@
 
     function formatPrefix(specifier, value) {
       var f = newFormat((specifier = formatSpecifier(specifier), specifier.type = "f", specifier)),
-          e = Math.max(-8, Math.min(8, Math.floor(exponent$1(value) / 3))) * 3,
+          e = Math.max(-8, Math.min(8, Math.floor(exponent(value) / 3))) * 3,
           k = Math.pow(10, -e),
           prefix = prefixes[8 + e / 3];
       return function(value) {
@@ -5618,22 +5847,20 @@
     };
   }
 
-  var locale;
-  var format;
-  var formatPrefix;
+  var locale$1;
 
-  defaultLocale({
+  defaultLocale$1({
     decimal: ".",
     thousands: ",",
     grouping: [3],
     currency: ["$", ""]
   });
 
-  function defaultLocale(definition) {
-    locale = formatLocale(definition);
-    format = locale.format;
-    formatPrefix = locale.formatPrefix;
-    return locale;
+  function defaultLocale$1(definition) {
+    locale$1 = formatLocale$1(definition);
+    locale$1.format;
+    locale$1.formatPrefix;
+    return locale$1;
   }
 
   // Adds floating point numbers with twice the normal precision.
@@ -5658,8 +5885,8 @@
       this.t = 0; // exact error
     },
     add: function(y) {
-      add$1(temp, y, this.t);
-      add$1(this, temp.s, this.s);
+      add(temp, y, this.t);
+      add(this, temp.s, this.s);
       if (this.s) this.t += temp.t;
       else this.s = temp.t;
     },
@@ -5670,34 +5897,487 @@
 
   var temp = new Adder;
 
-  function add$1(adder, a, b) {
+  function add(adder, a, b) {
     var x = adder.s = a + b,
         bv = x - a,
         av = x - bv;
     adder.t = (a - av) + (b - bv);
   }
 
-  var pi$3 = Math.PI;
+  var pi = Math.PI;
+  var tau = pi * 2;
 
-  var areaRingSum = adder();
+  var abs = Math.abs;
 
-  var areaSum = adder();
+  adder();
 
-  var deltaSum = adder();
+  adder();
 
-  var sum$1 = adder();
+  adder();
 
-  var lengthSum = adder();
+  function rotationIdentity(lambda, phi) {
+    return [abs(lambda) > pi ? lambda + Math.round(-lambda / tau) * tau : lambda, phi];
+  }
 
-  var areaSum$1 = adder(),
-      areaRingSum$1 = adder();
+  rotationIdentity.invert = rotationIdentity;
 
-  var lengthSum$1 = adder();
+  adder();
 
-  // Returns the 2D cross product of AB and AC vectors, i.e., the z-component of
+  adder();
 
-  var t0$1 = new Date,
-      t1$1 = new Date;
+  adder();
+      adder();
+
+  adder();
+
+  function TransformStream() {}
+
+  TransformStream.prototype = {
+    constructor: TransformStream,
+    point: function(x, y) { this.stream.point(x, y); },
+    sphere: function() { this.stream.sphere(); },
+    lineStart: function() { this.stream.lineStart(); },
+    lineEnd: function() { this.stream.lineEnd(); },
+    polygonStart: function() { this.stream.polygonStart(); },
+    polygonEnd: function() { this.stream.polygonEnd(); }
+  };
+
+  function equirectangularRaw(lambda, phi) {
+    return [lambda, phi];
+  }
+
+  equirectangularRaw.invert = equirectangularRaw;
+
+  function count(node) {
+    var sum = 0,
+        children = node.children,
+        i = children && children.length;
+    if (!i) sum = 1;
+    else while (--i >= 0) sum += children[i].value;
+    node.value = sum;
+  }
+
+  function node_count() {
+    return this.eachAfter(count);
+  }
+
+  function node_each(callback) {
+    var node = this, current, next = [node], children, i, n;
+    do {
+      current = next.reverse(), next = [];
+      while (node = current.pop()) {
+        callback(node), children = node.children;
+        if (children) for (i = 0, n = children.length; i < n; ++i) {
+          next.push(children[i]);
+        }
+      }
+    } while (next.length);
+    return this;
+  }
+
+  function node_eachBefore(callback) {
+    var node = this, nodes = [node], children, i;
+    while (node = nodes.pop()) {
+      callback(node), children = node.children;
+      if (children) for (i = children.length - 1; i >= 0; --i) {
+        nodes.push(children[i]);
+      }
+    }
+    return this;
+  }
+
+  function node_eachAfter(callback) {
+    var node = this, nodes = [node], next = [], children, i, n;
+    while (node = nodes.pop()) {
+      next.push(node), children = node.children;
+      if (children) for (i = 0, n = children.length; i < n; ++i) {
+        nodes.push(children[i]);
+      }
+    }
+    while (node = next.pop()) {
+      callback(node);
+    }
+    return this;
+  }
+
+  function node_sum(value) {
+    return this.eachAfter(function(node) {
+      var sum = +value(node.data) || 0,
+          children = node.children,
+          i = children && children.length;
+      while (--i >= 0) sum += children[i].value;
+      node.value = sum;
+    });
+  }
+
+  function node_sort(compare) {
+    return this.eachBefore(function(node) {
+      if (node.children) {
+        node.children.sort(compare);
+      }
+    });
+  }
+
+  function node_path(end) {
+    var start = this,
+        ancestor = leastCommonAncestor(start, end),
+        nodes = [start];
+    while (start !== ancestor) {
+      start = start.parent;
+      nodes.push(start);
+    }
+    var k = nodes.length;
+    while (end !== ancestor) {
+      nodes.splice(k, 0, end);
+      end = end.parent;
+    }
+    return nodes;
+  }
+
+  function leastCommonAncestor(a, b) {
+    if (a === b) return a;
+    var aNodes = a.ancestors(),
+        bNodes = b.ancestors(),
+        c = null;
+    a = aNodes.pop();
+    b = bNodes.pop();
+    while (a === b) {
+      c = a;
+      a = aNodes.pop();
+      b = bNodes.pop();
+    }
+    return c;
+  }
+
+  function node_ancestors() {
+    var node = this, nodes = [node];
+    while (node = node.parent) {
+      nodes.push(node);
+    }
+    return nodes;
+  }
+
+  function node_descendants() {
+    var nodes = [];
+    this.each(function(node) {
+      nodes.push(node);
+    });
+    return nodes;
+  }
+
+  function node_leaves() {
+    var leaves = [];
+    this.eachBefore(function(node) {
+      if (!node.children) {
+        leaves.push(node);
+      }
+    });
+    return leaves;
+  }
+
+  function node_links() {
+    var root = this, links = [];
+    root.each(function(node) {
+      if (node !== root) { // Don’t include the root’s parent, if any.
+        links.push({source: node.parent, target: node});
+      }
+    });
+    return links;
+  }
+
+  function hierarchy(data, children) {
+    var root = new Node(data),
+        valued = +data.value && (root.value = data.value),
+        node,
+        nodes = [root],
+        child,
+        childs,
+        i,
+        n;
+
+    if (children == null) children = defaultChildren;
+
+    while (node = nodes.pop()) {
+      if (valued) node.value = +node.data.value;
+      if ((childs = children(node.data)) && (n = childs.length)) {
+        node.children = new Array(n);
+        for (i = n - 1; i >= 0; --i) {
+          nodes.push(child = node.children[i] = new Node(childs[i]));
+          child.parent = node;
+          child.depth = node.depth + 1;
+        }
+      }
+    }
+
+    return root.eachBefore(computeHeight);
+  }
+
+  function node_copy() {
+    return hierarchy(this).eachBefore(copyData);
+  }
+
+  function defaultChildren(d) {
+    return d.children;
+  }
+
+  function copyData(node) {
+    node.data = node.data.data;
+  }
+
+  function computeHeight(node) {
+    var height = 0;
+    do node.height = height;
+    while ((node = node.parent) && (node.height < ++height));
+  }
+
+  function Node(data) {
+    this.data = data;
+    this.depth =
+    this.height = 0;
+    this.parent = null;
+  }
+
+  Node.prototype = hierarchy.prototype = {
+    constructor: Node,
+    count: node_count,
+    each: node_each,
+    eachAfter: node_eachAfter,
+    eachBefore: node_eachBefore,
+    sum: node_sum,
+    sort: node_sort,
+    path: node_path,
+    ancestors: node_ancestors,
+    descendants: node_descendants,
+    leaves: node_leaves,
+    links: node_links,
+    copy: node_copy
+  };
+
+  function treemapDice(parent, x0, y0, x1, y1) {
+    var nodes = parent.children,
+        node,
+        i = -1,
+        n = nodes.length,
+        k = parent.value && (x1 - x0) / parent.value;
+
+    while (++i < n) {
+      node = nodes[i], node.y0 = y0, node.y1 = y1;
+      node.x0 = x0, node.x1 = x0 += node.value * k;
+    }
+  }
+
+  Object.create(Node.prototype);
+
+  function treemapSlice(parent, x0, y0, x1, y1) {
+    var nodes = parent.children,
+        node,
+        i = -1,
+        n = nodes.length,
+        k = parent.value && (y1 - y0) / parent.value;
+
+    while (++i < n) {
+      node = nodes[i], node.x0 = x0, node.x1 = x1;
+      node.y0 = y0, node.y1 = y0 += node.value * k;
+    }
+  }
+
+  var phi = (1 + Math.sqrt(5)) / 2;
+
+  function squarifyRatio(ratio, parent, x0, y0, x1, y1) {
+    var rows = [],
+        nodes = parent.children,
+        row,
+        nodeValue,
+        i0 = 0,
+        i1 = 0,
+        n = nodes.length,
+        dx, dy,
+        value = parent.value,
+        sumValue,
+        minValue,
+        maxValue,
+        newRatio,
+        minRatio,
+        alpha,
+        beta;
+
+    while (i0 < n) {
+      dx = x1 - x0, dy = y1 - y0;
+
+      // Find the next non-empty node.
+      do sumValue = nodes[i1++].value; while (!sumValue && i1 < n);
+      minValue = maxValue = sumValue;
+      alpha = Math.max(dy / dx, dx / dy) / (value * ratio);
+      beta = sumValue * sumValue * alpha;
+      minRatio = Math.max(maxValue / beta, beta / minValue);
+
+      // Keep adding nodes while the aspect ratio maintains or improves.
+      for (; i1 < n; ++i1) {
+        sumValue += nodeValue = nodes[i1].value;
+        if (nodeValue < minValue) minValue = nodeValue;
+        if (nodeValue > maxValue) maxValue = nodeValue;
+        beta = sumValue * sumValue * alpha;
+        newRatio = Math.max(maxValue / beta, beta / minValue);
+        if (newRatio > minRatio) { sumValue -= nodeValue; break; }
+        minRatio = newRatio;
+      }
+
+      // Position and record the row orientation.
+      rows.push(row = {value: sumValue, dice: dx < dy, children: nodes.slice(i0, i1)});
+      if (row.dice) treemapDice(row, x0, y0, x1, value ? y0 += dy * sumValue / value : y1);
+      else treemapSlice(row, x0, y0, value ? x0 += dx * sumValue / value : x1, y1);
+      value -= sumValue, i0 = i1;
+    }
+
+    return rows;
+  }
+
+  ((function custom(ratio) {
+
+    function squarify(parent, x0, y0, x1, y1) {
+      squarifyRatio(ratio, parent, x0, y0, x1, y1);
+    }
+
+    squarify.ratio = function(x) {
+      return custom((x = +x) > 1 ? x : 1);
+    };
+
+    return squarify;
+  }))(phi);
+
+  ((function custom(ratio) {
+
+    function resquarify(parent, x0, y0, x1, y1) {
+      if ((rows = parent._squarify) && (rows.ratio === ratio)) {
+        var rows,
+            row,
+            nodes,
+            i,
+            j = -1,
+            n,
+            m = rows.length,
+            value = parent.value;
+
+        while (++j < m) {
+          row = rows[j], nodes = row.children;
+          for (i = row.value = 0, n = nodes.length; i < n; ++i) row.value += nodes[i].value;
+          if (row.dice) treemapDice(row, x0, y0, x1, y0 += (y1 - y0) * row.value / value);
+          else treemapSlice(row, x0, y0, x0 += (x1 - x0) * row.value / value, y1);
+          value -= row.value;
+        }
+      } else {
+        parent._squarify = rows = squarifyRatio(ratio, parent, x0, y0, x1, y1);
+        rows.ratio = ratio;
+      }
+    }
+
+    resquarify.ratio = function(x) {
+      return custom((x = +x) > 1 ? x : 1);
+    };
+
+    return resquarify;
+  }))(phi);
+
+  function defaultSource() {
+    return Math.random();
+  }
+
+  ((function sourceRandomUniform(source) {
+    function randomUniform(min, max) {
+      min = min == null ? 0 : +min;
+      max = max == null ? 1 : +max;
+      if (arguments.length === 1) max = min, min = 0;
+      else max -= min;
+      return function() {
+        return source() * max + min;
+      };
+    }
+
+    randomUniform.source = sourceRandomUniform;
+
+    return randomUniform;
+  }))(defaultSource);
+
+  var normal = (function sourceRandomNormal(source) {
+    function randomNormal(mu, sigma) {
+      var x, r;
+      mu = mu == null ? 0 : +mu;
+      sigma = sigma == null ? 1 : +sigma;
+      return function() {
+        var y;
+
+        // If available, use the second previously-generated uniform random.
+        if (x != null) y = x, x = null;
+
+        // Otherwise, generate a new x and y.
+        else do {
+          x = source() * 2 - 1;
+          y = source() * 2 - 1;
+          r = x * x + y * y;
+        } while (!r || r > 1);
+
+        return mu + sigma * y * Math.sqrt(-2 * Math.log(r) / r);
+      };
+    }
+
+    randomNormal.source = sourceRandomNormal;
+
+    return randomNormal;
+  })(defaultSource);
+
+  ((function sourceRandomLogNormal(source) {
+    function randomLogNormal() {
+      var randomNormal = normal.source(source).apply(this, arguments);
+      return function() {
+        return Math.exp(randomNormal());
+      };
+    }
+
+    randomLogNormal.source = sourceRandomLogNormal;
+
+    return randomLogNormal;
+  }))(defaultSource);
+
+  var irwinHall = (function sourceRandomIrwinHall(source) {
+    function randomIrwinHall(n) {
+      return function() {
+        for (var sum = 0, i = 0; i < n; ++i) sum += source();
+        return sum;
+      };
+    }
+
+    randomIrwinHall.source = sourceRandomIrwinHall;
+
+    return randomIrwinHall;
+  })(defaultSource);
+
+  ((function sourceRandomBates(source) {
+    function randomBates(n) {
+      var randomIrwinHall = irwinHall.source(source)(n);
+      return function() {
+        return randomIrwinHall() / n;
+      };
+    }
+
+    randomBates.source = sourceRandomBates;
+
+    return randomBates;
+  }))(defaultSource);
+
+  ((function sourceRandomExponential(source) {
+    function randomExponential(lambda) {
+      return function() {
+        return -Math.log(1 - source()) / lambda;
+      };
+    }
+
+    randomExponential.source = sourceRandomExponential;
+
+    return randomExponential;
+  }))(defaultSource);
+
+  var t0 = new Date,
+      t1 = new Date;
 
   function newInterval(floori, offseti, count, field) {
 
@@ -5747,9 +6427,9 @@
 
     if (count) {
       interval.count = function(start, end) {
-        t0$1.setTime(+start), t1$1.setTime(+end);
-        floori(t0$1), floori(t1$1);
-        return Math.floor(count(t0$1, t1$1));
+        t0.setTime(+start), t1.setTime(+end);
+        floori(t0), floori(t1);
+        return Math.floor(count(t0, t1));
       };
 
       interval.every = function(step) {
@@ -5786,7 +6466,7 @@
       return (end - start) / k;
     });
   };
-  var milliseconds = millisecond.range;
+  millisecond.range;
 
   var durationSecond = 1e3;
   var durationMinute = 6e4;
@@ -5803,7 +6483,7 @@
   }, function(date) {
     return date.getUTCSeconds();
   });
-  var seconds = second.range;
+  second.range;
 
   var minute = newInterval(function(date) {
     date.setTime(Math.floor(date / durationMinute) * durationMinute);
@@ -5814,7 +6494,7 @@
   }, function(date) {
     return date.getMinutes();
   });
-  var minutes = minute.range;
+  minute.range;
 
   var hour = newInterval(function(date) {
     var offset = date.getTimezoneOffset() * durationMinute % durationHour;
@@ -5827,7 +6507,7 @@
   }, function(date) {
     return date.getHours();
   });
-  var hours = hour.range;
+  hour.range;
 
   var day = newInterval(function(date) {
     date.setHours(0, 0, 0, 0);
@@ -5838,7 +6518,7 @@
   }, function(date) {
     return date.getDate() - 1;
   });
-  var days = day.range;
+  day.range;
 
   function weekday(i) {
     return newInterval(function(date) {
@@ -5859,7 +6539,13 @@
   var friday = weekday(5);
   var saturday = weekday(6);
 
-  var sundays = sunday.range;
+  sunday.range;
+  monday.range;
+  tuesday.range;
+  wednesday.range;
+  thursday.range;
+  friday.range;
+  saturday.range;
 
   var month = newInterval(function(date) {
     date.setDate(1);
@@ -5871,7 +6557,7 @@
   }, function(date) {
     return date.getMonth();
   });
-  var months = month.range;
+  month.range;
 
   var year = newInterval(function(date) {
     date.setMonth(0, 1);
@@ -5894,7 +6580,7 @@
       date.setFullYear(date.getFullYear() + step * k);
     });
   };
-  var years = year.range;
+  year.range;
 
   var utcMinute = newInterval(function(date) {
     date.setUTCSeconds(0, 0);
@@ -5905,7 +6591,7 @@
   }, function(date) {
     return date.getUTCMinutes();
   });
-  var utcMinutes = utcMinute.range;
+  utcMinute.range;
 
   var utcHour = newInterval(function(date) {
     date.setUTCMinutes(0, 0, 0);
@@ -5916,7 +6602,7 @@
   }, function(date) {
     return date.getUTCHours();
   });
-  var utcHours = utcHour.range;
+  utcHour.range;
 
   var utcDay = newInterval(function(date) {
     date.setUTCHours(0, 0, 0, 0);
@@ -5927,7 +6613,7 @@
   }, function(date) {
     return date.getUTCDate() - 1;
   });
-  var utcDays = utcDay.range;
+  utcDay.range;
 
   function utcWeekday(i) {
     return newInterval(function(date) {
@@ -5948,7 +6634,13 @@
   var utcFriday = utcWeekday(5);
   var utcSaturday = utcWeekday(6);
 
-  var utcSundays = utcSunday.range;
+  utcSunday.range;
+  utcMonday.range;
+  utcTuesday.range;
+  utcWednesday.range;
+  utcThursday.range;
+  utcFriday.range;
+  utcSaturday.range;
 
   var utcMonth = newInterval(function(date) {
     date.setUTCDate(1);
@@ -5960,7 +6652,7 @@
   }, function(date) {
     return date.getUTCMonth();
   });
-  var utcMonths = utcMonth.range;
+  utcMonth.range;
 
   var utcYear = newInterval(function(date) {
     date.setUTCMonth(0, 1);
@@ -5983,7 +6675,7 @@
       date.setUTCFullYear(date.getUTCFullYear() + step * k);
     });
   };
-  var utcYears = utcYear.range;
+  utcYear.range;
 
   function localDate(d) {
     if (0 <= d.y && d.y < 100) {
@@ -6007,7 +6699,7 @@
     return {y: y, m: 0, d: 1, H: 0, M: 0, S: 0, L: 0};
   }
 
-  function formatLocale$1(locale) {
+  function formatLocale(locale) {
     var locale_dateTime = locale.dateTime,
         locale_date = locale.date,
         locale_time = locale.time,
@@ -6164,7 +6856,7 @@
       return function(string) {
         var d = newYear(1900),
             i = parseSpecifier(d, specifier, string += "", 0),
-            week, day$$1;
+            week, day$1;
         if (i != string.length) return null;
 
         // If a UNIX timestamp is specified, return it.
@@ -6178,15 +6870,15 @@
           if (d.V < 1 || d.V > 53) return null;
           if (!("w" in d)) d.w = 1;
           if ("Z" in d) {
-            week = utcDate(newYear(d.y)), day$$1 = week.getUTCDay();
-            week = day$$1 > 4 || day$$1 === 0 ? utcMonday.ceil(week) : utcMonday(week);
+            week = utcDate(newYear(d.y)), day$1 = week.getUTCDay();
+            week = day$1 > 4 || day$1 === 0 ? utcMonday.ceil(week) : utcMonday(week);
             week = utcDay.offset(week, (d.V - 1) * 7);
             d.y = week.getUTCFullYear();
             d.m = week.getUTCMonth();
             d.d = week.getUTCDate() + (d.w + 6) % 7;
           } else {
-            week = newDate(newYear(d.y)), day$$1 = week.getDay();
-            week = day$$1 > 4 || day$$1 === 0 ? monday.ceil(week) : monday(week);
+            week = newDate(newYear(d.y)), day$1 = week.getDay();
+            week = day$1 > 4 || day$1 === 0 ? monday.ceil(week) : monday(week);
             week = day.offset(week, (d.V - 1) * 7);
             d.y = week.getFullYear();
             d.m = week.getMonth();
@@ -6194,9 +6886,9 @@
           }
         } else if ("W" in d || "U" in d) {
           if (!("w" in d)) d.w = "u" in d ? d.u % 7 : "W" in d ? 1 : 0;
-          day$$1 = "Z" in d ? utcDate(newYear(d.y)).getUTCDay() : newDate(newYear(d.y)).getDay();
+          day$1 = "Z" in d ? utcDate(newYear(d.y)).getUTCDay() : newDate(newYear(d.y)).getDay();
           d.m = 0;
-          d.d = "W" in d ? (d.w + 6) % 7 + d.W * 7 - (day$$1 + 5) % 7 : d.w + d.U * 7 - (day$$1 + 6) % 7;
+          d.d = "W" in d ? (d.w + 6) % 7 + d.W * 7 - (day$1 + 5) % 7 : d.w + d.U * 7 - (day$1 + 6) % 7;
         }
 
         // If a time zone is specified, all fields are interpreted as UTC and then
@@ -6493,8 +7185,8 @@
   }
 
   function formatWeekdayNumberMonday(d) {
-    var day$$1 = d.getDay();
-    return day$$1 === 0 ? 7 : day$$1;
+    var day = d.getDay();
+    return day === 0 ? 7 : day;
   }
 
   function formatWeekNumberSunday(d, p) {
@@ -6502,8 +7194,8 @@
   }
 
   function formatWeekNumberISO(d, p) {
-    var day$$1 = d.getDay();
-    d = (day$$1 >= 4 || day$$1 === 0) ? thursday(d) : thursday.ceil(d);
+    var day = d.getDay();
+    d = (day >= 4 || day === 0) ? thursday(d) : thursday.ceil(d);
     return pad(thursday.count(year(d), d) + (year(d).getDay() === 4), p, 2);
   }
 
@@ -6576,8 +7268,8 @@
   }
 
   function formatUTCWeekNumberISO(d, p) {
-    var day$$1 = d.getUTCDay();
-    d = (day$$1 >= 4 || day$$1 === 0) ? utcThursday(d) : utcThursday.ceil(d);
+    var day = d.getUTCDay();
+    d = (day >= 4 || day === 0) ? utcThursday(d) : utcThursday.ceil(d);
     return pad(utcThursday.count(utcYear(d), d) + (utcYear(d).getUTCDay() === 4), p, 2);
   }
 
@@ -6613,13 +7305,11 @@
     return Math.floor(+d / 1000);
   }
 
-  var locale$1;
-  var timeFormat;
-  var timeParse;
+  var locale;
   var utcFormat;
   var utcParse;
 
-  defaultLocale$1({
+  defaultLocale({
     dateTime: "%x, %X",
     date: "%-m/%-d/%Y",
     time: "%-I:%M:%S %p",
@@ -6630,13 +7320,13 @@
     shortMonths: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
   });
 
-  function defaultLocale$1(definition) {
-    locale$1 = formatLocale$1(definition);
-    timeFormat = locale$1.format;
-    timeParse = locale$1.parse;
-    utcFormat = locale$1.utcFormat;
-    utcParse = locale$1.utcParse;
-    return locale$1;
+  function defaultLocale(definition) {
+    locale = formatLocale(definition);
+    locale.format;
+    locale.parse;
+    utcFormat = locale.utcFormat;
+    utcParse = locale.utcParse;
+    return locale;
   }
 
   var isoSpecifier = "%Y-%m-%dT%H:%M:%S.%LZ";
@@ -6645,7 +7335,7 @@
     return date.toISOString();
   }
 
-  var formatIso = Date.prototype.toISOString
+  Date.prototype.toISOString
       ? formatIsoNative
       : utcFormat(isoSpecifier);
 
@@ -6654,7 +7344,7 @@
     return isNaN(date) ? null : date;
   }
 
-  var parseIso = +new Date("2000-01-01T00:00:00.000Z")
+  +new Date("2000-01-01T00:00:00.000Z")
       ? parseIsoNative
       : utcParse(isoSpecifier);
 
@@ -6682,11 +7372,11 @@
 
   colors("8dd3c7ffffb3bebadafb807280b1d3fdb462b3de69fccde5d9d9d9bc80bdccebc5ffed6f");
 
-  function ramp(scheme) {
+  function ramp$1(scheme) {
     return rgbBasis(scheme[scheme.length - 1]);
   }
 
-  var scheme = new Array(3).concat(
+  var scheme$q = new Array(3).concat(
     "d8b365f5f5f55ab4ac",
     "a6611adfc27d80cdc1018571",
     "a6611adfc27df5f5f580cdc1018571",
@@ -6698,9 +7388,9 @@
     "5430058c510abf812ddfc27df6e8c3f5f5f5c7eae580cdc135978f01665e003c30"
   ).map(colors);
 
-  ramp(scheme);
+  ramp$1(scheme$q);
 
-  var scheme$1 = new Array(3).concat(
+  var scheme$p = new Array(3).concat(
     "af8dc3f7f7f77fbf7b",
     "7b3294c2a5cfa6dba0008837",
     "7b3294c2a5cff7f7f7a6dba0008837",
@@ -6712,9 +7402,9 @@
     "40004b762a839970abc2a5cfe7d4e8f7f7f7d9f0d3a6dba05aae611b783700441b"
   ).map(colors);
 
-  ramp(scheme$1);
+  ramp$1(scheme$p);
 
-  var scheme$2 = new Array(3).concat(
+  var scheme$o = new Array(3).concat(
     "e9a3c9f7f7f7a1d76a",
     "d01c8bf1b6dab8e1864dac26",
     "d01c8bf1b6daf7f7f7b8e1864dac26",
@@ -6726,9 +7416,9 @@
     "8e0152c51b7dde77aef1b6dafde0eff7f7f7e6f5d0b8e1867fbc414d9221276419"
   ).map(colors);
 
-  ramp(scheme$2);
+  ramp$1(scheme$o);
 
-  var scheme$3 = new Array(3).concat(
+  var scheme$n = new Array(3).concat(
     "998ec3f7f7f7f1a340",
     "5e3c99b2abd2fdb863e66101",
     "5e3c99b2abd2f7f7f7fdb863e66101",
@@ -6740,9 +7430,9 @@
     "2d004b5427888073acb2abd2d8daebf7f7f7fee0b6fdb863e08214b358067f3b08"
   ).map(colors);
 
-  ramp(scheme$3);
+  ramp$1(scheme$n);
 
-  var scheme$4 = new Array(3).concat(
+  var scheme$m = new Array(3).concat(
     "ef8a62f7f7f767a9cf",
     "ca0020f4a58292c5de0571b0",
     "ca0020f4a582f7f7f792c5de0571b0",
@@ -6754,9 +7444,9 @@
     "67001fb2182bd6604df4a582fddbc7f7f7f7d1e5f092c5de4393c32166ac053061"
   ).map(colors);
 
-  ramp(scheme$4);
+  ramp$1(scheme$m);
 
-  var scheme$5 = new Array(3).concat(
+  var scheme$l = new Array(3).concat(
     "ef8a62ffffff999999",
     "ca0020f4a582bababa404040",
     "ca0020f4a582ffffffbababa404040",
@@ -6768,9 +7458,9 @@
     "67001fb2182bd6604df4a582fddbc7ffffffe0e0e0bababa8787874d4d4d1a1a1a"
   ).map(colors);
 
-  ramp(scheme$5);
+  ramp$1(scheme$l);
 
-  var scheme$6 = new Array(3).concat(
+  var scheme$k = new Array(3).concat(
     "fc8d59ffffbf91bfdb",
     "d7191cfdae61abd9e92c7bb6",
     "d7191cfdae61ffffbfabd9e92c7bb6",
@@ -6782,9 +7472,9 @@
     "a50026d73027f46d43fdae61fee090ffffbfe0f3f8abd9e974add14575b4313695"
   ).map(colors);
 
-  ramp(scheme$6);
+  ramp$1(scheme$k);
 
-  var scheme$7 = new Array(3).concat(
+  var scheme$j = new Array(3).concat(
     "fc8d59ffffbf91cf60",
     "d7191cfdae61a6d96a1a9641",
     "d7191cfdae61ffffbfa6d96a1a9641",
@@ -6796,9 +7486,9 @@
     "a50026d73027f46d43fdae61fee08bffffbfd9ef8ba6d96a66bd631a9850006837"
   ).map(colors);
 
-  ramp(scheme$7);
+  ramp$1(scheme$j);
 
-  var scheme$8 = new Array(3).concat(
+  var scheme$i = new Array(3).concat(
     "fc8d59ffffbf99d594",
     "d7191cfdae61abdda42b83ba",
     "d7191cfdae61ffffbfabdda42b83ba",
@@ -6810,9 +7500,9 @@
     "9e0142d53e4ff46d43fdae61fee08bffffbfe6f598abdda466c2a53288bd5e4fa2"
   ).map(colors);
 
-  ramp(scheme$8);
+  ramp$1(scheme$i);
 
-  var scheme$9 = new Array(3).concat(
+  var scheme$h = new Array(3).concat(
     "e5f5f999d8c92ca25f",
     "edf8fbb2e2e266c2a4238b45",
     "edf8fbb2e2e266c2a42ca25f006d2c",
@@ -6822,9 +7512,9 @@
     "f7fcfde5f5f9ccece699d8c966c2a441ae76238b45006d2c00441b"
   ).map(colors);
 
-  ramp(scheme$9);
+  ramp$1(scheme$h);
 
-  var scheme$a = new Array(3).concat(
+  var scheme$g = new Array(3).concat(
     "e0ecf49ebcda8856a7",
     "edf8fbb3cde38c96c688419d",
     "edf8fbb3cde38c96c68856a7810f7c",
@@ -6834,9 +7524,9 @@
     "f7fcfde0ecf4bfd3e69ebcda8c96c68c6bb188419d810f7c4d004b"
   ).map(colors);
 
-  ramp(scheme$a);
+  ramp$1(scheme$g);
 
-  var scheme$b = new Array(3).concat(
+  var scheme$f = new Array(3).concat(
     "e0f3dba8ddb543a2ca",
     "f0f9e8bae4bc7bccc42b8cbe",
     "f0f9e8bae4bc7bccc443a2ca0868ac",
@@ -6846,9 +7536,9 @@
     "f7fcf0e0f3dbccebc5a8ddb57bccc44eb3d32b8cbe0868ac084081"
   ).map(colors);
 
-  ramp(scheme$b);
+  ramp$1(scheme$f);
 
-  var scheme$c = new Array(3).concat(
+  var scheme$e = new Array(3).concat(
     "fee8c8fdbb84e34a33",
     "fef0d9fdcc8afc8d59d7301f",
     "fef0d9fdcc8afc8d59e34a33b30000",
@@ -6858,7 +7548,7 @@
     "fff7ecfee8c8fdd49efdbb84fc8d59ef6548d7301fb300007f0000"
   ).map(colors);
 
-  ramp(scheme$c);
+  ramp$1(scheme$e);
 
   var scheme$d = new Array(3).concat(
     "ece2f0a6bddb1c9099",
@@ -6870,9 +7560,9 @@
     "fff7fbece2f0d0d1e6a6bddb67a9cf3690c002818a016c59014636"
   ).map(colors);
 
-  ramp(scheme$d);
+  ramp$1(scheme$d);
 
-  var scheme$e = new Array(3).concat(
+  var scheme$c = new Array(3).concat(
     "ece7f2a6bddb2b8cbe",
     "f1eef6bdc9e174a9cf0570b0",
     "f1eef6bdc9e174a9cf2b8cbe045a8d",
@@ -6882,9 +7572,9 @@
     "fff7fbece7f2d0d1e6a6bddb74a9cf3690c00570b0045a8d023858"
   ).map(colors);
 
-  ramp(scheme$e);
+  ramp$1(scheme$c);
 
-  var scheme$f = new Array(3).concat(
+  var scheme$b = new Array(3).concat(
     "e7e1efc994c7dd1c77",
     "f1eef6d7b5d8df65b0ce1256",
     "f1eef6d7b5d8df65b0dd1c77980043",
@@ -6894,9 +7584,9 @@
     "f7f4f9e7e1efd4b9dac994c7df65b0e7298ace125698004367001f"
   ).map(colors);
 
-  ramp(scheme$f);
+  ramp$1(scheme$b);
 
-  var scheme$g = new Array(3).concat(
+  var scheme$a = new Array(3).concat(
     "fde0ddfa9fb5c51b8a",
     "feebe2fbb4b9f768a1ae017e",
     "feebe2fbb4b9f768a1c51b8a7a0177",
@@ -6906,9 +7596,9 @@
     "fff7f3fde0ddfcc5c0fa9fb5f768a1dd3497ae017e7a017749006a"
   ).map(colors);
 
-  ramp(scheme$g);
+  ramp$1(scheme$a);
 
-  var scheme$h = new Array(3).concat(
+  var scheme$9 = new Array(3).concat(
     "edf8b17fcdbb2c7fb8",
     "ffffcca1dab441b6c4225ea8",
     "ffffcca1dab441b6c42c7fb8253494",
@@ -6918,9 +7608,9 @@
     "ffffd9edf8b1c7e9b47fcdbb41b6c41d91c0225ea8253494081d58"
   ).map(colors);
 
-  ramp(scheme$h);
+  ramp$1(scheme$9);
 
-  var scheme$i = new Array(3).concat(
+  var scheme$8 = new Array(3).concat(
     "f7fcb9addd8e31a354",
     "ffffccc2e69978c679238443",
     "ffffccc2e69978c67931a354006837",
@@ -6930,9 +7620,9 @@
     "ffffe5f7fcb9d9f0a3addd8e78c67941ab5d238443006837004529"
   ).map(colors);
 
-  ramp(scheme$i);
+  ramp$1(scheme$8);
 
-  var scheme$j = new Array(3).concat(
+  var scheme$7 = new Array(3).concat(
     "fff7bcfec44fd95f0e",
     "ffffd4fed98efe9929cc4c02",
     "ffffd4fed98efe9929d95f0e993404",
@@ -6942,9 +7632,9 @@
     "ffffe5fff7bcfee391fec44ffe9929ec7014cc4c02993404662506"
   ).map(colors);
 
-  ramp(scheme$j);
+  ramp$1(scheme$7);
 
-  var scheme$k = new Array(3).concat(
+  var scheme$6 = new Array(3).concat(
     "ffeda0feb24cf03b20",
     "ffffb2fecc5cfd8d3ce31a1c",
     "ffffb2fecc5cfd8d3cf03b20bd0026",
@@ -6954,9 +7644,9 @@
     "ffffccffeda0fed976feb24cfd8d3cfc4e2ae31a1cbd0026800026"
   ).map(colors);
 
-  ramp(scheme$k);
+  ramp$1(scheme$6);
 
-  var scheme$l = new Array(3).concat(
+  var scheme$5 = new Array(3).concat(
     "deebf79ecae13182bd",
     "eff3ffbdd7e76baed62171b5",
     "eff3ffbdd7e76baed63182bd08519c",
@@ -6966,9 +7656,9 @@
     "f7fbffdeebf7c6dbef9ecae16baed64292c62171b508519c08306b"
   ).map(colors);
 
-  ramp(scheme$l);
+  ramp$1(scheme$5);
 
-  var scheme$m = new Array(3).concat(
+  var scheme$4 = new Array(3).concat(
     "e5f5e0a1d99b31a354",
     "edf8e9bae4b374c476238b45",
     "edf8e9bae4b374c47631a354006d2c",
@@ -6978,9 +7668,9 @@
     "f7fcf5e5f5e0c7e9c0a1d99b74c47641ab5d238b45006d2c00441b"
   ).map(colors);
 
-  ramp(scheme$m);
+  ramp$1(scheme$4);
 
-  var scheme$n = new Array(3).concat(
+  var scheme$3 = new Array(3).concat(
     "f0f0f0bdbdbd636363",
     "f7f7f7cccccc969696525252",
     "f7f7f7cccccc969696636363252525",
@@ -6990,9 +7680,9 @@
     "fffffff0f0f0d9d9d9bdbdbd969696737373525252252525000000"
   ).map(colors);
 
-  ramp(scheme$n);
+  ramp$1(scheme$3);
 
-  var scheme$o = new Array(3).concat(
+  var scheme$2 = new Array(3).concat(
     "efedf5bcbddc756bb1",
     "f2f0f7cbc9e29e9ac86a51a3",
     "f2f0f7cbc9e29e9ac8756bb154278f",
@@ -7002,9 +7692,9 @@
     "fcfbfdefedf5dadaebbcbddc9e9ac8807dba6a51a354278f3f007d"
   ).map(colors);
 
-  ramp(scheme$o);
+  ramp$1(scheme$2);
 
-  var scheme$p = new Array(3).concat(
+  var scheme$1 = new Array(3).concat(
     "fee0d2fc9272de2d26",
     "fee5d9fcae91fb6a4acb181d",
     "fee5d9fcae91fb6a4ade2d26a50f15",
@@ -7014,9 +7704,9 @@
     "fff5f0fee0d2fcbba1fc9272fb6a4aef3b2ccb181da50f1567000d"
   ).map(colors);
 
-  ramp(scheme$p);
+  ramp$1(scheme$1);
 
-  var scheme$q = new Array(3).concat(
+  var scheme = new Array(3).concat(
     "fee6cefdae6be6550d",
     "feeddefdbe85fd8d3cd94701",
     "feeddefdbe85fd8d3ce6550da63603",
@@ -7026,38 +7716,527 @@
     "fff5ebfee6cefdd0a2fdae6bfd8d3cf16913d94801a636037f2704"
   ).map(colors);
 
-  ramp(scheme$q);
+  ramp$1(scheme);
 
-  cubehelixLong(cubehelix(300, 0.5, 0.0), cubehelix(-240, 0.5, 1.0));
+  cubehelixLong(cubehelix$1(300, 0.5, 0.0), cubehelix$1(-240, 0.5, 1.0));
 
-  var warm = cubehelixLong(cubehelix(-100, 0.75, 0.35), cubehelix(80, 1.50, 0.8));
+  cubehelixLong(cubehelix$1(-100, 0.75, 0.35), cubehelix$1(80, 1.50, 0.8));
 
-  var cool = cubehelixLong(cubehelix(260, 0.75, 0.35), cubehelix(80, 1.50, 0.8));
+  cubehelixLong(cubehelix$1(260, 0.75, 0.35), cubehelix$1(80, 1.50, 0.8));
 
-  var c = cubehelix();
+  cubehelix$1();
 
-  var c$1 = rgb(),
-      pi_1_3 = Math.PI / 3,
-      pi_2_3 = Math.PI * 2 / 3;
+  rgb();
 
-  function ramp$1(range) {
+  function ramp(range) {
     var n = range.length;
     return function(t) {
       return range[Math.max(0, Math.min(n - 1, Math.floor(t * n)))];
     };
   }
 
-  ramp$1(colors("44015444025645045745055946075a46085c460a5d460b5e470d60470e6147106347116447136548146748166848176948186a481a6c481b6d481c6e481d6f481f70482071482173482374482475482576482677482878482979472a7a472c7a472d7b472e7c472f7d46307e46327e46337f463480453581453781453882443983443a83443b84433d84433e85423f854240864241864142874144874045884046883f47883f48893e49893e4a893e4c8a3d4d8a3d4e8a3c4f8a3c508b3b518b3b528b3a538b3a548c39558c39568c38588c38598c375a8c375b8d365c8d365d8d355e8d355f8d34608d34618d33628d33638d32648e32658e31668e31678e31688e30698e306a8e2f6b8e2f6c8e2e6d8e2e6e8e2e6f8e2d708e2d718e2c718e2c728e2c738e2b748e2b758e2a768e2a778e2a788e29798e297a8e297b8e287c8e287d8e277e8e277f8e27808e26818e26828e26828e25838e25848e25858e24868e24878e23888e23898e238a8d228b8d228c8d228d8d218e8d218f8d21908d21918c20928c20928c20938c1f948c1f958b1f968b1f978b1f988b1f998a1f9a8a1e9b8a1e9c891e9d891f9e891f9f881fa0881fa1881fa1871fa28720a38620a48621a58521a68522a78522a88423a98324aa8325ab8225ac8226ad8127ad8128ae8029af7f2ab07f2cb17e2db27d2eb37c2fb47c31b57b32b67a34b67935b77937b87838b9773aba763bbb753dbc743fbc7340bd7242be7144bf7046c06f48c16e4ac16d4cc26c4ec36b50c46a52c56954c56856c66758c7655ac8645cc8635ec96260ca6063cb5f65cb5e67cc5c69cd5b6ccd5a6ece5870cf5773d05675d05477d1537ad1517cd2507fd34e81d34d84d44b86d54989d5488bd6468ed64590d74393d74195d84098d83e9bd93c9dd93ba0da39a2da37a5db36a8db34aadc32addc30b0dd2fb2dd2db5de2bb8de29bade28bddf26c0df25c2df23c5e021c8e020cae11fcde11dd0e11cd2e21bd5e21ad8e219dae319dde318dfe318e2e418e5e419e7e419eae51aece51befe51cf1e51df4e61ef6e620f8e621fbe723fde725"));
+  ramp(colors("44015444025645045745055946075a46085c460a5d460b5e470d60470e6147106347116447136548146748166848176948186a481a6c481b6d481c6e481d6f481f70482071482173482374482475482576482677482878482979472a7a472c7a472d7b472e7c472f7d46307e46327e46337f463480453581453781453882443983443a83443b84433d84433e85423f854240864241864142874144874045884046883f47883f48893e49893e4a893e4c8a3d4d8a3d4e8a3c4f8a3c508b3b518b3b528b3a538b3a548c39558c39568c38588c38598c375a8c375b8d365c8d365d8d355e8d355f8d34608d34618d33628d33638d32648e32658e31668e31678e31688e30698e306a8e2f6b8e2f6c8e2e6d8e2e6e8e2e6f8e2d708e2d718e2c718e2c728e2c738e2b748e2b758e2a768e2a778e2a788e29798e297a8e297b8e287c8e287d8e277e8e277f8e27808e26818e26828e26828e25838e25848e25858e24868e24878e23888e23898e238a8d228b8d228c8d228d8d218e8d218f8d21908d21918c20928c20928c20938c1f948c1f958b1f968b1f978b1f988b1f998a1f9a8a1e9b8a1e9c891e9d891f9e891f9f881fa0881fa1881fa1871fa28720a38620a48621a58521a68522a78522a88423a98324aa8325ab8225ac8226ad8127ad8128ae8029af7f2ab07f2cb17e2db27d2eb37c2fb47c31b57b32b67a34b67935b77937b87838b9773aba763bbb753dbc743fbc7340bd7242be7144bf7046c06f48c16e4ac16d4cc26c4ec36b50c46a52c56954c56856c66758c7655ac8645cc8635ec96260ca6063cb5f65cb5e67cc5c69cd5b6ccd5a6ece5870cf5773d05675d05477d1537ad1517cd2507fd34e81d34d84d44b86d54989d5488bd6468ed64590d74393d74195d84098d83e9bd93c9dd93ba0da39a2da37a5db36a8db34aadc32addc30b0dd2fb2dd2db5de2bb8de29bade28bddf26c0df25c2df23c5e021c8e020cae11fcde11dd0e11cd2e21bd5e21ad8e219dae319dde318dfe318e2e418e5e419e7e419eae51aece51befe51cf1e51df4e61ef6e620f8e621fbe723fde725"));
 
-  var magma = ramp$1(colors("00000401000501010601010802010902020b02020d03030f03031204041405041606051806051a07061c08071e0907200a08220b09240c09260d0a290e0b2b100b2d110c2f120d31130d34140e36150e38160f3b180f3d19103f1a10421c10441d11471e114920114b21114e22115024125325125527125829115a2a115c2c115f2d11612f116331116533106734106936106b38106c390f6e3b0f703d0f713f0f72400f74420f75440f764510774710784910784a10794c117a4e117b4f127b51127c52137c54137d56147d57157e59157e5a167e5c167f5d177f5f187f601880621980641a80651a80671b80681c816a1c816b1d816d1d816e1e81701f81721f817320817521817621817822817922827b23827c23827e24828025828125818326818426818627818827818928818b29818c29818e2a81902a81912b81932b80942c80962c80982d80992d809b2e7f9c2e7f9e2f7fa02f7fa1307ea3307ea5317ea6317da8327daa337dab337cad347cae347bb0357bb2357bb3367ab5367ab73779b83779ba3878bc3978bd3977bf3a77c03a76c23b75c43c75c53c74c73d73c83e73ca3e72cc3f71cd4071cf4070d0416fd2426fd3436ed5446dd6456cd8456cd9466bdb476adc4869de4968df4a68e04c67e24d66e34e65e44f64e55064e75263e85362e95462ea5661eb5760ec5860ed5a5fee5b5eef5d5ef05f5ef1605df2625df2645cf3655cf4675cf4695cf56b5cf66c5cf66e5cf7705cf7725cf8745cf8765cf9785df9795df97b5dfa7d5efa7f5efa815ffb835ffb8560fb8761fc8961fc8a62fc8c63fc8e64fc9065fd9266fd9467fd9668fd9869fd9a6afd9b6bfe9d6cfe9f6dfea16efea36ffea571fea772fea973feaa74feac76feae77feb078feb27afeb47bfeb67cfeb77efeb97ffebb81febd82febf84fec185fec287fec488fec68afec88cfeca8dfecc8ffecd90fecf92fed194fed395fed597fed799fed89afdda9cfddc9efddea0fde0a1fde2a3fde3a5fde5a7fde7a9fde9aafdebacfcecaefceeb0fcf0b2fcf2b4fcf4b6fcf6b8fcf7b9fcf9bbfcfbbdfcfdbf"));
+  ramp(colors("00000401000501010601010802010902020b02020d03030f03031204041405041606051806051a07061c08071e0907200a08220b09240c09260d0a290e0b2b100b2d110c2f120d31130d34140e36150e38160f3b180f3d19103f1a10421c10441d11471e114920114b21114e22115024125325125527125829115a2a115c2c115f2d11612f116331116533106734106936106b38106c390f6e3b0f703d0f713f0f72400f74420f75440f764510774710784910784a10794c117a4e117b4f127b51127c52137c54137d56147d57157e59157e5a167e5c167f5d177f5f187f601880621980641a80651a80671b80681c816a1c816b1d816d1d816e1e81701f81721f817320817521817621817822817922827b23827c23827e24828025828125818326818426818627818827818928818b29818c29818e2a81902a81912b81932b80942c80962c80982d80992d809b2e7f9c2e7f9e2f7fa02f7fa1307ea3307ea5317ea6317da8327daa337dab337cad347cae347bb0357bb2357bb3367ab5367ab73779b83779ba3878bc3978bd3977bf3a77c03a76c23b75c43c75c53c74c73d73c83e73ca3e72cc3f71cd4071cf4070d0416fd2426fd3436ed5446dd6456cd8456cd9466bdb476adc4869de4968df4a68e04c67e24d66e34e65e44f64e55064e75263e85362e95462ea5661eb5760ec5860ed5a5fee5b5eef5d5ef05f5ef1605df2625df2645cf3655cf4675cf4695cf56b5cf66c5cf66e5cf7705cf7725cf8745cf8765cf9785df9795df97b5dfa7d5efa7f5efa815ffb835ffb8560fb8761fc8961fc8a62fc8c63fc8e64fc9065fd9266fd9467fd9668fd9869fd9a6afd9b6bfe9d6cfe9f6dfea16efea36ffea571fea772fea973feaa74feac76feae77feb078feb27afeb47bfeb67cfeb77efeb97ffebb81febd82febf84fec185fec287fec488fec68afec88cfeca8dfecc8ffecd90fecf92fed194fed395fed597fed799fed89afdda9cfddc9efddea0fde0a1fde2a3fde3a5fde5a7fde7a9fde9aafdebacfcecaefceeb0fcf0b2fcf2b4fcf4b6fcf6b8fcf7b9fcf9bbfcfbbdfcfdbf"));
 
-  var inferno = ramp$1(colors("00000401000501010601010802010a02020c02020e03021004031204031405041706041907051b08051d09061f0a07220b07240c08260d08290e092b10092d110a30120a32140b34150b37160b39180c3c190c3e1b0c411c0c431e0c451f0c48210c4a230c4c240c4f260c51280b53290b552b0b572d0b592f0a5b310a5c320a5e340a5f3609613809623909633b09643d09653e0966400a67420a68440a68450a69470b6a490b6a4a0c6b4c0c6b4d0d6c4f0d6c510e6c520e6d540f6d550f6d57106e59106e5a116e5c126e5d126e5f136e61136e62146e64156e65156e67166e69166e6a176e6c186e6d186e6f196e71196e721a6e741a6e751b6e771c6d781c6d7a1d6d7c1d6d7d1e6d7f1e6c801f6c82206c84206b85216b87216b88226a8a226a8c23698d23698f24699025689225689326679526679727669827669a28659b29649d29649f2a63a02a63a22b62a32c61a52c60a62d60a82e5fa92e5eab2f5ead305dae305cb0315bb1325ab3325ab43359b63458b73557b93556ba3655bc3754bd3853bf3952c03a51c13a50c33b4fc43c4ec63d4dc73e4cc83f4bca404acb4149cc4248ce4347cf4446d04545d24644d34743d44842d54a41d74b3fd84c3ed94d3dda4e3cdb503bdd513ade5238df5337e05536e15635e25734e35933e45a31e55c30e65d2fe75e2ee8602de9612bea632aeb6429eb6628ec6726ed6925ee6a24ef6c23ef6e21f06f20f1711ff1731df2741cf3761bf37819f47918f57b17f57d15f67e14f68013f78212f78410f8850ff8870ef8890cf98b0bf98c0af98e09fa9008fa9207fa9407fb9606fb9706fb9906fb9b06fb9d07fc9f07fca108fca309fca50afca60cfca80dfcaa0ffcac11fcae12fcb014fcb216fcb418fbb61afbb81dfbba1ffbbc21fbbe23fac026fac228fac42afac62df9c72ff9c932f9cb35f8cd37f8cf3af7d13df7d340f6d543f6d746f5d949f5db4cf4dd4ff4df53f4e156f3e35af3e55df2e661f2e865f2ea69f1ec6df1ed71f1ef75f1f179f2f27df2f482f3f586f3f68af4f88ef5f992f6fa96f8fb9af9fc9dfafda1fcffa4"));
+  ramp(colors("00000401000501010601010802010a02020c02020e03021004031204031405041706041907051b08051d09061f0a07220b07240c08260d08290e092b10092d110a30120a32140b34150b37160b39180c3c190c3e1b0c411c0c431e0c451f0c48210c4a230c4c240c4f260c51280b53290b552b0b572d0b592f0a5b310a5c320a5e340a5f3609613809623909633b09643d09653e0966400a67420a68440a68450a69470b6a490b6a4a0c6b4c0c6b4d0d6c4f0d6c510e6c520e6d540f6d550f6d57106e59106e5a116e5c126e5d126e5f136e61136e62146e64156e65156e67166e69166e6a176e6c186e6d186e6f196e71196e721a6e741a6e751b6e771c6d781c6d7a1d6d7c1d6d7d1e6d7f1e6c801f6c82206c84206b85216b87216b88226a8a226a8c23698d23698f24699025689225689326679526679727669827669a28659b29649d29649f2a63a02a63a22b62a32c61a52c60a62d60a82e5fa92e5eab2f5ead305dae305cb0315bb1325ab3325ab43359b63458b73557b93556ba3655bc3754bd3853bf3952c03a51c13a50c33b4fc43c4ec63d4dc73e4cc83f4bca404acb4149cc4248ce4347cf4446d04545d24644d34743d44842d54a41d74b3fd84c3ed94d3dda4e3cdb503bdd513ade5238df5337e05536e15635e25734e35933e45a31e55c30e65d2fe75e2ee8602de9612bea632aeb6429eb6628ec6726ed6925ee6a24ef6c23ef6e21f06f20f1711ff1731df2741cf3761bf37819f47918f57b17f57d15f67e14f68013f78212f78410f8850ff8870ef8890cf98b0bf98c0af98e09fa9008fa9207fa9407fb9606fb9706fb9906fb9b06fb9d07fc9f07fca108fca309fca50afca60cfca80dfcaa0ffcac11fcae12fcb014fcb216fcb418fbb61afbb81dfbba1ffbbc21fbbe23fac026fac228fac42afac62df9c72ff9c932f9cb35f8cd37f8cf3af7d13df7d340f6d543f6d746f5d949f5db4cf4dd4ff4df53f4e156f3e35af3e55df2e661f2e865f2ea69f1ec6df1ed71f1ef75f1f179f2f27df2f482f3f586f3f68af4f88ef5f992f6fa96f8fb9af9fc9dfafda1fcffa4"));
 
-  var plasma = ramp$1(colors("0d088710078813078916078a19068c1b068d1d068e20068f2206902406912605912805922a05932c05942e05952f059631059733059735049837049938049a3a049a3c049b3e049c3f049c41049d43039e44039e46039f48039f4903a04b03a14c02a14e02a25002a25102a35302a35502a45601a45801a45901a55b01a55c01a65e01a66001a66100a76300a76400a76600a76700a86900a86a00a86c00a86e00a86f00a87100a87201a87401a87501a87701a87801a87a02a87b02a87d03a87e03a88004a88104a78305a78405a78606a68707a68808a68a09a58b0aa58d0ba58e0ca48f0da4910ea3920fa39410a29511a19613a19814a099159f9a169f9c179e9d189d9e199da01a9ca11b9ba21d9aa31e9aa51f99a62098a72197a82296aa2395ab2494ac2694ad2793ae2892b02991b12a90b22b8fb32c8eb42e8db52f8cb6308bb7318ab83289ba3388bb3488bc3587bd3786be3885bf3984c03a83c13b82c23c81c33d80c43e7fc5407ec6417dc7427cc8437bc9447aca457acb4679cc4778cc4977cd4a76ce4b75cf4c74d04d73d14e72d24f71d35171d45270d5536fd5546ed6556dd7566cd8576bd9586ada5a6ada5b69db5c68dc5d67dd5e66de5f65de6164df6263e06363e16462e26561e26660e3685fe4695ee56a5de56b5de66c5ce76e5be76f5ae87059e97158e97257ea7457eb7556eb7655ec7754ed7953ed7a52ee7b51ef7c51ef7e50f07f4ff0804ef1814df1834cf2844bf3854bf3874af48849f48948f58b47f58c46f68d45f68f44f79044f79143f79342f89441f89540f9973ff9983ef99a3efa9b3dfa9c3cfa9e3bfb9f3afba139fba238fca338fca537fca636fca835fca934fdab33fdac33fdae32fdaf31fdb130fdb22ffdb42ffdb52efeb72dfeb82cfeba2cfebb2bfebd2afebe2afec029fdc229fdc328fdc527fdc627fdc827fdca26fdcb26fccd25fcce25fcd025fcd225fbd324fbd524fbd724fad824fada24f9dc24f9dd25f8df25f8e125f7e225f7e425f6e626f6e826f5e926f5eb27f4ed27f3ee27f3f027f2f227f1f426f1f525f0f724f0f921"));
+  ramp(colors("0d088710078813078916078a19068c1b068d1d068e20068f2206902406912605912805922a05932c05942e05952f059631059733059735049837049938049a3a049a3c049b3e049c3f049c41049d43039e44039e46039f48039f4903a04b03a14c02a14e02a25002a25102a35302a35502a45601a45801a45901a55b01a55c01a65e01a66001a66100a76300a76400a76600a76700a86900a86a00a86c00a86e00a86f00a87100a87201a87401a87501a87701a87801a87a02a87b02a87d03a87e03a88004a88104a78305a78405a78606a68707a68808a68a09a58b0aa58d0ba58e0ca48f0da4910ea3920fa39410a29511a19613a19814a099159f9a169f9c179e9d189d9e199da01a9ca11b9ba21d9aa31e9aa51f99a62098a72197a82296aa2395ab2494ac2694ad2793ae2892b02991b12a90b22b8fb32c8eb42e8db52f8cb6308bb7318ab83289ba3388bb3488bc3587bd3786be3885bf3984c03a83c13b82c23c81c33d80c43e7fc5407ec6417dc7427cc8437bc9447aca457acb4679cc4778cc4977cd4a76ce4b75cf4c74d04d73d14e72d24f71d35171d45270d5536fd5546ed6556dd7566cd8576bd9586ada5a6ada5b69db5c68dc5d67dd5e66de5f65de6164df6263e06363e16462e26561e26660e3685fe4695ee56a5de56b5de66c5ce76e5be76f5ae87059e97158e97257ea7457eb7556eb7655ec7754ed7953ed7a52ee7b51ef7c51ef7e50f07f4ff0804ef1814df1834cf2844bf3854bf3874af48849f48948f58b47f58c46f68d45f68f44f79044f79143f79342f89441f89540f9973ff9983ef99a3efa9b3dfa9c3cfa9e3bfb9f3afba139fba238fca338fca537fca636fca835fca934fdab33fdac33fdae32fdaf31fdb130fdb22ffdb42ffdb52efeb72dfeb82cfeba2cfebb2bfebd2afebe2afec029fdc229fdc328fdc527fdc627fdc827fdca26fdcb26fccd25fcce25fcd025fcd225fbd324fbd524fbd724fad824fada24f9dc24f9dd25f8df25f8e125f7e225f7e425f6e626f6e826f5e926f5eb27f4ed27f3ee27f3f027f2f227f1f426f1f525f0f724f0f921"));
 
-  var pi$4 = Math.PI;
+  var epsilon$1 = 1e-12;
 
-  function sign$1(x) {
+  function noop() {}
+
+  function point$3(that, x, y) {
+    that._context.bezierCurveTo(
+      (2 * that._x0 + that._x1) / 3,
+      (2 * that._y0 + that._y1) / 3,
+      (that._x0 + 2 * that._x1) / 3,
+      (that._y0 + 2 * that._y1) / 3,
+      (that._x0 + 4 * that._x1 + x) / 6,
+      (that._y0 + 4 * that._y1 + y) / 6
+    );
+  }
+
+  function Basis(context) {
+    this._context = context;
+  }
+
+  Basis.prototype = {
+    areaStart: function() {
+      this._line = 0;
+    },
+    areaEnd: function() {
+      this._line = NaN;
+    },
+    lineStart: function() {
+      this._x0 = this._x1 =
+      this._y0 = this._y1 = NaN;
+      this._point = 0;
+    },
+    lineEnd: function() {
+      switch (this._point) {
+        case 3: point$3(this, this._x1, this._y1); // proceed
+        case 2: this._context.lineTo(this._x1, this._y1); break;
+      }
+      if (this._line || (this._line !== 0 && this._point === 1)) this._context.closePath();
+      this._line = 1 - this._line;
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+      switch (this._point) {
+        case 0: this._point = 1; this._line ? this._context.lineTo(x, y) : this._context.moveTo(x, y); break;
+        case 1: this._point = 2; break;
+        case 2: this._point = 3; this._context.lineTo((5 * this._x0 + this._x1) / 6, (5 * this._y0 + this._y1) / 6); // proceed
+        default: point$3(this, x, y); break;
+      }
+      this._x0 = this._x1, this._x1 = x;
+      this._y0 = this._y1, this._y1 = y;
+    }
+  };
+
+  function Bundle(context, beta) {
+    this._basis = new Basis(context);
+    this._beta = beta;
+  }
+
+  Bundle.prototype = {
+    lineStart: function() {
+      this._x = [];
+      this._y = [];
+      this._basis.lineStart();
+    },
+    lineEnd: function() {
+      var x = this._x,
+          y = this._y,
+          j = x.length - 1;
+
+      if (j > 0) {
+        var x0 = x[0],
+            y0 = y[0],
+            dx = x[j] - x0,
+            dy = y[j] - y0,
+            i = -1,
+            t;
+
+        while (++i <= j) {
+          t = i / j;
+          this._basis.point(
+            this._beta * x[i] + (1 - this._beta) * (x0 + t * dx),
+            this._beta * y[i] + (1 - this._beta) * (y0 + t * dy)
+          );
+        }
+      }
+
+      this._x = this._y = null;
+      this._basis.lineEnd();
+    },
+    point: function(x, y) {
+      this._x.push(+x);
+      this._y.push(+y);
+    }
+  };
+
+  ((function custom(beta) {
+
+    function bundle(context) {
+      return beta === 1 ? new Basis(context) : new Bundle(context, beta);
+    }
+
+    bundle.beta = function(beta) {
+      return custom(+beta);
+    };
+
+    return bundle;
+  }))(0.85);
+
+  function point$2(that, x, y) {
+    that._context.bezierCurveTo(
+      that._x1 + that._k * (that._x2 - that._x0),
+      that._y1 + that._k * (that._y2 - that._y0),
+      that._x2 + that._k * (that._x1 - x),
+      that._y2 + that._k * (that._y1 - y),
+      that._x2,
+      that._y2
+    );
+  }
+
+  function Cardinal(context, tension) {
+    this._context = context;
+    this._k = (1 - tension) / 6;
+  }
+
+  Cardinal.prototype = {
+    areaStart: function() {
+      this._line = 0;
+    },
+    areaEnd: function() {
+      this._line = NaN;
+    },
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 =
+      this._y0 = this._y1 = this._y2 = NaN;
+      this._point = 0;
+    },
+    lineEnd: function() {
+      switch (this._point) {
+        case 2: this._context.lineTo(this._x2, this._y2); break;
+        case 3: point$2(this, this._x1, this._y1); break;
+      }
+      if (this._line || (this._line !== 0 && this._point === 1)) this._context.closePath();
+      this._line = 1 - this._line;
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+      switch (this._point) {
+        case 0: this._point = 1; this._line ? this._context.lineTo(x, y) : this._context.moveTo(x, y); break;
+        case 1: this._point = 2; this._x1 = x, this._y1 = y; break;
+        case 2: this._point = 3; // proceed
+        default: point$2(this, x, y); break;
+      }
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(tension) {
+
+    function cardinal(context) {
+      return new Cardinal(context, tension);
+    }
+
+    cardinal.tension = function(tension) {
+      return custom(+tension);
+    };
+
+    return cardinal;
+  }))(0);
+
+  function CardinalClosed(context, tension) {
+    this._context = context;
+    this._k = (1 - tension) / 6;
+  }
+
+  CardinalClosed.prototype = {
+    areaStart: noop,
+    areaEnd: noop,
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 = this._x3 = this._x4 = this._x5 =
+      this._y0 = this._y1 = this._y2 = this._y3 = this._y4 = this._y5 = NaN;
+      this._point = 0;
+    },
+    lineEnd: function() {
+      switch (this._point) {
+        case 1: {
+          this._context.moveTo(this._x3, this._y3);
+          this._context.closePath();
+          break;
+        }
+        case 2: {
+          this._context.lineTo(this._x3, this._y3);
+          this._context.closePath();
+          break;
+        }
+        case 3: {
+          this.point(this._x3, this._y3);
+          this.point(this._x4, this._y4);
+          this.point(this._x5, this._y5);
+          break;
+        }
+      }
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+      switch (this._point) {
+        case 0: this._point = 1; this._x3 = x, this._y3 = y; break;
+        case 1: this._point = 2; this._context.moveTo(this._x4 = x, this._y4 = y); break;
+        case 2: this._point = 3; this._x5 = x, this._y5 = y; break;
+        default: point$2(this, x, y); break;
+      }
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(tension) {
+
+    function cardinal(context) {
+      return new CardinalClosed(context, tension);
+    }
+
+    cardinal.tension = function(tension) {
+      return custom(+tension);
+    };
+
+    return cardinal;
+  }))(0);
+
+  function CardinalOpen(context, tension) {
+    this._context = context;
+    this._k = (1 - tension) / 6;
+  }
+
+  CardinalOpen.prototype = {
+    areaStart: function() {
+      this._line = 0;
+    },
+    areaEnd: function() {
+      this._line = NaN;
+    },
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 =
+      this._y0 = this._y1 = this._y2 = NaN;
+      this._point = 0;
+    },
+    lineEnd: function() {
+      if (this._line || (this._line !== 0 && this._point === 3)) this._context.closePath();
+      this._line = 1 - this._line;
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+      switch (this._point) {
+        case 0: this._point = 1; break;
+        case 1: this._point = 2; break;
+        case 2: this._point = 3; this._line ? this._context.lineTo(this._x2, this._y2) : this._context.moveTo(this._x2, this._y2); break;
+        case 3: this._point = 4; // proceed
+        default: point$2(this, x, y); break;
+      }
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(tension) {
+
+    function cardinal(context) {
+      return new CardinalOpen(context, tension);
+    }
+
+    cardinal.tension = function(tension) {
+      return custom(+tension);
+    };
+
+    return cardinal;
+  }))(0);
+
+  function point$1(that, x, y) {
+    var x1 = that._x1,
+        y1 = that._y1,
+        x2 = that._x2,
+        y2 = that._y2;
+
+    if (that._l01_a > epsilon$1) {
+      var a = 2 * that._l01_2a + 3 * that._l01_a * that._l12_a + that._l12_2a,
+          n = 3 * that._l01_a * (that._l01_a + that._l12_a);
+      x1 = (x1 * a - that._x0 * that._l12_2a + that._x2 * that._l01_2a) / n;
+      y1 = (y1 * a - that._y0 * that._l12_2a + that._y2 * that._l01_2a) / n;
+    }
+
+    if (that._l23_a > epsilon$1) {
+      var b = 2 * that._l23_2a + 3 * that._l23_a * that._l12_a + that._l12_2a,
+          m = 3 * that._l23_a * (that._l23_a + that._l12_a);
+      x2 = (x2 * b + that._x1 * that._l23_2a - x * that._l12_2a) / m;
+      y2 = (y2 * b + that._y1 * that._l23_2a - y * that._l12_2a) / m;
+    }
+
+    that._context.bezierCurveTo(x1, y1, x2, y2, that._x2, that._y2);
+  }
+
+  function CatmullRom(context, alpha) {
+    this._context = context;
+    this._alpha = alpha;
+  }
+
+  CatmullRom.prototype = {
+    areaStart: function() {
+      this._line = 0;
+    },
+    areaEnd: function() {
+      this._line = NaN;
+    },
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 =
+      this._y0 = this._y1 = this._y2 = NaN;
+      this._l01_a = this._l12_a = this._l23_a =
+      this._l01_2a = this._l12_2a = this._l23_2a =
+      this._point = 0;
+    },
+    lineEnd: function() {
+      switch (this._point) {
+        case 2: this._context.lineTo(this._x2, this._y2); break;
+        case 3: this.point(this._x2, this._y2); break;
+      }
+      if (this._line || (this._line !== 0 && this._point === 1)) this._context.closePath();
+      this._line = 1 - this._line;
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+
+      if (this._point) {
+        var x23 = this._x2 - x,
+            y23 = this._y2 - y;
+        this._l23_a = Math.sqrt(this._l23_2a = Math.pow(x23 * x23 + y23 * y23, this._alpha));
+      }
+
+      switch (this._point) {
+        case 0: this._point = 1; this._line ? this._context.lineTo(x, y) : this._context.moveTo(x, y); break;
+        case 1: this._point = 2; break;
+        case 2: this._point = 3; // proceed
+        default: point$1(this, x, y); break;
+      }
+
+      this._l01_a = this._l12_a, this._l12_a = this._l23_a;
+      this._l01_2a = this._l12_2a, this._l12_2a = this._l23_2a;
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(alpha) {
+
+    function catmullRom(context) {
+      return alpha ? new CatmullRom(context, alpha) : new Cardinal(context, 0);
+    }
+
+    catmullRom.alpha = function(alpha) {
+      return custom(+alpha);
+    };
+
+    return catmullRom;
+  }))(0.5);
+
+  function CatmullRomClosed(context, alpha) {
+    this._context = context;
+    this._alpha = alpha;
+  }
+
+  CatmullRomClosed.prototype = {
+    areaStart: noop,
+    areaEnd: noop,
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 = this._x3 = this._x4 = this._x5 =
+      this._y0 = this._y1 = this._y2 = this._y3 = this._y4 = this._y5 = NaN;
+      this._l01_a = this._l12_a = this._l23_a =
+      this._l01_2a = this._l12_2a = this._l23_2a =
+      this._point = 0;
+    },
+    lineEnd: function() {
+      switch (this._point) {
+        case 1: {
+          this._context.moveTo(this._x3, this._y3);
+          this._context.closePath();
+          break;
+        }
+        case 2: {
+          this._context.lineTo(this._x3, this._y3);
+          this._context.closePath();
+          break;
+        }
+        case 3: {
+          this.point(this._x3, this._y3);
+          this.point(this._x4, this._y4);
+          this.point(this._x5, this._y5);
+          break;
+        }
+      }
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+
+      if (this._point) {
+        var x23 = this._x2 - x,
+            y23 = this._y2 - y;
+        this._l23_a = Math.sqrt(this._l23_2a = Math.pow(x23 * x23 + y23 * y23, this._alpha));
+      }
+
+      switch (this._point) {
+        case 0: this._point = 1; this._x3 = x, this._y3 = y; break;
+        case 1: this._point = 2; this._context.moveTo(this._x4 = x, this._y4 = y); break;
+        case 2: this._point = 3; this._x5 = x, this._y5 = y; break;
+        default: point$1(this, x, y); break;
+      }
+
+      this._l01_a = this._l12_a, this._l12_a = this._l23_a;
+      this._l01_2a = this._l12_2a, this._l12_2a = this._l23_2a;
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(alpha) {
+
+    function catmullRom(context) {
+      return alpha ? new CatmullRomClosed(context, alpha) : new CardinalClosed(context, 0);
+    }
+
+    catmullRom.alpha = function(alpha) {
+      return custom(+alpha);
+    };
+
+    return catmullRom;
+  }))(0.5);
+
+  function CatmullRomOpen(context, alpha) {
+    this._context = context;
+    this._alpha = alpha;
+  }
+
+  CatmullRomOpen.prototype = {
+    areaStart: function() {
+      this._line = 0;
+    },
+    areaEnd: function() {
+      this._line = NaN;
+    },
+    lineStart: function() {
+      this._x0 = this._x1 = this._x2 =
+      this._y0 = this._y1 = this._y2 = NaN;
+      this._l01_a = this._l12_a = this._l23_a =
+      this._l01_2a = this._l12_2a = this._l23_2a =
+      this._point = 0;
+    },
+    lineEnd: function() {
+      if (this._line || (this._line !== 0 && this._point === 3)) this._context.closePath();
+      this._line = 1 - this._line;
+    },
+    point: function(x, y) {
+      x = +x, y = +y;
+
+      if (this._point) {
+        var x23 = this._x2 - x,
+            y23 = this._y2 - y;
+        this._l23_a = Math.sqrt(this._l23_2a = Math.pow(x23 * x23 + y23 * y23, this._alpha));
+      }
+
+      switch (this._point) {
+        case 0: this._point = 1; break;
+        case 1: this._point = 2; break;
+        case 2: this._point = 3; this._line ? this._context.lineTo(this._x2, this._y2) : this._context.moveTo(this._x2, this._y2); break;
+        case 3: this._point = 4; // proceed
+        default: point$1(this, x, y); break;
+      }
+
+      this._l01_a = this._l12_a, this._l12_a = this._l23_a;
+      this._l01_2a = this._l12_2a, this._l12_2a = this._l23_2a;
+      this._x0 = this._x1, this._x1 = this._x2, this._x2 = x;
+      this._y0 = this._y1, this._y1 = this._y2, this._y2 = y;
+    }
+  };
+
+  ((function custom(alpha) {
+
+    function catmullRom(context) {
+      return alpha ? new CatmullRomOpen(context, alpha) : new CardinalOpen(context, 0);
+    }
+
+    catmullRom.alpha = function(alpha) {
+      return custom(+alpha);
+    };
+
+    return catmullRom;
+  }))(0.5);
+
+  function sign(x) {
     return x < 0 ? -1 : 1;
   }
 
@@ -7071,7 +8250,7 @@
         s0 = (that._y1 - that._y0) / (h0 || h1 < 0 && -0),
         s1 = (y2 - that._y1) / (h1 || h0 < 0 && -0),
         p = (s0 * h1 + s1 * h0) / (h0 + h1);
-    return (sign$1(s0) + sign$1(s1)) * Math.min(Math.abs(s0), Math.abs(s1), 0.5 * Math.abs(p)) || 0;
+    return (sign(s0) + sign(s1)) * Math.min(Math.abs(s0), Math.abs(s1), 0.5 * Math.abs(p)) || 0;
   }
 
   // Calculate a one-sided slope.
@@ -7083,7 +8262,7 @@
   // According to https://en.wikipedia.org/wiki/Cubic_Hermite_spline#Representations
   // "you can express cubic Hermite interpolation in terms of cubic Bézier curves
   // with respect to the four values p0, p0 + m0 / 3, p1 - m1 / 3, p1".
-  function point$5(that, t0, t1) {
+  function point(that, t0, t1) {
     var x0 = that._x0,
         y0 = that._y0,
         x1 = that._x1,
@@ -7112,7 +8291,7 @@
     lineEnd: function() {
       switch (this._point) {
         case 2: this._context.lineTo(this._x1, this._y1); break;
-        case 3: point$5(this, this._t0, slope2(this, this._t0)); break;
+        case 3: point(this, this._t0, slope2(this, this._t0)); break;
       }
       if (this._line || (this._line !== 0 && this._point === 1)) this._context.closePath();
       this._line = 1 - this._line;
@@ -7125,8 +8304,8 @@
       switch (this._point) {
         case 0: this._point = 1; this._line ? this._context.lineTo(x, y) : this._context.moveTo(x, y); break;
         case 1: this._point = 2; break;
-        case 2: this._point = 3; point$5(this, slope2(this, t1 = slope3(this, x, y)), t1); break;
-        default: point$5(this, this._t0, t1 = slope3(this, x, y)); break;
+        case 2: this._point = 3; point(this, slope2(this, t1 = slope3(this, x, y)), t1); break;
+        default: point(this, this._t0, t1 = slope3(this, x, y)); break;
       }
 
       this._x0 = this._x1, this._x1 = x;
@@ -7135,26 +8314,939 @@
     }
   };
 
-  function MonotoneY(context) {
-    this._context = new ReflectContext(context);
-  }
-
-  (MonotoneY.prototype = Object.create(MonotoneX.prototype)).point = function(x, y) {
+  (Object.create(MonotoneX.prototype)).point = function(x, y) {
     MonotoneX.prototype.point.call(this, y, x);
   };
 
-  function ReflectContext(context) {
-    this._context = context;
+  function RedBlackTree() {
+    this._ = null; // root node
   }
 
-  ReflectContext.prototype = {
-    moveTo: function(x, y) { this._context.moveTo(y, x); },
-    closePath: function() { this._context.closePath(); },
-    lineTo: function(x, y) { this._context.lineTo(y, x); },
-    bezierCurveTo: function(x1, y1, x2, y2, x, y) { this._context.bezierCurveTo(y1, x1, y2, x2, y, x); }
+  function RedBlackNode(node) {
+    node.U = // parent node
+    node.C = // color - true for red, false for black
+    node.L = // left node
+    node.R = // right node
+    node.P = // previous node
+    node.N = null; // next node
+  }
+
+  RedBlackTree.prototype = {
+    constructor: RedBlackTree,
+
+    insert: function(after, node) {
+      var parent, grandpa, uncle;
+
+      if (after) {
+        node.P = after;
+        node.N = after.N;
+        if (after.N) after.N.P = node;
+        after.N = node;
+        if (after.R) {
+          after = after.R;
+          while (after.L) after = after.L;
+          after.L = node;
+        } else {
+          after.R = node;
+        }
+        parent = after;
+      } else if (this._) {
+        after = RedBlackFirst(this._);
+        node.P = null;
+        node.N = after;
+        after.P = after.L = node;
+        parent = after;
+      } else {
+        node.P = node.N = null;
+        this._ = node;
+        parent = null;
+      }
+      node.L = node.R = null;
+      node.U = parent;
+      node.C = true;
+
+      after = node;
+      while (parent && parent.C) {
+        grandpa = parent.U;
+        if (parent === grandpa.L) {
+          uncle = grandpa.R;
+          if (uncle && uncle.C) {
+            parent.C = uncle.C = false;
+            grandpa.C = true;
+            after = grandpa;
+          } else {
+            if (after === parent.R) {
+              RedBlackRotateLeft(this, parent);
+              after = parent;
+              parent = after.U;
+            }
+            parent.C = false;
+            grandpa.C = true;
+            RedBlackRotateRight(this, grandpa);
+          }
+        } else {
+          uncle = grandpa.L;
+          if (uncle && uncle.C) {
+            parent.C = uncle.C = false;
+            grandpa.C = true;
+            after = grandpa;
+          } else {
+            if (after === parent.L) {
+              RedBlackRotateRight(this, parent);
+              after = parent;
+              parent = after.U;
+            }
+            parent.C = false;
+            grandpa.C = true;
+            RedBlackRotateLeft(this, grandpa);
+          }
+        }
+        parent = after.U;
+      }
+      this._.C = false;
+    },
+
+    remove: function(node) {
+      if (node.N) node.N.P = node.P;
+      if (node.P) node.P.N = node.N;
+      node.N = node.P = null;
+
+      var parent = node.U,
+          sibling,
+          left = node.L,
+          right = node.R,
+          next,
+          red;
+
+      if (!left) next = right;
+      else if (!right) next = left;
+      else next = RedBlackFirst(right);
+
+      if (parent) {
+        if (parent.L === node) parent.L = next;
+        else parent.R = next;
+      } else {
+        this._ = next;
+      }
+
+      if (left && right) {
+        red = next.C;
+        next.C = node.C;
+        next.L = left;
+        left.U = next;
+        if (next !== right) {
+          parent = next.U;
+          next.U = node.U;
+          node = next.R;
+          parent.L = node;
+          next.R = right;
+          right.U = next;
+        } else {
+          next.U = parent;
+          parent = next;
+          node = next.R;
+        }
+      } else {
+        red = node.C;
+        node = next;
+      }
+
+      if (node) node.U = parent;
+      if (red) return;
+      if (node && node.C) { node.C = false; return; }
+
+      do {
+        if (node === this._) break;
+        if (node === parent.L) {
+          sibling = parent.R;
+          if (sibling.C) {
+            sibling.C = false;
+            parent.C = true;
+            RedBlackRotateLeft(this, parent);
+            sibling = parent.R;
+          }
+          if ((sibling.L && sibling.L.C)
+              || (sibling.R && sibling.R.C)) {
+            if (!sibling.R || !sibling.R.C) {
+              sibling.L.C = false;
+              sibling.C = true;
+              RedBlackRotateRight(this, sibling);
+              sibling = parent.R;
+            }
+            sibling.C = parent.C;
+            parent.C = sibling.R.C = false;
+            RedBlackRotateLeft(this, parent);
+            node = this._;
+            break;
+          }
+        } else {
+          sibling = parent.L;
+          if (sibling.C) {
+            sibling.C = false;
+            parent.C = true;
+            RedBlackRotateRight(this, parent);
+            sibling = parent.L;
+          }
+          if ((sibling.L && sibling.L.C)
+            || (sibling.R && sibling.R.C)) {
+            if (!sibling.L || !sibling.L.C) {
+              sibling.R.C = false;
+              sibling.C = true;
+              RedBlackRotateLeft(this, sibling);
+              sibling = parent.L;
+            }
+            sibling.C = parent.C;
+            parent.C = sibling.L.C = false;
+            RedBlackRotateRight(this, parent);
+            node = this._;
+            break;
+          }
+        }
+        sibling.C = true;
+        node = parent;
+        parent = parent.U;
+      } while (!node.C);
+
+      if (node) node.C = false;
+    }
   };
 
-  function constant$d(x) {
+  function RedBlackRotateLeft(tree, node) {
+    var p = node,
+        q = node.R,
+        parent = p.U;
+
+    if (parent) {
+      if (parent.L === p) parent.L = q;
+      else parent.R = q;
+    } else {
+      tree._ = q;
+    }
+
+    q.U = parent;
+    p.U = q;
+    p.R = q.L;
+    if (p.R) p.R.U = p;
+    q.L = p;
+  }
+
+  function RedBlackRotateRight(tree, node) {
+    var p = node,
+        q = node.L,
+        parent = p.U;
+
+    if (parent) {
+      if (parent.L === p) parent.L = q;
+      else parent.R = q;
+    } else {
+      tree._ = q;
+    }
+
+    q.U = parent;
+    p.U = q;
+    p.L = q.R;
+    if (p.L) p.L.U = p;
+    q.R = p;
+  }
+
+  function RedBlackFirst(node) {
+    while (node.L) node = node.L;
+    return node;
+  }
+
+  function createEdge(left, right, v0, v1) {
+    var edge = [null, null],
+        index = edges.push(edge) - 1;
+    edge.left = left;
+    edge.right = right;
+    if (v0) setEdgeEnd(edge, left, right, v0);
+    if (v1) setEdgeEnd(edge, right, left, v1);
+    cells[left.index].halfedges.push(index);
+    cells[right.index].halfedges.push(index);
+    return edge;
+  }
+
+  function createBorderEdge(left, v0, v1) {
+    var edge = [v0, v1];
+    edge.left = left;
+    return edge;
+  }
+
+  function setEdgeEnd(edge, left, right, vertex) {
+    if (!edge[0] && !edge[1]) {
+      edge[0] = vertex;
+      edge.left = left;
+      edge.right = right;
+    } else if (edge.left === right) {
+      edge[1] = vertex;
+    } else {
+      edge[0] = vertex;
+    }
+  }
+
+  // Liang–Barsky line clipping.
+  function clipEdge(edge, x0, y0, x1, y1) {
+    var a = edge[0],
+        b = edge[1],
+        ax = a[0],
+        ay = a[1],
+        bx = b[0],
+        by = b[1],
+        t0 = 0,
+        t1 = 1,
+        dx = bx - ax,
+        dy = by - ay,
+        r;
+
+    r = x0 - ax;
+    if (!dx && r > 0) return;
+    r /= dx;
+    if (dx < 0) {
+      if (r < t0) return;
+      if (r < t1) t1 = r;
+    } else if (dx > 0) {
+      if (r > t1) return;
+      if (r > t0) t0 = r;
+    }
+
+    r = x1 - ax;
+    if (!dx && r < 0) return;
+    r /= dx;
+    if (dx < 0) {
+      if (r > t1) return;
+      if (r > t0) t0 = r;
+    } else if (dx > 0) {
+      if (r < t0) return;
+      if (r < t1) t1 = r;
+    }
+
+    r = y0 - ay;
+    if (!dy && r > 0) return;
+    r /= dy;
+    if (dy < 0) {
+      if (r < t0) return;
+      if (r < t1) t1 = r;
+    } else if (dy > 0) {
+      if (r > t1) return;
+      if (r > t0) t0 = r;
+    }
+
+    r = y1 - ay;
+    if (!dy && r < 0) return;
+    r /= dy;
+    if (dy < 0) {
+      if (r > t1) return;
+      if (r > t0) t0 = r;
+    } else if (dy > 0) {
+      if (r < t0) return;
+      if (r < t1) t1 = r;
+    }
+
+    if (!(t0 > 0) && !(t1 < 1)) return true; // TODO Better check?
+
+    if (t0 > 0) edge[0] = [ax + t0 * dx, ay + t0 * dy];
+    if (t1 < 1) edge[1] = [ax + t1 * dx, ay + t1 * dy];
+    return true;
+  }
+
+  function connectEdge(edge, x0, y0, x1, y1) {
+    var v1 = edge[1];
+    if (v1) return true;
+
+    var v0 = edge[0],
+        left = edge.left,
+        right = edge.right,
+        lx = left[0],
+        ly = left[1],
+        rx = right[0],
+        ry = right[1],
+        fx = (lx + rx) / 2,
+        fy = (ly + ry) / 2,
+        fm,
+        fb;
+
+    if (ry === ly) {
+      if (fx < x0 || fx >= x1) return;
+      if (lx > rx) {
+        if (!v0) v0 = [fx, y0];
+        else if (v0[1] >= y1) return;
+        v1 = [fx, y1];
+      } else {
+        if (!v0) v0 = [fx, y1];
+        else if (v0[1] < y0) return;
+        v1 = [fx, y0];
+      }
+    } else {
+      fm = (lx - rx) / (ry - ly);
+      fb = fy - fm * fx;
+      if (fm < -1 || fm > 1) {
+        if (lx > rx) {
+          if (!v0) v0 = [(y0 - fb) / fm, y0];
+          else if (v0[1] >= y1) return;
+          v1 = [(y1 - fb) / fm, y1];
+        } else {
+          if (!v0) v0 = [(y1 - fb) / fm, y1];
+          else if (v0[1] < y0) return;
+          v1 = [(y0 - fb) / fm, y0];
+        }
+      } else {
+        if (ly < ry) {
+          if (!v0) v0 = [x0, fm * x0 + fb];
+          else if (v0[0] >= x1) return;
+          v1 = [x1, fm * x1 + fb];
+        } else {
+          if (!v0) v0 = [x1, fm * x1 + fb];
+          else if (v0[0] < x0) return;
+          v1 = [x0, fm * x0 + fb];
+        }
+      }
+    }
+
+    edge[0] = v0;
+    edge[1] = v1;
+    return true;
+  }
+
+  function clipEdges(x0, y0, x1, y1) {
+    var i = edges.length,
+        edge;
+
+    while (i--) {
+      if (!connectEdge(edge = edges[i], x0, y0, x1, y1)
+          || !clipEdge(edge, x0, y0, x1, y1)
+          || !(Math.abs(edge[0][0] - edge[1][0]) > epsilon
+              || Math.abs(edge[0][1] - edge[1][1]) > epsilon)) {
+        delete edges[i];
+      }
+    }
+  }
+
+  function createCell(site) {
+    return cells[site.index] = {
+      site: site,
+      halfedges: []
+    };
+  }
+
+  function cellHalfedgeAngle(cell, edge) {
+    var site = cell.site,
+        va = edge.left,
+        vb = edge.right;
+    if (site === vb) vb = va, va = site;
+    if (vb) return Math.atan2(vb[1] - va[1], vb[0] - va[0]);
+    if (site === va) va = edge[1], vb = edge[0];
+    else va = edge[0], vb = edge[1];
+    return Math.atan2(va[0] - vb[0], vb[1] - va[1]);
+  }
+
+  function cellHalfedgeStart(cell, edge) {
+    return edge[+(edge.left !== cell.site)];
+  }
+
+  function cellHalfedgeEnd(cell, edge) {
+    return edge[+(edge.left === cell.site)];
+  }
+
+  function sortCellHalfedges() {
+    for (var i = 0, n = cells.length, cell, halfedges, j, m; i < n; ++i) {
+      if ((cell = cells[i]) && (m = (halfedges = cell.halfedges).length)) {
+        var index = new Array(m),
+            array = new Array(m);
+        for (j = 0; j < m; ++j) index[j] = j, array[j] = cellHalfedgeAngle(cell, edges[halfedges[j]]);
+        index.sort(function(i, j) { return array[j] - array[i]; });
+        for (j = 0; j < m; ++j) array[j] = halfedges[index[j]];
+        for (j = 0; j < m; ++j) halfedges[j] = array[j];
+      }
+    }
+  }
+
+  function clipCells(x0, y0, x1, y1) {
+    var nCells = cells.length,
+        iCell,
+        cell,
+        site,
+        iHalfedge,
+        halfedges,
+        nHalfedges,
+        start,
+        startX,
+        startY,
+        end,
+        endX,
+        endY,
+        cover = true;
+
+    for (iCell = 0; iCell < nCells; ++iCell) {
+      if (cell = cells[iCell]) {
+        site = cell.site;
+        halfedges = cell.halfedges;
+        iHalfedge = halfedges.length;
+
+        // Remove any dangling clipped edges.
+        while (iHalfedge--) {
+          if (!edges[halfedges[iHalfedge]]) {
+            halfedges.splice(iHalfedge, 1);
+          }
+        }
+
+        // Insert any border edges as necessary.
+        iHalfedge = 0, nHalfedges = halfedges.length;
+        while (iHalfedge < nHalfedges) {
+          end = cellHalfedgeEnd(cell, edges[halfedges[iHalfedge]]), endX = end[0], endY = end[1];
+          start = cellHalfedgeStart(cell, edges[halfedges[++iHalfedge % nHalfedges]]), startX = start[0], startY = start[1];
+          if (Math.abs(endX - startX) > epsilon || Math.abs(endY - startY) > epsilon) {
+            halfedges.splice(iHalfedge, 0, edges.push(createBorderEdge(site, end,
+                Math.abs(endX - x0) < epsilon && y1 - endY > epsilon ? [x0, Math.abs(startX - x0) < epsilon ? startY : y1]
+                : Math.abs(endY - y1) < epsilon && x1 - endX > epsilon ? [Math.abs(startY - y1) < epsilon ? startX : x1, y1]
+                : Math.abs(endX - x1) < epsilon && endY - y0 > epsilon ? [x1, Math.abs(startX - x1) < epsilon ? startY : y0]
+                : Math.abs(endY - y0) < epsilon && endX - x0 > epsilon ? [Math.abs(startY - y0) < epsilon ? startX : x0, y0]
+                : null)) - 1);
+            ++nHalfedges;
+          }
+        }
+
+        if (nHalfedges) cover = false;
+      }
+    }
+
+    // If there weren’t any edges, have the closest site cover the extent.
+    // It doesn’t matter which corner of the extent we measure!
+    if (cover) {
+      var dx, dy, d2, dc = Infinity;
+
+      for (iCell = 0, cover = null; iCell < nCells; ++iCell) {
+        if (cell = cells[iCell]) {
+          site = cell.site;
+          dx = site[0] - x0;
+          dy = site[1] - y0;
+          d2 = dx * dx + dy * dy;
+          if (d2 < dc) dc = d2, cover = cell;
+        }
+      }
+
+      if (cover) {
+        var v00 = [x0, y0], v01 = [x0, y1], v11 = [x1, y1], v10 = [x1, y0];
+        cover.halfedges.push(
+          edges.push(createBorderEdge(site = cover.site, v00, v01)) - 1,
+          edges.push(createBorderEdge(site, v01, v11)) - 1,
+          edges.push(createBorderEdge(site, v11, v10)) - 1,
+          edges.push(createBorderEdge(site, v10, v00)) - 1
+        );
+      }
+    }
+
+    // Lastly delete any cells with no edges; these were entirely clipped.
+    for (iCell = 0; iCell < nCells; ++iCell) {
+      if (cell = cells[iCell]) {
+        if (!cell.halfedges.length) {
+          delete cells[iCell];
+        }
+      }
+    }
+  }
+
+  var circlePool = [];
+
+  var firstCircle;
+
+  function Circle() {
+    RedBlackNode(this);
+    this.x =
+    this.y =
+    this.arc =
+    this.site =
+    this.cy = null;
+  }
+
+  function attachCircle(arc) {
+    var lArc = arc.P,
+        rArc = arc.N;
+
+    if (!lArc || !rArc) return;
+
+    var lSite = lArc.site,
+        cSite = arc.site,
+        rSite = rArc.site;
+
+    if (lSite === rSite) return;
+
+    var bx = cSite[0],
+        by = cSite[1],
+        ax = lSite[0] - bx,
+        ay = lSite[1] - by,
+        cx = rSite[0] - bx,
+        cy = rSite[1] - by;
+
+    var d = 2 * (ax * cy - ay * cx);
+    if (d >= -epsilon2) return;
+
+    var ha = ax * ax + ay * ay,
+        hc = cx * cx + cy * cy,
+        x = (cy * ha - ay * hc) / d,
+        y = (ax * hc - cx * ha) / d;
+
+    var circle = circlePool.pop() || new Circle;
+    circle.arc = arc;
+    circle.site = cSite;
+    circle.x = x + bx;
+    circle.y = (circle.cy = y + by) + Math.sqrt(x * x + y * y); // y bottom
+
+    arc.circle = circle;
+
+    var before = null,
+        node = circles._;
+
+    while (node) {
+      if (circle.y < node.y || (circle.y === node.y && circle.x <= node.x)) {
+        if (node.L) node = node.L;
+        else { before = node.P; break; }
+      } else {
+        if (node.R) node = node.R;
+        else { before = node; break; }
+      }
+    }
+
+    circles.insert(before, circle);
+    if (!before) firstCircle = circle;
+  }
+
+  function detachCircle(arc) {
+    var circle = arc.circle;
+    if (circle) {
+      if (!circle.P) firstCircle = circle.N;
+      circles.remove(circle);
+      circlePool.push(circle);
+      RedBlackNode(circle);
+      arc.circle = null;
+    }
+  }
+
+  var beachPool = [];
+
+  function Beach() {
+    RedBlackNode(this);
+    this.edge =
+    this.site =
+    this.circle = null;
+  }
+
+  function createBeach(site) {
+    var beach = beachPool.pop() || new Beach;
+    beach.site = site;
+    return beach;
+  }
+
+  function detachBeach(beach) {
+    detachCircle(beach);
+    beaches.remove(beach);
+    beachPool.push(beach);
+    RedBlackNode(beach);
+  }
+
+  function removeBeach(beach) {
+    var circle = beach.circle,
+        x = circle.x,
+        y = circle.cy,
+        vertex = [x, y],
+        previous = beach.P,
+        next = beach.N,
+        disappearing = [beach];
+
+    detachBeach(beach);
+
+    var lArc = previous;
+    while (lArc.circle
+        && Math.abs(x - lArc.circle.x) < epsilon
+        && Math.abs(y - lArc.circle.cy) < epsilon) {
+      previous = lArc.P;
+      disappearing.unshift(lArc);
+      detachBeach(lArc);
+      lArc = previous;
+    }
+
+    disappearing.unshift(lArc);
+    detachCircle(lArc);
+
+    var rArc = next;
+    while (rArc.circle
+        && Math.abs(x - rArc.circle.x) < epsilon
+        && Math.abs(y - rArc.circle.cy) < epsilon) {
+      next = rArc.N;
+      disappearing.push(rArc);
+      detachBeach(rArc);
+      rArc = next;
+    }
+
+    disappearing.push(rArc);
+    detachCircle(rArc);
+
+    var nArcs = disappearing.length,
+        iArc;
+    for (iArc = 1; iArc < nArcs; ++iArc) {
+      rArc = disappearing[iArc];
+      lArc = disappearing[iArc - 1];
+      setEdgeEnd(rArc.edge, lArc.site, rArc.site, vertex);
+    }
+
+    lArc = disappearing[0];
+    rArc = disappearing[nArcs - 1];
+    rArc.edge = createEdge(lArc.site, rArc.site, null, vertex);
+
+    attachCircle(lArc);
+    attachCircle(rArc);
+  }
+
+  function addBeach(site) {
+    var x = site[0],
+        directrix = site[1],
+        lArc,
+        rArc,
+        dxl,
+        dxr,
+        node = beaches._;
+
+    while (node) {
+      dxl = leftBreakPoint(node, directrix) - x;
+      if (dxl > epsilon) node = node.L; else {
+        dxr = x - rightBreakPoint(node, directrix);
+        if (dxr > epsilon) {
+          if (!node.R) {
+            lArc = node;
+            break;
+          }
+          node = node.R;
+        } else {
+          if (dxl > -epsilon) {
+            lArc = node.P;
+            rArc = node;
+          } else if (dxr > -epsilon) {
+            lArc = node;
+            rArc = node.N;
+          } else {
+            lArc = rArc = node;
+          }
+          break;
+        }
+      }
+    }
+
+    createCell(site);
+    var newArc = createBeach(site);
+    beaches.insert(lArc, newArc);
+
+    if (!lArc && !rArc) return;
+
+    if (lArc === rArc) {
+      detachCircle(lArc);
+      rArc = createBeach(lArc.site);
+      beaches.insert(newArc, rArc);
+      newArc.edge = rArc.edge = createEdge(lArc.site, newArc.site);
+      attachCircle(lArc);
+      attachCircle(rArc);
+      return;
+    }
+
+    if (!rArc) { // && lArc
+      newArc.edge = createEdge(lArc.site, newArc.site);
+      return;
+    }
+
+    // else lArc !== rArc
+    detachCircle(lArc);
+    detachCircle(rArc);
+
+    var lSite = lArc.site,
+        ax = lSite[0],
+        ay = lSite[1],
+        bx = site[0] - ax,
+        by = site[1] - ay,
+        rSite = rArc.site,
+        cx = rSite[0] - ax,
+        cy = rSite[1] - ay,
+        d = 2 * (bx * cy - by * cx),
+        hb = bx * bx + by * by,
+        hc = cx * cx + cy * cy,
+        vertex = [(cy * hb - by * hc) / d + ax, (bx * hc - cx * hb) / d + ay];
+
+    setEdgeEnd(rArc.edge, lSite, rSite, vertex);
+    newArc.edge = createEdge(lSite, site, null, vertex);
+    rArc.edge = createEdge(site, rSite, null, vertex);
+    attachCircle(lArc);
+    attachCircle(rArc);
+  }
+
+  function leftBreakPoint(arc, directrix) {
+    var site = arc.site,
+        rfocx = site[0],
+        rfocy = site[1],
+        pby2 = rfocy - directrix;
+
+    if (!pby2) return rfocx;
+
+    var lArc = arc.P;
+    if (!lArc) return -Infinity;
+
+    site = lArc.site;
+    var lfocx = site[0],
+        lfocy = site[1],
+        plby2 = lfocy - directrix;
+
+    if (!plby2) return lfocx;
+
+    var hl = lfocx - rfocx,
+        aby2 = 1 / pby2 - 1 / plby2,
+        b = hl / plby2;
+
+    if (aby2) return (-b + Math.sqrt(b * b - 2 * aby2 * (hl * hl / (-2 * plby2) - lfocy + plby2 / 2 + rfocy - pby2 / 2))) / aby2 + rfocx;
+
+    return (rfocx + lfocx) / 2;
+  }
+
+  function rightBreakPoint(arc, directrix) {
+    var rArc = arc.N;
+    if (rArc) return leftBreakPoint(rArc, directrix);
+    var site = arc.site;
+    return site[1] === directrix ? site[0] : Infinity;
+  }
+
+  var epsilon = 1e-6;
+  var epsilon2 = 1e-12;
+  var beaches;
+  var cells;
+  var circles;
+  var edges;
+
+  function triangleArea(a, b, c) {
+    return (a[0] - c[0]) * (b[1] - a[1]) - (a[0] - b[0]) * (c[1] - a[1]);
+  }
+
+  function lexicographic(a, b) {
+    return b[1] - a[1]
+        || b[0] - a[0];
+  }
+
+  function Diagram(sites, extent) {
+    var site = sites.sort(lexicographic).pop(),
+        x,
+        y,
+        circle;
+
+    edges = [];
+    cells = new Array(sites.length);
+    beaches = new RedBlackTree;
+    circles = new RedBlackTree;
+
+    while (true) {
+      circle = firstCircle;
+      if (site && (!circle || site[1] < circle.y || (site[1] === circle.y && site[0] < circle.x))) {
+        if (site[0] !== x || site[1] !== y) {
+          addBeach(site);
+          x = site[0], y = site[1];
+        }
+        site = sites.pop();
+      } else if (circle) {
+        removeBeach(circle.arc);
+      } else {
+        break;
+      }
+    }
+
+    sortCellHalfedges();
+
+    if (extent) {
+      var x0 = +extent[0][0],
+          y0 = +extent[0][1],
+          x1 = +extent[1][0],
+          y1 = +extent[1][1];
+      clipEdges(x0, y0, x1, y1);
+      clipCells(x0, y0, x1, y1);
+    }
+
+    this.edges = edges;
+    this.cells = cells;
+
+    beaches =
+    circles =
+    edges =
+    cells = null;
+  }
+
+  Diagram.prototype = {
+    constructor: Diagram,
+
+    polygons: function() {
+      var edges = this.edges;
+
+      return this.cells.map(function(cell) {
+        var polygon = cell.halfedges.map(function(i) { return cellHalfedgeStart(cell, edges[i]); });
+        polygon.data = cell.site.data;
+        return polygon;
+      });
+    },
+
+    triangles: function() {
+      var triangles = [],
+          edges = this.edges;
+
+      this.cells.forEach(function(cell, i) {
+        if (!(m = (halfedges = cell.halfedges).length)) return;
+        var site = cell.site,
+            halfedges,
+            j = -1,
+            m,
+            s0,
+            e1 = edges[halfedges[m - 1]],
+            s1 = e1.left === site ? e1.right : e1.left;
+
+        while (++j < m) {
+          s0 = s1;
+          e1 = edges[halfedges[j]];
+          s1 = e1.left === site ? e1.right : e1.left;
+          if (s0 && s1 && i < s0.index && i < s1.index && triangleArea(site, s0, s1) < 0) {
+            triangles.push([site.data, s0.data, s1.data]);
+          }
+        }
+      });
+
+      return triangles;
+    },
+
+    links: function() {
+      return this.edges.filter(function(edge) {
+        return edge.right;
+      }).map(function(edge) {
+        return {
+          source: edge.left.data,
+          target: edge.right.data
+        };
+      });
+    },
+
+    find: function(x, y, radius) {
+      var that = this, i0, i1 = that._found || 0, n = that.cells.length, cell;
+
+      // Use the previously-found cell, or start with an arbitrary one.
+      while (!(cell = that.cells[i1])) if (++i1 >= n) return null;
+      var dx = x - cell.site[0], dy = y - cell.site[1], d2 = dx * dx + dy * dy;
+
+      // Traverse the half-edges to find a closer cell, if any.
+      do {
+        cell = that.cells[i0 = i1], i1 = null;
+        cell.halfedges.forEach(function(e) {
+          var edge = that.edges[e], v = edge.left;
+          if ((v === cell.site || !v) && !(v = edge.right)) return;
+          var vx = x - v[0], vy = y - v[1], v2 = vx * vx + vy * vy;
+          if (v2 < d2) d2 = v2, i1 = v.index;
+        });
+      } while (i1 !== null);
+
+      that._found = i0;
+
+      return radius == null || d2 <= radius * radius ? cell.site : null;
+    }
+  };
+
+  function constant(x) {
     return function() {
       return x;
     };
@@ -7209,29 +9301,29 @@
     }
   };
 
-  var identity$8 = new Transform(1, 0, 0);
+  var identity = new Transform(1, 0, 0);
 
-  transform$1.prototype = Transform.prototype;
+  transform.prototype = Transform.prototype;
 
-  function transform$1(node) {
-    return node.__zoom || identity$8;
+  function transform(node) {
+    return node.__zoom || identity;
   }
 
-  function nopropagation$2() {
+  function nopropagation() {
     event.stopImmediatePropagation();
   }
 
-  function noevent$2() {
+  function noevent() {
     event.preventDefault();
     event.stopImmediatePropagation();
   }
 
   // Ignore right-click, since that should open the context menu.
-  function defaultFilter$2() {
+  function defaultFilter() {
     return !event.button;
   }
 
-  function defaultExtent$1() {
+  function defaultExtent() {
     var e = this, w, h;
     if (e instanceof SVGElement) {
       e = e.ownerSVGElement || e;
@@ -7245,14 +9337,14 @@
   }
 
   function defaultTransform() {
-    return this.__zoom || identity$8;
+    return this.__zoom || identity;
   }
 
   function defaultWheelDelta() {
     return -event.deltaY * (event.deltaMode ? 120 : 1) / 500;
   }
 
-  function defaultTouchable$1() {
+  function defaultTouchable() {
     return "ontouchstart" in this;
   }
 
@@ -7268,11 +9360,11 @@
   }
 
   function zoom() {
-    var filter = defaultFilter$2,
-        extent = defaultExtent$1,
+    var filter = defaultFilter,
+        extent = defaultExtent,
         constrain = defaultConstrain,
         wheelDelta = defaultWheelDelta,
-        touchable = defaultTouchable$1,
+        touchable = defaultTouchable,
         scaleExtent = [0, Infinity],
         translateExtent = [[-Infinity, -Infinity], [Infinity, Infinity]],
         duration = 250,
@@ -7285,8 +9377,8 @@
         wheelDelay = 150,
         clickDistance2 = 0;
 
-    function zoom(selection$$1) {
-      selection$$1
+    function zoom(selection) {
+      selection
           .property("__zoom", defaultTransform)
           .on("wheel.zoom", wheeled)
           .on("mousedown.zoom", mousedowned)
@@ -7300,12 +9392,12 @@
     }
 
     zoom.transform = function(collection, transform) {
-      var selection$$1 = collection.selection ? collection.selection() : collection;
-      selection$$1.property("__zoom", defaultTransform);
-      if (collection !== selection$$1) {
+      var selection = collection.selection ? collection.selection() : collection;
+      selection.property("__zoom", defaultTransform);
+      if (collection !== selection) {
         schedule(collection, transform);
       } else {
-        selection$$1.interrupt().each(function() {
+        selection.interrupt().each(function() {
           gesture(this, arguments)
               .start()
               .zoom(null, typeof transform === "function" ? transform.apply(this, arguments) : transform)
@@ -7314,16 +9406,16 @@
       }
     };
 
-    zoom.scaleBy = function(selection$$1, k) {
-      zoom.scaleTo(selection$$1, function() {
+    zoom.scaleBy = function(selection, k) {
+      zoom.scaleTo(selection, function() {
         var k0 = this.__zoom.k,
             k1 = typeof k === "function" ? k.apply(this, arguments) : k;
         return k0 * k1;
       });
     };
 
-    zoom.scaleTo = function(selection$$1, k) {
-      zoom.transform(selection$$1, function() {
+    zoom.scaleTo = function(selection, k) {
+      zoom.transform(selection, function() {
         var e = extent.apply(this, arguments),
             t0 = this.__zoom,
             p0 = centroid(e),
@@ -7333,8 +9425,8 @@
       });
     };
 
-    zoom.translateBy = function(selection$$1, x, y) {
-      zoom.transform(selection$$1, function() {
+    zoom.translateBy = function(selection, x, y) {
+      zoom.transform(selection, function() {
         return constrain(this.__zoom.translate(
           typeof x === "function" ? x.apply(this, arguments) : x,
           typeof y === "function" ? y.apply(this, arguments) : y
@@ -7342,12 +9434,12 @@
       });
     };
 
-    zoom.translateTo = function(selection$$1, x, y) {
-      zoom.transform(selection$$1, function() {
+    zoom.translateTo = function(selection, x, y) {
+      zoom.transform(selection, function() {
         var e = extent.apply(this, arguments),
             t = this.__zoom,
             p = centroid(e);
-        return constrain(identity$8.translate(p[0], p[1]).scale(t.k).translate(
+        return constrain(identity.translate(p[0], p[1]).scale(t.k).translate(
           typeof x === "function" ? -x.apply(this, arguments) : -x,
           typeof y === "function" ? -y.apply(this, arguments) : -y
         ), e, translateExtent);
@@ -7368,8 +9460,8 @@
       return [(+extent[0][0] + +extent[1][0]) / 2, (+extent[0][1] + +extent[1][1]) / 2];
     }
 
-    function schedule(transition$$1, transform, center) {
-      transition$$1
+    function schedule(transition, transform, center) {
+      transition
           .on("start.zoom", function() { gesture(this, arguments).start(); })
           .on("interrupt.zoom end.zoom", function() { gesture(this, arguments).end(); })
           .tween("zoom", function() {
@@ -7462,7 +9554,7 @@
         g.start();
       }
 
-      noevent$2();
+      noevent();
       g.wheel = setTimeout(wheelidled, wheelDelay);
       g.zoom("mouse", constrain(translate(scale(t, k), g.mouse[0], g.mouse[1]), g.extent, translateExtent));
 
@@ -7481,13 +9573,13 @@
           y0 = event.clientY;
 
       dragDisable(event.view);
-      nopropagation$2();
+      nopropagation();
       g.mouse = [p, this.__zoom.invert(p)];
       interrupt(this);
       g.start();
 
       function mousemoved() {
-        noevent$2();
+        noevent();
         if (!g.moved) {
           var dx = event.clientX - x0, dy = event.clientY - y0;
           g.moved = dx * dx + dy * dy > clickDistance2;
@@ -7498,7 +9590,7 @@
       function mouseupped() {
         v.on("mousemove.zoom mouseup.zoom", null);
         yesdrag(event.view, g.moved);
-        noevent$2();
+        noevent();
         g.end();
       }
     }
@@ -7511,7 +9603,7 @@
           k1 = t0.k * (event.shiftKey ? 0.5 : 2),
           t1 = constrain(translate(scale(t0, k1), p0, p1), extent.apply(this, arguments), translateExtent);
 
-      noevent$2();
+      noevent();
       if (duration > 0) select(this).transition().duration(duration).call(schedule, t1, p0);
       else select(this).call(zoom.transform, t1);
     }
@@ -7519,13 +9611,13 @@
     function touchstarted() {
       if (!filter.apply(this, arguments)) return;
       var g = gesture(this, arguments),
-          touches$$1 = event.changedTouches,
+          touches = event.changedTouches,
           started,
-          n = touches$$1.length, i, t, p;
+          n = touches.length, i, t, p;
 
-      nopropagation$2();
+      nopropagation();
       for (i = 0; i < n; ++i) {
-        t = touches$$1[i], p = touch(this, touches$$1, t.identifier);
+        t = touches[i], p = touch(this, touches, t.identifier);
         p = [p, this.__zoom.invert(p), t.identifier];
         if (!g.touch0) g.touch0 = p, started = true;
         else if (!g.touch1) g.touch1 = p;
@@ -7551,13 +9643,13 @@
 
     function touchmoved() {
       var g = gesture(this, arguments),
-          touches$$1 = event.changedTouches,
-          n = touches$$1.length, i, t, p, l;
+          touches = event.changedTouches,
+          n = touches.length, i, t, p, l;
 
-      noevent$2();
+      noevent();
       if (touchstarting) touchstarting = clearTimeout(touchstarting);
       for (i = 0; i < n; ++i) {
-        t = touches$$1[i], p = touch(this, touches$$1, t.identifier);
+        t = touches[i], p = touch(this, touches, t.identifier);
         if (g.touch0 && g.touch0[2] === t.identifier) g.touch0[0] = p;
         else if (g.touch1 && g.touch1[2] === t.identifier) g.touch1[0] = p;
       }
@@ -7578,14 +9670,14 @@
 
     function touchended() {
       var g = gesture(this, arguments),
-          touches$$1 = event.changedTouches,
-          n = touches$$1.length, i, t;
+          touches = event.changedTouches,
+          n = touches.length, i, t;
 
-      nopropagation$2();
+      nopropagation();
       if (touchending) clearTimeout(touchending);
       touchending = setTimeout(function() { touchending = null; }, touchDelay);
       for (i = 0; i < n; ++i) {
-        t = touches$$1[i];
+        t = touches[i];
         if (g.touch0 && g.touch0[2] === t.identifier) delete g.touch0;
         else if (g.touch1 && g.touch1[2] === t.identifier) delete g.touch1;
       }
@@ -7595,19 +9687,19 @@
     }
 
     zoom.wheelDelta = function(_) {
-      return arguments.length ? (wheelDelta = typeof _ === "function" ? _ : constant$d(+_), zoom) : wheelDelta;
+      return arguments.length ? (wheelDelta = typeof _ === "function" ? _ : constant(+_), zoom) : wheelDelta;
     };
 
     zoom.filter = function(_) {
-      return arguments.length ? (filter = typeof _ === "function" ? _ : constant$d(!!_), zoom) : filter;
+      return arguments.length ? (filter = typeof _ === "function" ? _ : constant(!!_), zoom) : filter;
     };
 
     zoom.touchable = function(_) {
-      return arguments.length ? (touchable = typeof _ === "function" ? _ : constant$d(!!_), zoom) : touchable;
+      return arguments.length ? (touchable = typeof _ === "function" ? _ : constant(!!_), zoom) : touchable;
     };
 
     zoom.extent = function(_) {
-      return arguments.length ? (extent = typeof _ === "function" ? _ : constant$d([[+_[0][0], +_[0][1]], [+_[1][0], +_[1][1]]]), zoom) : extent;
+      return arguments.length ? (extent = typeof _ === "function" ? _ : constant([[+_[0][0], +_[0][1]], [+_[1][0], +_[1][1]]]), zoom) : extent;
     };
 
     zoom.scaleExtent = function(_) {
@@ -8007,7 +10099,7 @@
   function layoutNodeGraph(graph, showTypes) {
       // First determine the set of nodes that have no outputs. Those are the
       // basis for bottom-up DFS to determine rank and node placement.
-      const start = performance.now();
+      performance.now();
       const endNodesHasNoOutputs = [];
       const startNodesHasNoInputs = [];
       for (const n of graph.nodes()) {
@@ -8356,11 +10448,6 @@
       return undefined;
   }
   class GraphView extends PhaseView {
-      createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "graph");
-          return pane;
-      }
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer);
           const view = this;
@@ -8369,19 +10456,19 @@
           this.divElement = select(this.divNode);
           this.phaseName = "";
           this.toolbox = toolbox;
-          const svg$$1 = this.divElement.append("svg")
+          const svg = this.divElement.append("svg")
               .attr('version', '2.0')
               .attr("width", "100%")
               .attr("height", "100%");
-          svg$$1.on("click", function (d) {
+          svg.on("click", function (d) {
               view.selectionHandler.clear();
           });
           // Listen for key events. Note that the focus handler seems
           // to be important even if it does nothing.
-          svg$$1
+          svg
               .on("focus", e => { })
               .on("keydown", e => { view.svgKeyDown(); });
-          view.svg = svg$$1;
+          view.svg = svg;
           this.state = {
               selection: null,
               mouseDownNode: null,
@@ -8413,11 +10500,11 @@
               brokeredNodeSelect: function (locations, selected) {
                   if (!view.graph)
                       return;
-                  const selection$$1 = view.graph.nodes(n => {
+                  const selection = view.graph.nodes(n => {
                       return locations.has(nodeToStringKey(n))
                           && (!view.state.hideDead || n.isLive());
                   });
-                  view.state.selection.select(selection$$1, selected);
+                  view.state.selection.select(selection, selected);
                   // Update edge visibility based on selection.
                   for (const n of view.graph.nodes()) {
                       if (view.state.selection.isSelected(n)) {
@@ -8438,7 +10525,7 @@
               }
           };
           view.state.selection = new MySelection(nodeToStringKey, nodeOriginToStringKey);
-          const defs = svg$$1.append('svg:defs');
+          const defs = svg.append('svg:defs');
           defs.append('svg:marker')
               .attr('id', 'end-arrow')
               .attr('viewBox', '0 -4 8 8')
@@ -8448,7 +10535,7 @@
               .attr('orient', 'auto')
               .append('svg:path')
               .attr('d', 'M0,-4L8,0L0,4');
-          this.graphElement = svg$$1.append("g");
+          this.graphElement = svg.append("g");
           view.visibleEdges = this.graphElement.append("g");
           view.visibleNodes = this.graphElement.append("g");
           view.drag = drag()
@@ -8474,8 +10561,13 @@
               .on("end", function () {
               select('body').style("cursor", "auto");
           });
-          svg$$1.call(zoomSvg).on("dblclick.zoom", null);
+          svg.call(zoomSvg).on("dblclick.zoom", null);
           view.panZoom = zoomSvg;
+      }
+      createViewElement() {
+          const pane = document.createElement('div');
+          pane.setAttribute('id', "graph");
+          return pane;
       }
       getEdgeFrontier(nodes, inEdges, edgeFilter) {
           const frontier = new Set();
@@ -8569,12 +10661,12 @@
           super.hide();
           this.deleteContent();
       }
-      createGraph(data, selection$$1) {
+      createGraph(data, selection) {
           this.graph = new Graph(data);
           this.showControlAction(this);
-          if (selection$$1 != undefined) {
+          if (selection != undefined) {
               for (const n of this.graph.nodes()) {
-                  n.visible = n.visible || selection$$1.has(nodeToStringKey(n));
+                  n.visible = n.visible || selection.has(nodeToStringKey(n));
               }
           }
           this.graph.forEachEdge(e => e.visible = e.source.visible && e.target.visible);
@@ -8633,31 +10725,31 @@
                   const from = g.nodeMap[components[1]];
                   const x = from.getOutputX();
                   const y = from.getNodeHeight(view.state.showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-                  const transform$$1 = "translate(" + x + "," + y + ")";
-                  this.setAttribute('transform', transform$$1);
+                  const transform = "translate(" + x + "," + y + ")";
+                  this.setAttribute('transform', transform);
               }
           });
       }
-      adaptSelectionToCurrentPhase(data, selection$$1) {
+      adaptSelectionToCurrentPhase(data, selection) {
           const updatedGraphSelection = new Set();
-          if (!data || !(selection$$1 instanceof Map))
+          if (!data || !(selection instanceof Map))
               return updatedGraphSelection;
           // Adding survived nodes (with the same id)
           for (const node of data.nodes) {
               const stringKey = this.state.selection.stringKey(node);
-              if (selection$$1.has(stringKey)) {
+              if (selection.has(stringKey)) {
                   updatedGraphSelection.add(stringKey);
               }
           }
           // Adding children of nodes
           for (const node of data.nodes) {
               const originStringKey = this.state.selection.originStringKey(node);
-              if (originStringKey && selection$$1.has(originStringKey)) {
+              if (originStringKey && selection.has(originStringKey)) {
                   updatedGraphSelection.add(this.state.selection.stringKey(node));
               }
           }
           // Adding ancestors of nodes
-          selection$$1.forEach(selectedNode => {
+          selection.forEach(selectedNode => {
               const originStringKey = this.state.selection.originStringKey(selectedNode);
               if (originStringKey) {
                   updatedGraphSelection.add(originStringKey);
@@ -8780,7 +10872,7 @@
                       (reg.exec(n.getTitle())) ||
                       reg.exec(n.nodeLabel.opcode) != null);
               };
-              const selection$$1 = [...this.graph.nodes(n => {
+              const selection = [...this.graph.nodes(n => {
                       if ((e.ctrlKey || n.visible || !onlyVisible) && filterFunction(n)) {
                           if (e.ctrlKey || !onlyVisible)
                               n.visible = true;
@@ -8788,7 +10880,7 @@
                       }
                       return false;
                   })];
-              this.selectionHandler.select(selection$$1, true);
+              this.selectionHandler.select(selection, true);
               this.connectVisibleSelectedNodes();
               this.updateGraphVisibility();
               searchBar.blur();
@@ -8915,8 +11007,8 @@
       layoutGraph() {
           console.time("layoutGraph");
           layoutNodeGraph(this.graph, this.state.showTypes);
-          const extent$$1 = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
-          this.panZoom.translateExtent(extent$$1);
+          const extent = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
+          this.panZoom.translateExtent(extent);
           this.minScale();
           console.timeEnd("layoutGraph");
       }
@@ -8924,7 +11016,7 @@
           const state = this.state;
           const origins = [];
           let phase = this.phaseName;
-          const selection$$1 = new Set();
+          const selection = new Set();
           for (const n of state.selection) {
               const origin = n.nodeLabel.origin;
               if (origin) {
@@ -8934,14 +11026,14 @@
                       origins.push(node);
                   }
                   else {
-                      selection$$1.add(`${origin.nodeId}`);
+                      selection.add(`${origin.nodeId}`);
                   }
               }
           }
           // Only go through phase reselection if we actually need
           // to display another phase.
-          if (selection$$1.size > 0 && phase !== this.phaseName) {
-              this.showPhaseByName(phase, selection$$1);
+          if (selection.size > 0 && phase !== this.phaseName) {
+              this.showPhaseByName(phase, selection);
           }
           else if (origins.length > 0) {
               this.selectionHandler.clear();
@@ -9164,7 +11256,7 @@
           return minScale;
       }
       onresize() {
-          const trans = transform$1(this.svg.node());
+          const trans = transform(this.svg.node());
           const ctrans = this.panZoom.constrain()(trans, this.getSvgExtent(), this.panZoom.translateExtent());
           this.panZoom.transform(this.svg, ctrans);
       }
@@ -9216,16 +11308,16 @@
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   class ScheduleView extends TextView {
+      constructor(parentId, broker) {
+          super(parentId, broker);
+          this.sourceResolver = broker.sourceResolver;
+      }
       createViewElement() {
           const pane = document.createElement('div');
           pane.setAttribute('id', "schedule");
           pane.classList.add("scrollable");
           pane.setAttribute("tabindex", "0");
           return pane;
-      }
-      constructor(parentId, broker) {
-          super(parentId, broker);
-          this.sourceResolver = broker.sourceResolver;
       }
       attachSelection(s) {
           const view = this;
@@ -10220,13 +12312,6 @@
 
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SequenceView extends TextView {
-      createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "sequence");
-          pane.classList.add("scrollable");
-          pane.setAttribute("tabindex", "0");
-          return pane;
-      }
       constructor(parentId, broker) {
           super(parentId, broker);
           this.numInstructions = 0;
@@ -10235,6 +12320,13 @@
           this.showRangeView = false;
           this.rangeView = null;
           this.toggleRangeViewEl = this.elementForToggleRangeView();
+      }
+      createViewElement() {
+          const pane = document.createElement('div');
+          pane.setAttribute('id', "sequence");
+          pane.classList.add("scrollable");
+          pane.setAttribute("tabindex", "0");
+          return pane;
       }
       attachSelection(s) {
           const view = this;
@@ -10549,7 +12641,7 @@
 
   // Copyright 2018 the V8 project authors. All rights reserved.
   const multiviewID = "multiview";
-  const toolboxHTML$1 = `
+  const toolboxHTML = `
 <div class="graph-toolbox">
   <select id="phase-select">
     <option disabled selected>(please open a file)</option>
@@ -10559,18 +12651,6 @@
   <label><input id="search-only-visible" type="checkbox" name="instruction-address" alt="Apply search to visible nodes only">only visible</label>
 </div>`;
   class GraphMultiView extends View {
-      createViewElement() {
-          const pane = document.createElement("div");
-          pane.setAttribute("id", multiviewID);
-          pane.setAttribute("tabindex", "1");
-          pane.className = "viewpane";
-          return pane;
-      }
-      hide() {
-          this.container.className = "";
-          this.hideCurrentPhase();
-          super.hide();
-      }
       constructor(id, selectionBroker, sourceResolver) {
           super(id);
           const view = this;
@@ -10578,7 +12658,7 @@
           view.selectionBroker = selectionBroker;
           const toolbox = document.createElement("div");
           toolbox.className = "toolbox-anchor";
-          toolbox.innerHTML = toolboxHTML$1;
+          toolbox.innerHTML = toolboxHTML;
           view.divNode.appendChild(toolbox);
           const searchInput = toolbox.querySelector("#search-input");
           const onlyVisibleCheckbox = toolbox.querySelector("#search-only-visible");
@@ -10603,6 +12683,18 @@
           this.schedule = new ScheduleView(this.divNode, selectionBroker);
           this.sequence = new SequenceView(this.divNode, selectionBroker);
           this.selectMenu = toolbox.querySelector("#phase-select");
+      }
+      createViewElement() {
+          const pane = document.createElement("div");
+          pane.setAttribute("id", multiviewID);
+          pane.setAttribute("tabindex", "1");
+          pane.className = "viewpane";
+          return pane;
+      }
+      hide() {
+          this.container.className = "";
+          this.hideCurrentPhase();
+          super.hide();
       }
       initializeSelect() {
           const view = this;
@@ -10704,11 +12796,6 @@
       CodeMode["INLINED_SOURCE"] = "inlined function";
   })(CodeMode || (CodeMode = {}));
   class CodeView extends View {
-      createViewElement() {
-          const sourceContainer = document.createElement("div");
-          sourceContainer.classList.add("source-container");
-          return sourceContainer;
-      }
       constructor(parent, broker, sourceResolver, sourceFunction, codeMode) {
           super(parent);
           const view = this;
@@ -10755,6 +12842,11 @@
           broker.addSourcePositionHandler(selectionHandler);
           this.selectionHandler = selectionHandler;
           this.initializeCode();
+      }
+      createViewElement() {
+          const sourceContainer = document.createElement("div");
+          sourceContainer.classList.add("source-container");
+          return sourceContainer;
       }
       addHtmlElementToSourcePosition(sourcePosition, element) {
           const key = sourcePositionToStringKey(sourcePosition);
@@ -10943,7 +13035,15 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class Tabs {
+      constructor(container) {
+          this.container = container;
+          this.nextTabId = 0;
+          this.mkTabBar(container);
+      }
       mkTabBar(container) {
           container.classList.add("nav-tabs-container");
           this.tabBar = document.createElement("ul");
@@ -10957,11 +13057,6 @@
           defaultDiv.id = `tab-content-${container.id}-default`;
           container.insertBefore(defaultDiv, container.firstChild);
           container.insertBefore(this.tabBar, container.firstChild);
-      }
-      constructor(container) {
-          this.container = container;
-          this.nextTabId = 0;
-          this.mkTabBar(container);
       }
       activateTab(tab) {
           if (typeof tab.dataset.divid !== "string")
@@ -11543,5 +13638,5 @@
       resizer.updatePanes();
   };
 
-}());
+})();
 //# sourceMappingURL=turbolizer.js.map
