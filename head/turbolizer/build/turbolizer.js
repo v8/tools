@@ -32,6 +32,24 @@
   function anyToString(x) {
       return `${x}`;
   }
+  function snakeToCamel(str) {
+      return str.toLowerCase().replace(/([-_][a-z])/g, group => group
+          .toUpperCase()
+          .replace('-', '')
+          .replace('_', ''));
+  }
+  function camelize(obj) {
+      if (Array.isArray(obj)) {
+          return obj.map(value => camelize(value));
+      }
+      else if (obj !== null && obj.constructor === Object) {
+          return Object.keys(obj).reduce((result, key) => ({
+              ...result,
+              [snakeToCamel(key)]: camelize(obj[key])
+          }), {});
+      }
+      return obj;
+  }
   function sortUnique(arr, f, equal) {
       if (arr.length == 0)
           return arr;
@@ -79,6 +97,25 @@
           el.innerText = content;
       return el;
   }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class Phase {
+      constructor(name, type) {
+          this.name = name;
+          this.type = type;
+      }
+  }
+  var PhaseType;
+  (function (PhaseType) {
+      PhaseType["Graph"] = "graph";
+      PhaseType["TurboshaftGraph"] = "turboshaft_graph";
+      PhaseType["Disassembly"] = "disassembly";
+      PhaseType["Instructions"] = "instructions";
+      PhaseType["Sequence"] = "sequence";
+      PhaseType["Schedule"] = "schedule";
+  })(PhaseType || (PhaseType = {}));
 
   // Copyright 2019 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -159,6 +196,559 @@
       }
   }
 
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  const DEFAULT_NODE_BUBBLE_RADIUS = 12;
+  const NODE_INPUT_WIDTH = 50;
+  const MINIMUM_NODE_OUTPUT_APPROACH = 15;
+  const MINIMUM_EDGE_SEPARATION = 20;
+  const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
+  class GNode {
+      constructor(nodeLabel) {
+          this.identifier = () => `${this.id}`;
+          this.id = nodeLabel.id;
+          this.nodeLabel = nodeLabel;
+          this.displayLabel = nodeLabel.getDisplayLabel();
+          this.inputs = [];
+          this.outputs = [];
+          this.visible = false;
+          this.x = 0;
+          this.y = 0;
+          this.rank = MAX_RANK_SENTINEL;
+          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
+          // Every control node is a CFG node.
+          this.cfg = nodeLabel.control;
+          this.labelbbox = measureText(this.displayLabel);
+          const typebbox = measureText(this.getDisplayType());
+          const innerwidth = Math.max(this.labelbbox.width, typebbox.width);
+          this.width = alignUp(innerwidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
+          const innerheight = Math.max(this.labelbbox.height, typebbox.height);
+          this.normalheight = innerheight + 20;
+          this.visitOrderWithinRank = 0;
+      }
+      isControl() {
+          return this.nodeLabel.control;
+      }
+      isInput() {
+          return this.nodeLabel.opcode == 'Parameter' || this.nodeLabel.opcode.endsWith('Constant');
+      }
+      isLive() {
+          return this.nodeLabel.live !== false;
+      }
+      isJavaScript() {
+          return this.nodeLabel.opcode.startsWith('JS');
+      }
+      isSimplified() {
+          if (this.isJavaScript())
+              return false;
+          const opcode = this.nodeLabel.opcode;
+          return opcode.endsWith('Phi') ||
+              opcode.startsWith('Boolean') ||
+              opcode.startsWith('Number') ||
+              opcode.startsWith('String') ||
+              opcode.startsWith('Change') ||
+              opcode.startsWith('Object') ||
+              opcode.startsWith('Reference') ||
+              opcode.startsWith('Any') ||
+              opcode.endsWith('ToNumber') ||
+              (opcode == 'AnyToBoolean') ||
+              (opcode.startsWith('Load') && opcode.length > 4) ||
+              (opcode.startsWith('Store') && opcode.length > 5);
+      }
+      isMachine() {
+          return !(this.isControl() || this.isInput() ||
+              this.isJavaScript() || this.isSimplified());
+      }
+      getTotalNodeWidth() {
+          const inputWidth = this.inputs.length * NODE_INPUT_WIDTH;
+          return Math.max(inputWidth, this.width);
+      }
+      getTitle() {
+          return this.nodeLabel.getTitle();
+      }
+      getDisplayLabel() {
+          return this.nodeLabel.getDisplayLabel();
+      }
+      getType() {
+          return this.nodeLabel.type;
+      }
+      getDisplayType() {
+          let typeString = this.nodeLabel.type;
+          if (typeString == undefined)
+              return "";
+          if (typeString.length > 24) {
+              typeString = typeString.substr(0, 25) + "...";
+          }
+          return typeString;
+      }
+      deepestInputRank() {
+          let deepestRank = 0;
+          this.inputs.forEach(function (e) {
+              if (e.isVisible() && !e.isBackEdge()) {
+                  if (e.source.rank > deepestRank) {
+                      deepestRank = e.source.rank;
+                  }
+              }
+          });
+          return deepestRank;
+      }
+      areAnyOutputsVisible() {
+          let visibleCount = 0;
+          this.outputs.forEach(function (e) { if (e.isVisible())
+              ++visibleCount; });
+          if (this.outputs.length == visibleCount)
+              return 2;
+          if (visibleCount != 0)
+              return 1;
+          return 0;
+      }
+      setOutputVisibility(v) {
+          let result = false;
+          this.outputs.forEach(function (e) {
+              e.visible = v;
+              if (v) {
+                  if (!e.target.visible) {
+                      e.target.visible = true;
+                      result = true;
+                  }
+              }
+          });
+          return result;
+      }
+      setInputVisibility(i, v) {
+          const edge = this.inputs[i];
+          edge.visible = v;
+          if (v) {
+              if (!edge.source.visible) {
+                  edge.source.visible = true;
+                  return true;
+              }
+          }
+          return false;
+      }
+      getInputApproach(index) {
+          return this.y - MINIMUM_NODE_INPUT_APPROACH -
+              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      getNodeHeight(showTypes) {
+          if (showTypes) {
+              return this.normalheight + this.labelbbox.height;
+          }
+          else {
+              return this.normalheight;
+          }
+      }
+      getOutputApproach(showTypes) {
+          return this.y + this.outputApproach + this.getNodeHeight(showTypes) +
+              +DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      getInputX(index) {
+          const result = this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2) +
+              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
+          return result;
+      }
+      getOutputX() {
+          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2);
+      }
+      hasBackEdges() {
+          return (this.nodeLabel.opcode == "Loop") ||
+              ((this.nodeLabel.opcode == "Phi" || this.nodeLabel.opcode == "EffectPhi" || this.nodeLabel.opcode == "InductionVariablePhi") &&
+                  this.inputs[this.inputs.length - 1].source.nodeLabel.opcode == "Loop");
+      }
+  }
+  const nodeToStr = (n) => "N" + n.id;
+
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  const BEZIER_CONSTANT = 0.3;
+  class Edge {
+      constructor(target, index, source, type) {
+          this.target = target;
+          this.source = source;
+          this.index = index;
+          this.type = type;
+          this.backEdgeNumber = 0;
+          this.visible = false;
+      }
+      stringID() {
+          return this.source.id + "," + this.index + "," + this.target.id;
+      }
+      isVisible() {
+          return this.visible && this.source.visible && this.target.visible;
+      }
+      getInputHorizontalPosition(graph, showTypes) {
+          if (this.backEdgeNumber > 0) {
+              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
+          }
+          const source = this.source;
+          const target = this.target;
+          const index = this.index;
+          const inputX = target.x + target.getInputX(index);
+          const inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          if (inputApproach > outputApproach) {
+              return inputX;
+          }
+          else {
+              const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
+              return (target.x < source.x)
+                  ? (target.x + target.getTotalNodeWidth() + inputOffset)
+                  : (target.x - inputOffset);
+          }
+      }
+      generatePath(graph, showTypes) {
+          const target = this.target;
+          const source = this.source;
+          const inputX = target.x + target.getInputX(this.index);
+          const arrowheadHeight = 7;
+          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
+          const outputX = source.x + source.getOutputX();
+          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+          let inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
+          let result;
+          if (inputY < outputY) {
+              result = `M ${outputX} ${outputY}
+                L ${outputX} ${outputApproach}
+                L ${horizontalPos} ${outputApproach}`;
+              if (horizontalPos != inputX) {
+                  result += `L ${horizontalPos} ${inputApproach}`;
+              }
+              else {
+                  if (inputApproach < outputApproach) {
+                      inputApproach = outputApproach;
+                  }
+              }
+              result += `L ${inputX} ${inputApproach}
+                 L ${inputX} ${inputY}`;
+          }
+          else {
+              const controlY = outputY + (inputY - outputY) * BEZIER_CONSTANT;
+              result = `M ${outputX} ${outputY}
+                C ${outputX} ${controlY},
+                  ${inputX} ${outputY},
+                  ${inputX} ${inputY}`;
+          }
+          return result;
+      }
+      isBackEdge() {
+          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
+      }
+  }
+  const edgeToStr = (e) => e.stringID();
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class Origin {
+      constructor(phase, reducer) {
+          this.phase = phase;
+          this.reducer = reducer;
+      }
+  }
+  class NodeOrigin extends Origin {
+      constructor(nodeId, phase, reducer) {
+          super(phase, reducer);
+          this.identifier = () => `${this.nodeId}`;
+          this.toString = () => `#${this.nodeId} in phase '${this.phase}/${this.reducer}'`;
+          this.nodeId = nodeId;
+      }
+  }
+  class BytecodeOrigin extends Origin {
+      constructor(bytecodePosition, phase, reducer) {
+          super(phase, reducer);
+          this.identifier = () => `${this.bytecodePosition}`;
+          this.toString = () => {
+              return `Bytecode line ${this.bytecodePosition} in phase '${this.phase}/${this.reducer}'`;
+          };
+          this.bytecodePosition = bytecodePosition;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class SourcePosition {
+      constructor(scriptOffset, inliningId) {
+          this.toString = () => `SP:${this.inliningId}:${this.scriptOffset}`;
+          this.scriptOffset = scriptOffset;
+          this.inliningId = inliningId;
+      }
+      lessOrEquals(other) {
+          if (this.inliningId == other.inliningId) {
+              return this.scriptOffset - other.scriptOffset;
+          }
+          return this.inliningId - other.inliningId;
+      }
+      equals(other) {
+          if (this.scriptOffset != other.scriptOffset)
+              return false;
+          return this.inliningId == other.inliningId;
+      }
+      isValid() {
+          return typeof this.scriptOffset !== undefined && typeof this.inliningId !== undefined;
+      }
+  }
+  class BytecodePosition {
+      constructor(bytecodePosition) {
+          this.toString = () => `BCP:${this.bytecodePosition}`;
+          this.bytecodePosition = bytecodePosition;
+      }
+      isValid() {
+          return typeof this.bytecodePosition !== undefined;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class GraphPhase extends Phase {
+      constructor(name, highestNodeId, data, nodeLabelMap, nodeIdToNodeMap) {
+          super(name, PhaseType.Graph);
+          this.highestNodeId = highestNodeId;
+          this.data = data ?? new GraphData();
+          this.nodeLabelMap = nodeLabelMap ?? new Array();
+          this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
+      }
+      parseDataFromJSON(dataJson, nodeLabelMap) {
+          this.nodeIdToNodeMap = this.parseNodesFromJSON(dataJson.nodes, nodeLabelMap);
+          this.parseEdgesFromJSON(dataJson.edges);
+      }
+      parseNodesFromJSON(nodesJSON, nodeLabelMap) {
+          const nodeIdToNodeMap = new Array();
+          for (const node of nodesJSON) {
+              let origin = null;
+              const jsonOrigin = node.origin;
+              if (jsonOrigin) {
+                  if (jsonOrigin.nodeId) {
+                      origin = new NodeOrigin(jsonOrigin.nodeId, jsonOrigin.reducer, jsonOrigin.phase);
+                  }
+                  else {
+                      origin = new BytecodeOrigin(jsonOrigin.bytecodePosition, jsonOrigin.reducer, jsonOrigin.phase);
+                  }
+              }
+              let sourcePosition = null;
+              if (node.sourcePosition) {
+                  const scriptOffset = node.sourcePosition.scriptOffset;
+                  const inliningId = node.sourcePosition.inliningId;
+                  sourcePosition = new SourcePosition(scriptOffset, inliningId);
+              }
+              const label = new NodeLabel(node.id, node.label, node.title, node.live, node.properties, sourcePosition, origin, node.opcode, node.control, node.opinfo, node.type);
+              const previous = nodeLabelMap[label.id];
+              if (!label.equals(previous)) {
+                  if (previous !== undefined) {
+                      label.setInplaceUpdatePhase(this.name);
+                  }
+                  nodeLabelMap[label.id] = label;
+              }
+              const newNode = new GNode(label);
+              this.data.nodes.push(newNode);
+              nodeIdToNodeMap[newNode.id] = newNode;
+          }
+          return nodeIdToNodeMap;
+      }
+      parseEdgesFromJSON(edgesJSON) {
+          for (const edge of edgesJSON) {
+              const target = this.nodeIdToNodeMap[edge.target];
+              const source = this.nodeIdToNodeMap[edge.source];
+              const newEdge = new Edge(target, edge.index, source, edge.type);
+              this.data.edges.push(newEdge);
+              target.inputs.push(newEdge);
+              source.outputs.push(newEdge);
+              if (edge.type === "control") {
+                  source.cfg = true;
+              }
+          }
+      }
+  }
+  class GraphData {
+      constructor(nodes, edges) {
+          this.nodes = nodes ?? new Array();
+          this.edges = edges ?? new Array();
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class DisassemblyPhase extends Phase {
+      constructor(name, data) {
+          super(name, PhaseType.Disassembly);
+          this.data = data;
+          this.blockIdToOffset = new Array();
+          this.blockStartPCtoBlockIds = new Map();
+      }
+      parseBlockIdToOffsetFromJSON(blockIdToOffsetJson) {
+          if (!blockIdToOffsetJson)
+              return;
+          for (const [blockId, offset] of Object.entries(blockIdToOffsetJson)) {
+              this.blockIdToOffset[blockId] = offset;
+              if (!this.blockStartPCtoBlockIds.has(offset)) {
+                  this.blockStartPCtoBlockIds.set(offset, new Array());
+              }
+              this.blockStartPCtoBlockIds.get(offset).push(Number(blockId));
+          }
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class InstructionsPhase extends Phase {
+      constructor(name, nodeIdToInstructionRange, blockIdToInstructionRange, codeOffsetsInfo) {
+          super(name, PhaseType.Instructions);
+          this.nodeIdToInstructionRange = nodeIdToInstructionRange ?? new Array();
+          this.blockIdToInstructionRange = blockIdToInstructionRange ?? new Array();
+          this.codeOffsetsInfo = codeOffsetsInfo;
+          this.instructionToPCOffset = new Array();
+          this.pcOffsetToInstructions = new Map();
+          this.pcOffsets = new Array();
+      }
+      parseNodeIdToInstructionRangeFromJSON(nodeIdToInstructionJson) {
+          if (!nodeIdToInstructionJson)
+              return;
+          for (const [nodeId, range] of Object.entries(nodeIdToInstructionJson)) {
+              this.nodeIdToInstructionRange[nodeId] = range;
+          }
+      }
+      parseBlockIdToInstructionRangeFromJSON(blockIdToInstructionRangeJson) {
+          if (!blockIdToInstructionRangeJson)
+              return;
+          for (const [blockId, range] of Object.entries(blockIdToInstructionRangeJson)) {
+              this.blockIdToInstructionRange[blockId] = range;
+          }
+      }
+      parseInstructionOffsetToPCOffsetFromJSON(instructionOffsetToPCOffsetJson) {
+          if (!instructionOffsetToPCOffsetJson)
+              return;
+          for (const [instruction, numberOrInfo] of Object.entries(instructionOffsetToPCOffsetJson)) {
+              let info = null;
+              if (typeof numberOrInfo === "number") {
+                  info = new TurbolizerInstructionStartInfo(numberOrInfo, numberOrInfo, numberOrInfo);
+              }
+              else {
+                  info = new TurbolizerInstructionStartInfo(numberOrInfo.gap, numberOrInfo.arch, numberOrInfo.condition);
+              }
+              this.instructionToPCOffset[instruction] = info;
+              if (!this.pcOffsetToInstructions.has(info.gap)) {
+                  this.pcOffsetToInstructions.set(info.gap, new Array());
+              }
+              this.pcOffsetToInstructions.get(info.gap).push(Number(instruction));
+          }
+          this.pcOffsets = Array.from(this.pcOffsetToInstructions.keys()).sort((a, b) => b - a);
+      }
+      parseCodeOffsetsInfoFromJSON(codeOffsetsInfoJson) {
+          if (!codeOffsetsInfoJson)
+              return;
+          this.codeOffsetsInfo = new CodeOffsetsInfo(codeOffsetsInfoJson.codeStartRegisterCheck, codeOffsetsInfoJson.deoptCheck, codeOffsetsInfoJson.initPoison, codeOffsetsInfoJson.blocksStart, codeOffsetsInfoJson.outOfLineCode, codeOffsetsInfoJson.deoptimizationExits, codeOffsetsInfoJson.pools, codeOffsetsInfoJson.jumpTables);
+      }
+  }
+  class CodeOffsetsInfo {
+      constructor(codeStartRegisterCheck, deoptCheck, initPoison, blocksStart, outOfLineCode, deoptimizationExits, pools, jumpTables) {
+          this.codeStartRegisterCheck = codeStartRegisterCheck;
+          this.deoptCheck = deoptCheck;
+          this.initPoison = initPoison;
+          this.blocksStart = blocksStart;
+          this.outOfLineCode = outOfLineCode;
+          this.deoptimizationExits = deoptimizationExits;
+          this.pools = pools;
+          this.jumpTables = jumpTables;
+      }
+  }
+  class TurbolizerInstructionStartInfo {
+      constructor(gap, arch, condition) {
+          this.gap = gap;
+          this.arch = arch;
+          this.condition = condition;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class SchedulePhase extends Phase {
+      constructor(name, data, schedule) {
+          super(name, PhaseType.Schedule);
+          this.createNode = match => {
+              let inputs = [];
+              if (match.groups.args) {
+                  const nodeIdsString = match.groups.args.replace(/\s/g, '');
+                  const nodeIdStrings = nodeIdsString.split(',');
+                  inputs = nodeIdStrings.map(n => Number.parseInt(n, 10));
+              }
+              const node = {
+                  id: Number.parseInt(match.groups.id, 10),
+                  label: match.groups.label,
+                  inputs: inputs
+              };
+              if (match.groups.blocks) {
+                  const nodeIdsString = match.groups.blocks.replace(/\s/g, '').replace(/B/g, '');
+                  const nodeIdStrings = nodeIdsString.split(',');
+                  this.schedule.currentBlock.succ = nodeIdStrings.map(n => Number.parseInt(n, 10));
+              }
+              this.schedule.nodes[node.id] = node;
+              this.schedule.currentBlock.nodes.push(node);
+          };
+          this.createBlock = match => {
+              let predecessors = [];
+              if (match.groups.in) {
+                  const blockIdsString = match.groups.in.replace(/\s/g, '').replace(/B/g, '');
+                  const blockIdStrings = blockIdsString.split(',');
+                  predecessors = blockIdStrings.map(n => Number.parseInt(n, 10));
+              }
+              const block = {
+                  id: Number.parseInt(match.groups.id, 10),
+                  isDeferred: match.groups.deferred != undefined,
+                  pred: predecessors.sort(),
+                  succ: [],
+                  nodes: []
+              };
+              this.schedule.blocks[block.id] = block;
+              this.schedule.currentBlock = block;
+          };
+          this.setGotoSuccessor = match => {
+              this.schedule.currentBlock.succ = [Number.parseInt(match.groups.successor.replace(/\s/g, ''), 10)];
+          };
+          this.parsingRules = [
+              {
+                  lineRegexps: [
+                      /^\s*(?<id>\d+):\ (?<label>.*)\((?<args>.*)\)$/,
+                      /^\s*(?<id>\d+):\ (?<label>.*)\((?<args>.*)\)\ ->\ (?<blocks>.*)$/,
+                      /^\s*(?<id>\d+):\ (?<label>.*)$/
+                  ],
+                  process: this.createNode
+              },
+              {
+                  lineRegexps: [/^\s*---\s*BLOCK\ B(?<id>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/],
+                  process: this.createBlock
+              },
+              {
+                  lineRegexps: [/^\s*Goto\s*->\s*B(?<successor>\d+)\s*$/],
+                  process: this.setGotoSuccessor
+              }
+          ];
+          this.data = data;
+          this.schedule = schedule ?? {
+              currentBlock: undefined,
+              blocks: new Array(),
+              nodes: new Array()
+          };
+      }
+      parseScheduleFromJSON(scheduleDataJson) {
+          const lines = scheduleDataJson.split(/[\n]/);
+          nextLine: for (const line of lines) {
+              for (const rule of this.parsingRules) {
+                  for (const lineRegexp of rule.lineRegexps) {
+                      const match = line.match(lineRegexp);
+                      if (match) {
+                          rule.process(match);
+                          continue nextLine;
+                      }
+                  }
+              }
+              console.warn(`Unmatched schedule line \"${line}\"`);
+          }
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class SequencePhase extends Phase {
+      constructor(name, blocks, registerAllocation) {
+          super(name, PhaseType.Sequence);
+          this.blocks = blocks;
+          this.registerAllocation = registerAllocation;
+      }
+  }
+
   // Copyright 2018 the V8 project authors. All rights reserved.
   function sourcePositionLe(a, b) {
       if (a.inliningId == b.inliningId) {
@@ -189,13 +779,6 @@
       constructor(numbers) {
           this.start = numbers[0];
           this.end = numbers[1];
-      }
-  }
-  class RegisterAllocation {
-      constructor(registerAllocation) {
-          this.fixedDoubleLiveRanges = new Map(Object.entries(registerAllocation.fixed_double_live_ranges));
-          this.fixedLiveRanges = new Map(Object.entries(registerAllocation.fixed_live_ranges));
-          this.liveRanges = new Map(Object.entries(registerAllocation.live_ranges));
       }
   }
   class SourceResolver {
@@ -398,37 +981,25 @@
           }
           return inliningStack;
       }
-      recordOrigins(phase) {
-          if (phase.type != "graph")
+      recordOrigins(graphPhase) {
+          if (graphPhase.type !== PhaseType.Graph)
               return;
-          for (const node of phase.data.nodes) {
-              phase.highestNodeId = Math.max(phase.highestNodeId, node.id);
-              if (node.origin != undefined &&
-                  node.origin.bytecodePosition != undefined) {
-                  const position = { bytecodePosition: node.origin.bytecodePosition };
+          for (const node of graphPhase.data.nodes) {
+              graphPhase.highestNodeId = Math.max(graphPhase.highestNodeId, node.id);
+              const origin = node.nodeLabel.origin;
+              const isBytecode = origin instanceof BytecodeOrigin;
+              if (isBytecode) {
+                  const position = new BytecodePosition(origin.bytecodePosition);
                   this.nodePositionMap[node.id] = position;
-                  const key = sourcePositionToStringKey(position);
+                  const key = position.toString();
                   if (!this.positionToNodes.has(key)) {
                       this.positionToNodes.set(key, []);
                   }
-                  const A = this.positionToNodes.get(key);
-                  if (!A.includes(node.id))
-                      A.push(`${node.id}`);
+                  const nodes = this.positionToNodes.get(key);
+                  const identifier = node.identifier();
+                  if (!nodes.includes(identifier))
+                      nodes.push(identifier);
               }
-              // Backwards compatibility.
-              if (typeof node.pos === "number") {
-                  node.sourcePosition = { scriptOffset: node.pos, inliningId: -1 };
-              }
-          }
-      }
-      readNodeIdToInstructionRange(nodeIdToInstructionRange) {
-          for (const [nodeId, range] of Object.entries(nodeIdToInstructionRange)) {
-              this.nodeIdToInstructionRange[nodeId] = range;
-          }
-      }
-      readBlockIdToInstructionRange(blockIdToInstructionRange) {
-          for (const [blockId, range] of Object.entries(blockIdToInstructionRange)) {
-              this.blockIdToInstructionRange[blockId] = range;
           }
       }
       getInstruction(nodeId) {
@@ -442,23 +1013,6 @@
           if (X === undefined)
               return [-1, -1];
           return X;
-      }
-      readInstructionOffsetToPCOffset(instructionToPCOffset) {
-          for (const [instruction, numberOrInfo] of Object.entries(instructionToPCOffset)) {
-              let info;
-              if (typeof numberOrInfo == "number") {
-                  info = { gap: numberOrInfo, arch: numberOrInfo, condition: numberOrInfo };
-              }
-              else {
-                  info = numberOrInfo;
-              }
-              this.instructionToPCOffset[instruction] = info;
-              if (!this.pcOffsetToInstructions.has(info.gap)) {
-                  this.pcOffsetToInstructions.set(info.gap, []);
-              }
-              this.pcOffsetToInstructions.get(info.gap).push(Number(instruction));
-          }
-          this.pcOffsets = Array.from(this.pcOffsetToInstructions.keys()).sort((a, b) => b - a);
       }
       hasPCOffsets() {
           return this.pcOffsetToInstructions.size > 0;
@@ -579,68 +1133,71 @@
           }
           return [[], []];
       }
-      parsePhases(phases) {
-          const nodeLabelMap = [];
-          for (const [, phase] of Object.entries(phases)) {
-              switch (phase.type) {
-                  case 'disassembly':
-                      this.disassemblyPhase = phase;
-                      if (phase['blockIdToOffset']) {
-                          for (const [blockId, pc] of Object.entries(phase['blockIdToOffset'])) {
-                              this.blockIdToPCOffset[blockId] = pc;
-                              if (!this.blockStartPCtoBlockIds.has(pc)) {
-                                  this.blockStartPCtoBlockIds.set(pc, []);
-                              }
-                              this.blockStartPCtoBlockIds.get(pc).push(Number(blockId));
-                          }
-                      }
+      parsePhases(phasesJson) {
+          const nodeLabelMap = new Array();
+          for (const [, genericPhase] of Object.entries(phasesJson)) {
+              switch (genericPhase.type) {
+                  case PhaseType.Disassembly:
+                      const castedDisassembly = genericPhase;
+                      const disassemblyPhase = new DisassemblyPhase(castedDisassembly.name, castedDisassembly.data);
+                      disassemblyPhase.parseBlockIdToOffsetFromJSON(castedDisassembly?.blockIdToOffset);
+                      this.disassemblyPhase = disassemblyPhase;
+                      // Will be taken from the class
+                      this.blockIdToPCOffset = disassemblyPhase.blockIdToOffset;
+                      this.blockStartPCtoBlockIds = disassemblyPhase.blockStartPCtoBlockIds;
                       break;
-                  case 'schedule':
-                      this.phaseNames.set(phase.name, this.phases.length);
-                      this.phases.push(this.parseSchedule(phase));
+                  case PhaseType.Schedule:
+                      const castedSchedule = genericPhase;
+                      const schedulePhase = new SchedulePhase(castedSchedule.name, castedSchedule.data);
+                      this.phaseNames.set(schedulePhase.name, this.phases.length);
+                      schedulePhase.parseScheduleFromJSON(castedSchedule.data);
+                      this.phases.push(schedulePhase);
                       break;
-                  case 'sequence':
-                      this.phaseNames.set(phase.name, this.phases.length);
-                      this.phases.push(this.parseSequence(phase));
+                  case PhaseType.Sequence:
+                      const castedSequence = camelize(genericPhase);
+                      const sequencePhase = new SequencePhase(castedSequence.name, castedSequence.blocks, castedSequence.registerAllocation);
+                      this.phaseNames.set(sequencePhase.name, this.phases.length);
+                      this.phases.push(sequencePhase);
                       break;
-                  case 'instructions':
-                      if (phase.nodeIdToInstructionRange) {
-                          this.readNodeIdToInstructionRange(phase.nodeIdToInstructionRange);
+                  case PhaseType.Instructions:
+                      const castedInstructions = genericPhase;
+                      let instructionsPhase = null;
+                      if (this.instructionsPhase) {
+                          instructionsPhase = this.instructionsPhase;
+                          instructionsPhase.name += `, ${castedInstructions.name}`;
                       }
-                      if (phase.blockIdToInstructionRange) {
-                          this.readBlockIdToInstructionRange(phase.blockIdToInstructionRange);
+                      else {
+                          instructionsPhase = new InstructionsPhase(castedInstructions.name);
                       }
-                      if (phase.instructionOffsetToPCOffset) {
-                          this.readInstructionOffsetToPCOffset(phase.instructionOffsetToPCOffset);
-                      }
-                      if (phase.codeOffsetsInfo) {
-                          this.codeOffsetsInfo = phase.codeOffsetsInfo;
-                      }
+                      instructionsPhase.parseNodeIdToInstructionRangeFromJSON(castedInstructions
+                          ?.nodeIdToInstructionRange);
+                      instructionsPhase.parseBlockIdToInstructionRangeFromJSON(castedInstructions
+                          ?.blockIdToInstructionRange);
+                      instructionsPhase.parseInstructionOffsetToPCOffsetFromJSON(castedInstructions
+                          ?.instructionOffsetToPCOffset);
+                      instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions
+                          ?.codeOffsetsInfo);
+                      this.instructionsPhase = instructionsPhase;
+                      // Will be taken from the class
+                      this.nodeIdToInstructionRange = instructionsPhase.nodeIdToInstructionRange;
+                      this.blockIdToInstructionRange = instructionsPhase.blockIdToInstructionRange;
+                      this.codeOffsetsInfo = instructionsPhase.codeOffsetsInfo;
+                      this.instructionToPCOffset = instructionsPhase.instructionToPCOffset;
+                      this.pcOffsetToInstructions = instructionsPhase.pcOffsetToInstructions;
+                      this.pcOffsets = instructionsPhase.pcOffsets;
                       break;
-                  case 'graph':
-                      const graphPhase = Object.assign(phase, { highestNodeId: 0 });
+                  case PhaseType.Graph:
+                      const castedGraph = genericPhase;
+                      const graphPhase = new GraphPhase(castedGraph.name, 0);
+                      graphPhase.parseDataFromJSON(castedGraph.data, nodeLabelMap);
+                      graphPhase.nodeLabelMap = nodeLabelMap.slice();
+                      this.recordOrigins(graphPhase);
                       this.phaseNames.set(graphPhase.name, this.phases.length);
                       this.phases.push(graphPhase);
-                      this.recordOrigins(graphPhase);
-                      this.internNodeLabels(graphPhase, nodeLabelMap);
-                      graphPhase.nodeLabelMap = nodeLabelMap.slice();
                       break;
                   default:
                       throw "Unsupported phase type";
               }
-          }
-      }
-      internNodeLabels(phase, nodeLabelMap) {
-          for (const n of phase.data.nodes) {
-              const label = new NodeLabel(n.id, n.label, n.title, n.live, n.properties, n.sourcePosition, n.origin, n.opcode, n.control, n.opinfo, n.type);
-              const previous = nodeLabelMap[label.id];
-              if (!label.equals(previous)) {
-                  if (previous != undefined) {
-                      label.setInplaceUpdatePhase(phase.name);
-                  }
-                  nodeLabelMap[label.id] = label;
-              }
-              n.nodeLabel = nodeLabelMap[label.id];
           }
       }
       repairPhaseId(anyPhaseId) {
@@ -668,7 +1225,7 @@
           if (!sourceLineToBytecodePosition)
               return;
           sourceLineToBytecodePosition.forEach((pos, i) => {
-              this.addAnyPositionToLine(i, { bytecodePosition: pos });
+              this.addAnyPositionToLine(i, new BytecodePosition(pos));
           });
       }
       lineToSourcePositions(lineNumber) {
@@ -676,90 +1233,6 @@
           if (positions === undefined)
               return [];
           return positions;
-      }
-      parseSchedule(phase) {
-          function createNode(state, match) {
-              let inputs = [];
-              if (match.groups.args) {
-                  const nodeIdsString = match.groups.args.replace(/\s/g, '');
-                  const nodeIdStrings = nodeIdsString.split(',');
-                  inputs = nodeIdStrings.map(n => Number.parseInt(n, 10));
-              }
-              const node = {
-                  id: Number.parseInt(match.groups.id, 10),
-                  label: match.groups.label,
-                  inputs: inputs
-              };
-              if (match.groups.blocks) {
-                  const nodeIdsString = match.groups.blocks.replace(/\s/g, '').replace(/B/g, '');
-                  const nodeIdStrings = nodeIdsString.split(',');
-                  const successors = nodeIdStrings.map(n => Number.parseInt(n, 10));
-                  state.currentBlock.succ = successors;
-              }
-              state.nodes[node.id] = node;
-              state.currentBlock.nodes.push(node);
-          }
-          function createBlock(state, match) {
-              let predecessors = [];
-              if (match.groups.in) {
-                  const blockIdsString = match.groups.in.replace(/\s/g, '').replace(/B/g, '');
-                  const blockIdStrings = blockIdsString.split(',');
-                  predecessors = blockIdStrings.map(n => Number.parseInt(n, 10));
-              }
-              const block = {
-                  id: Number.parseInt(match.groups.id, 10),
-                  isDeferred: match.groups.deferred != undefined,
-                  pred: predecessors.sort(),
-                  succ: [],
-                  nodes: []
-              };
-              state.blocks[block.id] = block;
-              state.currentBlock = block;
-          }
-          function setGotoSuccessor(state, match) {
-              state.currentBlock.succ = [Number.parseInt(match.groups.successor.replace(/\s/g, ''), 10)];
-          }
-          const rules = [
-              {
-                  lineRegexps: [/^\s*(?<id>\d+):\ (?<label>.*)\((?<args>.*)\)$/,
-                      /^\s*(?<id>\d+):\ (?<label>.*)\((?<args>.*)\)\ ->\ (?<blocks>.*)$/,
-                      /^\s*(?<id>\d+):\ (?<label>.*)$/
-                  ],
-                  process: createNode
-              },
-              {
-                  lineRegexps: [/^\s*---\s*BLOCK\ B(?<id>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/
-                  ],
-                  process: createBlock
-              },
-              {
-                  lineRegexps: [/^\s*Goto\s*->\s*B(?<successor>\d+)\s*$/
-                  ],
-                  process: setGotoSuccessor
-              }
-          ];
-          const lines = phase.data.split(/[\n]/);
-          const state = { currentBlock: undefined, blocks: [], nodes: [] };
-          nextLine: for (const line of lines) {
-              for (const rule of rules) {
-                  for (const lineRegexp of rule.lineRegexps) {
-                      const match = line.match(lineRegexp);
-                      if (match) {
-                          rule.process(state, match);
-                          continue nextLine;
-                      }
-                  }
-              }
-              console.log("Warning: unmatched schedule line \"" + line + "\"");
-          }
-          phase.schedule = state;
-          return phase;
-      }
-      parseSequence(phase) {
-          phase.sequence = { blocks: phase.blocks,
-              register_allocation: phase.register_allocation ? new RegisterAllocation(phase.register_allocation)
-                  : undefined };
-          return phase;
       }
   }
 
@@ -9734,166 +10207,6 @@
     return zoom;
   }
 
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  const DEFAULT_NODE_BUBBLE_RADIUS = 12;
-  const NODE_INPUT_WIDTH = 50;
-  const MINIMUM_NODE_OUTPUT_APPROACH = 15;
-  const MINIMUM_EDGE_SEPARATION = 20;
-  const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
-  class GNode {
-      constructor(nodeLabel) {
-          this.id = nodeLabel.id;
-          this.nodeLabel = nodeLabel;
-          this.displayLabel = nodeLabel.getDisplayLabel();
-          this.inputs = [];
-          this.outputs = [];
-          this.visible = false;
-          this.x = 0;
-          this.y = 0;
-          this.rank = MAX_RANK_SENTINEL;
-          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
-          // Every control node is a CFG node.
-          this.cfg = nodeLabel.control;
-          this.labelbbox = measureText(this.displayLabel);
-          const typebbox = measureText(this.getDisplayType());
-          const innerwidth = Math.max(this.labelbbox.width, typebbox.width);
-          this.width = alignUp(innerwidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
-          const innerheight = Math.max(this.labelbbox.height, typebbox.height);
-          this.normalheight = innerheight + 20;
-          this.visitOrderWithinRank = 0;
-      }
-      isControl() {
-          return this.nodeLabel.control;
-      }
-      isInput() {
-          return this.nodeLabel.opcode == 'Parameter' || this.nodeLabel.opcode.endsWith('Constant');
-      }
-      isLive() {
-          return this.nodeLabel.live !== false;
-      }
-      isJavaScript() {
-          return this.nodeLabel.opcode.startsWith('JS');
-      }
-      isSimplified() {
-          if (this.isJavaScript())
-              return false;
-          const opcode = this.nodeLabel.opcode;
-          return opcode.endsWith('Phi') ||
-              opcode.startsWith('Boolean') ||
-              opcode.startsWith('Number') ||
-              opcode.startsWith('String') ||
-              opcode.startsWith('Change') ||
-              opcode.startsWith('Object') ||
-              opcode.startsWith('Reference') ||
-              opcode.startsWith('Any') ||
-              opcode.endsWith('ToNumber') ||
-              (opcode == 'AnyToBoolean') ||
-              (opcode.startsWith('Load') && opcode.length > 4) ||
-              (opcode.startsWith('Store') && opcode.length > 5);
-      }
-      isMachine() {
-          return !(this.isControl() || this.isInput() ||
-              this.isJavaScript() || this.isSimplified());
-      }
-      getTotalNodeWidth() {
-          const inputWidth = this.inputs.length * NODE_INPUT_WIDTH;
-          return Math.max(inputWidth, this.width);
-      }
-      getTitle() {
-          return this.nodeLabel.getTitle();
-      }
-      getDisplayLabel() {
-          return this.nodeLabel.getDisplayLabel();
-      }
-      getType() {
-          return this.nodeLabel.type;
-      }
-      getDisplayType() {
-          let typeString = this.nodeLabel.type;
-          if (typeString == undefined)
-              return "";
-          if (typeString.length > 24) {
-              typeString = typeString.substr(0, 25) + "...";
-          }
-          return typeString;
-      }
-      deepestInputRank() {
-          let deepestRank = 0;
-          this.inputs.forEach(function (e) {
-              if (e.isVisible() && !e.isBackEdge()) {
-                  if (e.source.rank > deepestRank) {
-                      deepestRank = e.source.rank;
-                  }
-              }
-          });
-          return deepestRank;
-      }
-      areAnyOutputsVisible() {
-          let visibleCount = 0;
-          this.outputs.forEach(function (e) { if (e.isVisible())
-              ++visibleCount; });
-          if (this.outputs.length == visibleCount)
-              return 2;
-          if (visibleCount != 0)
-              return 1;
-          return 0;
-      }
-      setOutputVisibility(v) {
-          let result = false;
-          this.outputs.forEach(function (e) {
-              e.visible = v;
-              if (v) {
-                  if (!e.target.visible) {
-                      e.target.visible = true;
-                      result = true;
-                  }
-              }
-          });
-          return result;
-      }
-      setInputVisibility(i, v) {
-          const edge = this.inputs[i];
-          edge.visible = v;
-          if (v) {
-              if (!edge.source.visible) {
-                  edge.source.visible = true;
-                  return true;
-              }
-          }
-          return false;
-      }
-      getInputApproach(index) {
-          return this.y - MINIMUM_NODE_INPUT_APPROACH -
-              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getNodeHeight(showTypes) {
-          if (showTypes) {
-              return this.normalheight + this.labelbbox.height;
-          }
-          else {
-              return this.normalheight;
-          }
-      }
-      getOutputApproach(showTypes) {
-          return this.y + this.outputApproach + this.getNodeHeight(showTypes) +
-              +DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getInputX(index) {
-          const result = this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2) +
-              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
-          return result;
-      }
-      getOutputX() {
-          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2);
-      }
-      hasBackEdges() {
-          return (this.nodeLabel.opcode == "Loop") ||
-              ((this.nodeLabel.opcode == "Phi" || this.nodeLabel.opcode == "EffectPhi" || this.nodeLabel.opcode == "InductionVariablePhi") &&
-                  this.inputs[this.inputs.length - 1].source.nodeLabel.opcode == "Loop");
-      }
-  }
-  const nodeToStr = (n) => "N" + n.id;
-
   // Copyright 2015 the V8 project authors. All rights reserved.
   const DEFAULT_NODE_ROW_SEPARATION = 150;
   function newGraphOccupation(graph) {
@@ -10275,87 +10588,8 @@
       });
   }
 
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  const BEZIER_CONSTANT = 0.3;
-  class Edge {
-      constructor(target, index, source, type) {
-          this.target = target;
-          this.source = source;
-          this.index = index;
-          this.type = type;
-          this.backEdgeNumber = 0;
-          this.visible = false;
-      }
-      stringID() {
-          return this.source.id + "," + this.index + "," + this.target.id;
-      }
-      isVisible() {
-          return this.visible && this.source.visible && this.target.visible;
-      }
-      getInputHorizontalPosition(graph, showTypes) {
-          if (this.backEdgeNumber > 0) {
-              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
-          }
-          const source = this.source;
-          const target = this.target;
-          const index = this.index;
-          const inputX = target.x + target.getInputX(index);
-          const inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          if (inputApproach > outputApproach) {
-              return inputX;
-          }
-          else {
-              const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
-              return (target.x < source.x)
-                  ? (target.x + target.getTotalNodeWidth() + inputOffset)
-                  : (target.x - inputOffset);
-          }
-      }
-      generatePath(graph, showTypes) {
-          const target = this.target;
-          const source = this.source;
-          const inputX = target.x + target.getInputX(this.index);
-          const arrowheadHeight = 7;
-          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
-          const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-          let inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
-          let result;
-          if (inputY < outputY) {
-              result = `M ${outputX} ${outputY}
-                L ${outputX} ${outputApproach}
-                L ${horizontalPos} ${outputApproach}`;
-              if (horizontalPos != inputX) {
-                  result += `L ${horizontalPos} ${inputApproach}`;
-              }
-              else {
-                  if (inputApproach < outputApproach) {
-                      inputApproach = outputApproach;
-                  }
-              }
-              result += `L ${inputX} ${inputApproach}
-                 L ${inputX} ${inputY}`;
-          }
-          else {
-              const controlY = outputY + (inputY - outputY) * BEZIER_CONSTANT;
-              result = `M ${outputX} ${outputY}
-                C ${outputX} ${controlY},
-                  ${inputX} ${outputY},
-                  ${inputX} ${inputY}`;
-          }
-          return result;
-      }
-      isBackEdge() {
-          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
-      }
-  }
-  const edgeToStr = (e) => e.stringID();
-
   class Graph {
-      constructor(data) {
+      constructor(graphPhase) {
           this.nodeMap = [];
           this.minGraphX = 0;
           this.maxGraphX = 1;
@@ -10363,12 +10597,12 @@
           this.maxGraphY = 1;
           this.width = 1;
           this.height = 1;
-          data.nodes.forEach((jsonNode) => {
+          graphPhase.data.nodes.forEach((jsonNode) => {
               this.nodeMap[jsonNode.id] = new GNode(jsonNode.nodeLabel);
           });
-          data.edges.forEach((e) => {
-              const t = this.nodeMap[e.target];
-              const s = this.nodeMap[e.source];
+          graphPhase.data.edges.forEach((e) => {
+              const t = this.nodeMap[e.target.id];
+              const s = this.nodeMap[e.source.id];
               const newEdge = new Edge(t, e.index, s, e.type);
               t.inputs.push(newEdge);
               s.outputs.push(newEdge);
@@ -10634,7 +10868,7 @@
           this.toolbox.appendChild(createImgInput("toggle-types", "toggle types", partial(this.toggleTypesAction, this)));
           const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
           this.phaseName = data.name;
-          this.createGraph(data.data, adaptedSelection);
+          this.createGraph(data, adaptedSelection);
           this.broker.addNodeHandler(this.selectionHandler);
           if (adaptedSelection != null && adaptedSelection.size > 0) {
               this.attachSelection(adaptedSelection);
@@ -11464,7 +11698,7 @@
           const select = [];
           window.sessionStorage.setItem("lastSearch", query);
           const reg = new RegExp(query);
-          for (const node of this.schedule.nodes) {
+          for (const node of this.schedule.schedule.nodes) {
               if (node === undefined)
                   continue;
               if (reg.exec(this.lineString(node)) != null) {
@@ -11688,7 +11922,7 @@
           return "v" + registerIndex;
       }
       static fixedRegisterName(range) {
-          return range.child_ranges[0].op.text;
+          return range.childRanges[0].op.text;
       }
       static getPositionElementsFromInterval(interval) {
           return interval.children[1].children;
@@ -11704,7 +11938,7 @@
                       const entry = fixedRegisterMap.get(registerName);
                       entry.ranges[1] = range;
                       // Only use the deferred register index if no normal index exists.
-                      if (!range.is_deferred) {
+                      if (!range.isDeferred) {
                           entry.registerIndex = parseInt(registerIndex, 10);
                       }
                   }
@@ -11774,7 +12008,7 @@
           const intervalMap = new Map();
           let tooltip = "";
           ranges.forEachRange((range) => {
-              for (const childRange of range.child_ranges) {
+              for (const childRange of range.childRanges) {
                   switch (childRange.type) {
                       case "none":
                           tooltip = Constants.INTERVAL_TEXT_FOR_NONE;
@@ -11798,7 +12032,7 @@
                   }
                   childRange.intervals.forEach((intervalNums, index) => {
                       const interval = new Interval(intervalNums);
-                      const intervalEl = this.elementForInterval(childRange, interval, tooltip, index, range.is_deferred);
+                      const intervalEl = this.elementForInterval(childRange, interval, tooltip, index, range.isDeferred);
                       intervalMap.set(interval.start, intervalEl);
                   });
               }
@@ -11870,7 +12104,7 @@
           spanEl.innerHTML = str;
       }
       setUses(grid, row, range) {
-          for (const liveRange of range.child_ranges) {
+          for (const liveRange of range.childRanges) {
               if (liveRange.uses) {
                   for (const use of liveRange.uses) {
                       grid.getCell(row, use).classList.toggle("range-use", true);
@@ -11931,7 +12165,7 @@
           }
       }
       addVirtualRanges(row) {
-          const source = this.view.sequenceView.sequence.register_allocation;
+          const source = this.view.sequenceView.sequence.registerAllocation;
           for (const [registerIndex, range] of source.liveRanges) {
               const registerName = Helper.virtualRegisterName(registerIndex);
               const registerEl = this.elementForVirtualRegister(registerName);
@@ -11942,7 +12176,7 @@
           return row;
       }
       addFixedRanges(row) {
-          row = Helper.forEachFixedRange(this.view.sequenceView.sequence.register_allocation, row, (registerIndex, row, registerName, ranges) => {
+          row = Helper.forEachFixedRange(this.view.sequenceView.sequence.registerAllocation, row, (registerIndex, row, registerName, ranges) => {
               const registerEl = this.elementForFixedRegister(registerName);
               this.addRowToGroup(row, this.elementForRow(row, registerIndex, ranges));
               this.view.divs.registers.appendChild(registerEl);
@@ -12093,13 +12327,13 @@
           const currentGrid = this.view.gridAccessor.getAnyGrid();
           const newGrid = new Grid();
           this.view.gridAccessor.addGrid(newGrid);
-          const source = this.view.sequenceView.sequence.register_allocation;
+          const source = this.view.sequenceView.sequence.registerAllocation;
           let row = 0;
           for (const [registerIndex, range] of source.liveRanges) {
               this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, new RangePair([range, undefined]));
               ++row;
           }
-          Helper.forEachFixedRange(this.view.sequenceView.sequence.register_allocation, row, (registerIndex, row, _, ranges) => {
+          Helper.forEachFixedRange(this.view.sequenceView.sequence.registerAllocation, row, (registerIndex, row, _, ranges) => {
               this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges);
           });
       }
@@ -12371,9 +12605,9 @@
           if (this.showRangeView)
               this.rangeView.onresize();
       }
-      initializeContent(data, rememberedSelection) {
+      initializeContent(sequence, rememberedSelection) {
           this.divNode.innerHTML = '';
-          this.sequence = data.sequence;
+          this.sequence = sequence;
           this.searchInfo = [];
           this.divNode.onclick = (e) => {
               if (!(e.target instanceof HTMLElement))
@@ -12577,11 +12811,11 @@
               this.toggleRangeViewEl.style.textDecoration = "line-through";
               this.toggleRangeViewEl.setAttribute("title", reason);
           };
-          if (this.sequence.register_allocation) {
+          if (this.sequence.registerAllocation) {
               if (!this.rangeView) {
                   this.rangeView = new RangeView(this);
               }
-              const source = this.sequence.register_allocation;
+              const source = this.sequence.registerAllocation;
               if (source.fixedLiveRanges.size == 0 && source.liveRanges.size == 0) {
                   preventRangeView("No live ranges to show");
               }
@@ -12702,7 +12936,7 @@
           view.sourceResolver.forEachPhase(phase => {
               const optionElement = document.createElement("option");
               let maxNodeId = "";
-              if (phase.type == "graph" && phase.highestNodeId != 0) {
+              if (phase instanceof GraphPhase && phase.highestNodeId != 0) {
                   maxNodeId = ` ${phase.highestNodeId}`;
               }
               optionElement.text = `${phase.name}${maxNodeId}`;
