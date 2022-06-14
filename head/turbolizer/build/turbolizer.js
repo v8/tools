@@ -29,8 +29,8 @@
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
-  function anyToString(x) {
-      return `${x}`;
+  function anyToString(obj) {
+      return `${obj}`;
   }
   function snakeToCamel(str) {
       return str.toLowerCase().replace(/([-_][a-z])/g, group => group
@@ -571,6 +571,12 @@
           this.blockIdToOffset = new Array();
           this.blockStartPCtoBlockIds = new Map();
       }
+      hasBlockStartInfo() {
+          return this.blockIdToOffset.length > 0;
+      }
+      getBlockIdsForOffset(offset) {
+          return this.blockStartPCtoBlockIds.get(offset);
+      }
       parseBlockIdToOffsetFromJSON(blockIdToOffsetJson) {
           if (!blockIdToOffsetJson)
               return;
@@ -594,6 +600,133 @@
           this.instructionToPCOffset = new Array();
           this.pcOffsetToInstructions = new Map();
           this.pcOffsets = new Array();
+      }
+      getKeyPcOffset(offset) {
+          if (this.pcOffsets.length === 0)
+              return -1;
+          for (const key of this.pcOffsets) {
+              if (key <= offset) {
+                  return key;
+              }
+          }
+          return -1;
+      }
+      instructionToPcOffsets(instruction) {
+          return this.instructionToPCOffset[instruction];
+      }
+      instructionsToKeyPcOffsets(instructionIds) {
+          const keyPcOffsets = new Array();
+          for (const instructionId of instructionIds) {
+              const pcOffset = this.instructionToPCOffset[instructionId];
+              if (pcOffset !== undefined)
+                  keyPcOffsets.push(pcOffset.gap);
+          }
+          return keyPcOffsets;
+      }
+      nodesForPCOffset(offset) {
+          if (this.pcOffsets.length === 0)
+              return new Array();
+          for (const key of this.pcOffsets) {
+              if (key <= offset) {
+                  const instructions = this.pcOffsetToInstructions.get(key);
+                  const nodes = new Array();
+                  for (const instruction of instructions) {
+                      for (const [nodeId, range] of this.nodeIdToInstructionRange.entries()) {
+                          if (!range)
+                              continue;
+                          const [start, end] = range;
+                          if (start == end && instruction == start) {
+                              nodes.push(anyToString(nodeId));
+                          }
+                          if (start <= instruction && instruction < end) {
+                              nodes.push(anyToString(nodeId));
+                          }
+                      }
+                  }
+                  return nodes;
+              }
+          }
+          return new Array();
+      }
+      nodesToKeyPcOffsets(nodeIds) {
+          let offsets = new Array();
+          for (const nodeId of nodeIds) {
+              const range = this.nodeIdToInstructionRange[nodeId];
+              if (!range)
+                  continue;
+              offsets = offsets.concat(this.instructionRangeToKeyPcOffsets(range));
+          }
+          return offsets;
+      }
+      getInstruction(nodeId) {
+          return this.nodeIdToInstructionRange[nodeId] ?? [-1, -1];
+      }
+      getInstructionRangeForBlock(blockId) {
+          return this.blockIdToInstructionRange[blockId] ?? [-1, -1];
+      }
+      getInstructionKindForPCOffset(offset) {
+          if (this.codeOffsetsInfo) {
+              if (offset >= this.codeOffsetsInfo.deoptimizationExits) {
+                  if (offset >= this.codeOffsetsInfo.pools) {
+                      return InstructionKind.Pools;
+                  }
+                  else if (offset >= this.codeOffsetsInfo.jumpTables) {
+                      return InstructionKind.JumpTables;
+                  }
+                  else {
+                      return InstructionKind.DeoptimizationExits;
+                  }
+              }
+              if (offset < this.codeOffsetsInfo.deoptCheck) {
+                  return InstructionKind.CodeStartRegister;
+              }
+              else if (offset < this.codeOffsetsInfo.initPoison) {
+                  return InstructionKind.DeoptCheck;
+              }
+              else if (offset < this.codeOffsetsInfo.blocksStart) {
+                  return InstructionKind.InitPoison;
+              }
+          }
+          const keyOffset = this.getKeyPcOffset(offset);
+          if (keyOffset != -1) {
+              const infos = this.pcOffsetToInstructions.get(keyOffset)
+                  .map(instrId => this.instructionToPCOffset[instrId])
+                  .filter(info => info.gap !== info.condition);
+              if (infos.length > 0) {
+                  const info = infos[0];
+                  if (!info || info.gap == info.condition)
+                      return InstructionKind.Unknown;
+                  if (offset < info.arch)
+                      return InstructionKind.Gap;
+                  if (offset < info.condition)
+                      return InstructionKind.Arch;
+                  return InstructionKind.Condition;
+              }
+          }
+          return InstructionKind.Unknown;
+      }
+      instructionKindToReadableName(instructionKind) {
+          switch (instructionKind) {
+              case InstructionKind.CodeStartRegister:
+                  return "Check code register for right value";
+              case InstructionKind.DeoptCheck:
+                  return "Check if function was marked for deoptimization";
+              case InstructionKind.InitPoison:
+                  return "Initialization of poison register";
+              case InstructionKind.Gap:
+                  return "Instruction implementing a gap move";
+              case InstructionKind.Arch:
+                  return "Instruction implementing the actual machine operation";
+              case InstructionKind.Condition:
+                  return "Code implementing conditional after instruction";
+              case InstructionKind.Pools:
+                  return "Data in a pool (e.g. constant pool)";
+              case InstructionKind.JumpTables:
+                  return "Part of a jump table";
+              case InstructionKind.DeoptimizationExits:
+                  return "Jump to deoptimization exit";
+          }
+          return null;
       }
       parseNodeIdToInstructionRangeFromJSON(nodeIdToInstructionJson) {
           if (!nodeIdToInstructionJson)
@@ -633,6 +766,11 @@
               return;
           this.codeOffsetsInfo = new CodeOffsetsInfo(codeOffsetsInfoJson.codeStartRegisterCheck, codeOffsetsInfoJson.deoptCheck, codeOffsetsInfoJson.initPoison, codeOffsetsInfoJson.blocksStart, codeOffsetsInfoJson.outOfLineCode, codeOffsetsInfoJson.deoptimizationExits, codeOffsetsInfoJson.pools, codeOffsetsInfoJson.jumpTables);
       }
+      instructionRangeToKeyPcOffsets([start, end]) {
+          if (start == end)
+              return [this.instructionToPCOffset[start]];
+          return this.instructionToPCOffset.slice(start, end);
+      }
   }
   class CodeOffsetsInfo {
       constructor(codeStartRegisterCheck, deoptCheck, initPoison, blocksStart, outOfLineCode, deoptimizationExits, pools, jumpTables) {
@@ -653,6 +791,19 @@
           this.condition = condition;
       }
   }
+  var InstructionKind;
+  (function (InstructionKind) {
+      InstructionKind["Pools"] = "pools";
+      InstructionKind["JumpTables"] = "jump-tables";
+      InstructionKind["DeoptimizationExits"] = "deoptimization-exits";
+      InstructionKind["CodeStartRegister"] = "code-start-register";
+      InstructionKind["DeoptCheck"] = "deopt-check";
+      InstructionKind["InitPoison"] = "init-poison";
+      InstructionKind["Gap"] = "gap";
+      InstructionKind["Arch"] = "arch";
+      InstructionKind["Condition"] = "condition";
+      InstructionKind["Unknown"] = "unknown";
+  })(InstructionKind || (InstructionKind = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class SchedulePhase extends Phase {
@@ -775,12 +926,6 @@
       return (typeof l.scriptOffset !== undefined
           && typeof l.inliningId !== undefined) || typeof l.bytecodePosition != undefined;
   }
-  class Interval {
-      constructor(numbers) {
-          this.start = numbers[0];
-          this.end = numbers[1];
-      }
-  }
   class SourceResolver {
       constructor() {
           // Maps node ids to source positions.
@@ -801,24 +946,6 @@
           this.disassemblyPhase = undefined;
           // Maps line numbers to source positions
           this.linePositionMap = new Map();
-          // Maps node ids to instruction ranges.
-          this.nodeIdToInstructionRange = [];
-          // Maps block ids to instruction ranges.
-          this.blockIdToInstructionRange = [];
-          // Maps instruction numbers to PC offsets.
-          this.instructionToPCOffset = [];
-          // Maps PC offsets to instructions.
-          this.pcOffsetToInstructions = new Map();
-          this.pcOffsets = [];
-          this.blockIdToPCOffset = [];
-          this.blockStartPCtoBlockIds = new Map();
-          this.codeOffsetsInfo = null;
-      }
-      getBlockIdsForOffset(offset) {
-          return this.blockStartPCtoBlockIds.get(offset);
-      }
-      hasBlockStartInfo() {
-          return this.blockIdToPCOffset.length > 0;
       }
       setSources(sources, mainBackup) {
           if (sources) {
@@ -1002,137 +1129,6 @@
               }
           }
       }
-      getInstruction(nodeId) {
-          const X = this.nodeIdToInstructionRange[nodeId];
-          if (X === undefined)
-              return [-1, -1];
-          return X;
-      }
-      getInstructionRangeForBlock(blockId) {
-          const X = this.blockIdToInstructionRange[blockId];
-          if (X === undefined)
-              return [-1, -1];
-          return X;
-      }
-      hasPCOffsets() {
-          return this.pcOffsetToInstructions.size > 0;
-      }
-      getKeyPcOffset(offset) {
-          if (this.pcOffsets.length === 0)
-              return -1;
-          for (const key of this.pcOffsets) {
-              if (key <= offset) {
-                  return key;
-              }
-          }
-          return -1;
-      }
-      getInstructionKindForPCOffset(offset) {
-          if (this.codeOffsetsInfo) {
-              if (offset >= this.codeOffsetsInfo.deoptimizationExits) {
-                  if (offset >= this.codeOffsetsInfo.pools) {
-                      return "pools";
-                  }
-                  else if (offset >= this.codeOffsetsInfo.jumpTables) {
-                      return "jump-tables";
-                  }
-                  else {
-                      return "deoptimization-exits";
-                  }
-              }
-              if (offset < this.codeOffsetsInfo.deoptCheck) {
-                  return "code-start-register";
-              }
-              else if (offset < this.codeOffsetsInfo.initPoison) {
-                  return "deopt-check";
-              }
-              else if (offset < this.codeOffsetsInfo.blocksStart) {
-                  return "init-poison";
-              }
-          }
-          const keyOffset = this.getKeyPcOffset(offset);
-          if (keyOffset != -1) {
-              const infos = this.pcOffsetToInstructions.get(keyOffset).map(instrId => this.instructionToPCOffset[instrId]).filter(info => info.gap != info.condition);
-              if (infos.length > 0) {
-                  const info = infos[0];
-                  if (!info || info.gap == info.condition)
-                      return "unknown";
-                  if (offset < info.arch)
-                      return "gap";
-                  if (offset < info.condition)
-                      return "arch";
-                  return "condition";
-              }
-          }
-          return "unknown";
-      }
-      instructionKindToReadableName(instructionKind) {
-          switch (instructionKind) {
-              case "code-start-register": return "Check code register for right value";
-              case "deopt-check": return "Check if function was marked for deoptimization";
-              case "init-poison": return "Initialization of poison register";
-              case "gap": return "Instruction implementing a gap move";
-              case "arch": return "Instruction implementing the actual machine operation";
-              case "condition": return "Code implementing conditional after instruction";
-              case "pools": return "Data in a pool (e.g. constant pool)";
-              case "jump-tables": return "Part of a jump table";
-              case "deoptimization-exits": return "Jump to deoptimization exit";
-          }
-          return null;
-      }
-      instructionRangeToKeyPcOffsets([start, end]) {
-          if (start == end)
-              return [this.instructionToPCOffset[start]];
-          return this.instructionToPCOffset.slice(start, end);
-      }
-      instructionToPcOffsets(instr) {
-          return this.instructionToPCOffset[instr];
-      }
-      instructionsToKeyPcOffsets(instructionIds) {
-          const keyPcOffsets = [];
-          for (const instructionId of instructionIds) {
-              const pcOffset = this.instructionToPCOffset[instructionId];
-              if (pcOffset !== undefined)
-                  keyPcOffsets.push(pcOffset.gap);
-          }
-          return keyPcOffsets;
-      }
-      nodesToKeyPcOffsets(nodes) {
-          let offsets = [];
-          for (const node of nodes) {
-              const range = this.nodeIdToInstructionRange[node];
-              if (!range)
-                  continue;
-              offsets = offsets.concat(this.instructionRangeToKeyPcOffsets(range));
-          }
-          return offsets;
-      }
-      nodesForPCOffset(offset) {
-          if (this.pcOffsets.length === 0)
-              return [[], []];
-          for (const key of this.pcOffsets) {
-              if (key <= offset) {
-                  const instrs = this.pcOffsetToInstructions.get(key);
-                  const nodes = [];
-                  const blocks = [];
-                  for (const instr of instrs) {
-                      for (const [nodeId, range] of this.nodeIdToInstructionRange.entries()) {
-                          if (!range)
-                              continue;
-                          const [start, end] = range;
-                          if (start == end && instr == start) {
-                              nodes.push("" + nodeId);
-                          }
-                          if (start <= instr && instr < end) {
-                              nodes.push("" + nodeId);
-                          }
-                      }
-                  }
-                  return [nodes, blocks];
-              }
-          }
-          return [[], []];
-      }
       parsePhases(phasesJson) {
           const nodeLabelMap = new Array();
           for (const [, genericPhase] of Object.entries(phasesJson)) {
@@ -1142,9 +1138,6 @@
                       const disassemblyPhase = new DisassemblyPhase(castedDisassembly.name, castedDisassembly.data);
                       disassemblyPhase.parseBlockIdToOffsetFromJSON(castedDisassembly?.blockIdToOffset);
                       this.disassemblyPhase = disassemblyPhase;
-                      // Will be taken from the class
-                      this.blockIdToPCOffset = disassemblyPhase.blockIdToOffset;
-                      this.blockStartPCtoBlockIds = disassemblyPhase.blockStartPCtoBlockIds;
                       break;
                   case PhaseType.Schedule:
                       const castedSchedule = genericPhase;
@@ -1178,13 +1171,6 @@
                       instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions
                           ?.codeOffsetsInfo);
                       this.instructionsPhase = instructionsPhase;
-                      // Will be taken from the class
-                      this.nodeIdToInstructionRange = instructionsPhase.nodeIdToInstructionRange;
-                      this.blockIdToInstructionRange = instructionsPhase.blockIdToInstructionRange;
-                      this.codeOffsetsInfo = instructionsPhase.codeOffsetsInfo;
-                      this.instructionToPCOffset = instructionsPhase.instructionToPCOffset;
-                      this.pcOffsetToInstructions = instructionsPhase.pcOffsetToInstructions;
-                      this.pcOffsets = instructionsPhase.pcOffsets;
                       break;
                   case PhaseType.Graph:
                       const castedGraph = genericPhase;
@@ -1194,6 +1180,9 @@
                       this.recordOrigins(graphPhase);
                       this.phaseNames.set(graphPhase.name, this.phases.length);
                       this.phases.push(graphPhase);
+                      break;
+                  case PhaseType.TurboshaftGraph:
+                      // Allow to avoid exception and view turboshaft schedule phase
                       break;
                   default:
                       throw "Unsupported phase type";
@@ -1274,9 +1263,10 @@
                   b.brokeredInstructionSelect(instructionOffsets, selected);
           }
           // Select the lines from the source panel (left panel)
-          const pcOffsets = this.sourceResolver.instructionsToKeyPcOffsets(instructionOffsets);
+          const pcOffsets = this.sourceResolver.instructionsPhase
+              .instructionsToKeyPcOffsets(instructionOffsets);
           for (const offset of pcOffsets) {
-              const nodes = this.sourceResolver.nodesForPCOffset(offset)[0];
+              const nodes = this.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
               const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
               for (const b of this.sourcePositionHandlers) {
                   if (b != from)
@@ -1305,7 +1295,8 @@
                   b.brokeredNodeSelect(nodes, selected);
           }
           for (const node of nodes) {
-              const instructionOffsets = this.sourceResolver.nodeIdToInstructionRange[node];
+              const instructionOffsets = this.sourceResolver.instructionsPhase
+                  .nodeIdToInstructionRange[node];
               // Skip nodes which do not have an associated instruction range.
               if (instructionOffsets == undefined)
                   continue;
@@ -1334,7 +1325,8 @@
                   b.brokeredSourcePositionSelect(sourcePositions, selected);
           }
           for (const node of nodes) {
-              const instructionOffsets = this.sourceResolver.nodeIdToInstructionRange[node];
+              const instructionOffsets = this.sourceResolver.instructionsPhase
+                  .nodeIdToInstructionRange[node];
               // Skip nodes which do not have an associated instruction range.
               if (instructionOffsets == undefined)
                   continue;
@@ -1760,10 +1752,12 @@
               associateData: (text, fragment) => {
                   const matches = text.match(/(?<address>0?x?[0-9a-fA-F]{8,16})(?<addressSpace>\s+)(?<offset>[0-9a-f]+)(?<offsetSpace>\s*)/);
                   const offset = Number.parseInt(matches.groups["offset"], 16);
-                  const instructionKind = view.sourceResolver.getInstructionKindForPCOffset(offset);
+                  const instructionKind = view.sourceResolver.instructionsPhase
+                      .getInstructionKindForPCOffset(offset);
                   fragment.dataset.instructionKind = instructionKind;
-                  fragment.title = view.sourceResolver.instructionKindToReadableName(instructionKind);
-                  const blockIds = view.sourceResolver.getBlockIdsForOffset(offset);
+                  fragment.title = view.sourceResolver.instructionsPhase
+                      .instructionKindToReadableName(instructionKind);
+                  const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
                   const blockIdElement = document.createElement("SPAN");
                   blockIdElement.className = "block-id com linkable-text";
                   blockIdElement.innerText = "";
@@ -1784,7 +1778,7 @@
                   fragment.appendChild(document.createTextNode(matches.groups["offsetSpace"]));
                   fragment.classList.add('tag');
                   if (!Number.isNaN(offset)) {
-                      let pcOffset = view.sourceResolver.getKeyPcOffset(offset);
+                      let pcOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
                       if (pcOffset == -1)
                           pcOffset = Number(offset);
                       fragment.dataset.pcOffset = `${pcOffset}`;
@@ -1808,10 +1802,10 @@
                   fragment.innerHTML = text;
                   const replacer = (match, hexOffset) => {
                       const offset = Number.parseInt(hexOffset, 16);
-                      let keyOffset = view.sourceResolver.getKeyPcOffset(offset);
+                      let keyOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
                       if (keyOffset == -1)
                           keyOffset = Number(offset);
-                      const blockIds = view.sourceResolver.getBlockIdsForOffset(offset);
+                      const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
                       let block = "";
                       let blockIdData = "";
                       if (blockIds && blockIds.length > 0) {
@@ -1830,7 +1824,7 @@
           };
           const BLOCK_HEADER_STYLE = {
               associateData: function (text, fragment) {
-                  if (view.sourceResolver.hasBlockStartInfo())
+                  if (view.sourceResolver.disassemblyPhase.hasBlockStartInfo())
                       return false;
                   const matches = /\d+/.exec(text);
                   if (!matches)
@@ -1882,7 +1876,7 @@
               const offset = Number.parseInt(offsetAsString, 10);
               if ((typeof offsetAsString) != "undefined" && !Number.isNaN(offset)) {
                   view.offsetSelection.select([offset], true);
-                  const nodes = view.sourceResolver.nodesForPCOffset(offset)[0];
+                  const nodes = view.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
                   if (nodes.length > 0) {
                       e.stopPropagation();
                       if (!e.shiftKey) {
@@ -1922,7 +1916,8 @@
               },
               brokeredInstructionSelect: function (instructionIds, selected) {
                   const firstSelect = view.offsetSelection.isEmpty();
-                  const keyPcOffsets = view.sourceResolver.instructionsToKeyPcOffsets(instructionIds);
+                  const keyPcOffsets = view.sourceResolver.instructionsPhase
+                      .instructionsToKeyPcOffsets(instructionIds);
                   view.offsetSelection.select(keyPcOffsets, selected);
                   view.updateSelection(firstSelect);
               },
@@ -1981,7 +1976,10 @@
       }
       updateSelection(scrollIntoView = false) {
           super.updateSelection(scrollIntoView);
-          const keyPcOffsets = this.sourceResolver.nodesToKeyPcOffsets(this.selection.selectedKeys());
+          const selectedKeys = this.selection.selectedKeys();
+          const keyPcOffsets = [
+              ...this.sourceResolver.instructionsPhase.nodesToKeyPcOffsets(selectedKeys)
+          ];
           if (this.offsetSelection) {
               for (const key of this.offsetSelection.selectedKeys()) {
                   keyPcOffsets.push(Number(key));
@@ -11613,7 +11611,7 @@
           }
           function createElementForNode(node) {
               const nodeEl = createElement("div", "node");
-              const [start, end] = view.sourceResolver.getInstruction(node.id);
+              const [start, end] = view.sourceResolver.instructionsPhase.getInstruction(node.id);
               const [marker, tooltip] = getMarker(start, end);
               const instrMarker = createElement("div", "instr-marker com", marker);
               instrMarker.setAttribute("title", tooltip);
@@ -11648,7 +11646,8 @@
           }
           const scheduleBlock = createElement("div", "schedule-block");
           scheduleBlock.classList.toggle("deferred", block.isDeferred);
-          const [start, end] = view.sourceResolver.getInstructionRangeForBlock(block.id);
+          const [start, end] = view.sourceResolver.instructionsPhase
+              .getInstructionRangeForBlock(block.id);
           const instrMarker = createElement("div", "instr-marker com", "&#8857;");
           instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
           instrMarker.onclick = mkBlockLinkHandler(block.id);
@@ -11706,6 +11705,16 @@
               }
           }
           this.selectionHandler.select(select, true);
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class Interval {
+      constructor(numbers) {
+          this.start = numbers[0];
+          this.end = numbers[1];
       }
   }
 
@@ -12677,7 +12686,7 @@
           function elementForInstruction(instruction, searchInfo) {
               const instNodeEl = createElement("div", "instruction-node");
               const instId = createElement("div", "instruction-id", instruction.id);
-              const offsets = view.sourceResolver.instructionToPcOffsets(instruction.id);
+              const offsets = view.sourceResolver.instructionsPhase.instructionToPcOffsets(instruction.id);
               instId.classList.add("clickable");
               view.addHtmlElementForInstructionId(instruction.id, instId);
               instId.onclick = mkInstructionLinkHandler(instruction.id);
@@ -13727,6 +13736,7 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class InfoView extends View {
       constructor(idOrContainer) {
           super(idOrContainer);
