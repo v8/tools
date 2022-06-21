@@ -5,6 +5,13 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   const MAX_RANK_SENTINEL = 0;
+  const BEZIER_CONSTANT = 0.3;
+  const DEFAULT_NODE_BUBBLE_RADIUS = 12;
+  const NODE_INPUT_WIDTH = 50;
+  const MINIMUM_NODE_OUTPUT_APPROACH = 15;
+  const MINIMUM_EDGE_SEPARATION = 20;
+  const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
+  const DEFAULT_NODE_ROW_SEPARATION = 150;
   const SOURCE_PANE_ID = "left";
   const SOURCE_COLLAPSE_ID = "source-shrink";
   const SOURCE_EXPAND_ID = "source-expand";
@@ -120,15 +127,6 @@
   // Copyright 2019 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
-  function formatOrigin(origin) {
-      if (origin.nodeId) {
-          return `#${origin.nodeId} in phase ${origin.phase}/${origin.reducer}`;
-      }
-      if (origin.bytecodePosition) {
-          return `Bytecode line ${origin.bytecodePosition} in phase ${origin.phase}/${origin.reducer}`;
-      }
-      return "unknown origin";
-  }
   class NodeLabel {
       constructor(id, label, title, live, properties, sourcePosition, origin, opcode, control, opinfo, type) {
           this.id = id;
@@ -163,21 +161,13 @@
               return false;
           if (this.opinfo != that.opinfo)
               return false;
-          if (this.type != that.type)
-              return false;
-          return true;
+          return this.type == that.type;
       }
       getTitle() {
-          let propsString = "";
-          if (this.properties === "") {
-              propsString = "no properties";
-          }
-          else {
-              propsString = "[" + this.properties + "]";
-          }
-          let title = this.title + "\n" + propsString + "\n" + this.opinfo;
+          const propsString = this.properties === "" ? "no properties" : `[${this.properties}]`;
+          let title = `${this.title}\n${propsString}\n${this.opinfo}`;
           if (this.origin) {
-              title += `\nOrigin: ${formatOrigin(this.origin)}`;
+              title += `\nOrigin: ${this.origin.toString()}`;
           }
           if (this.inplaceUpdatePhase) {
               title += `\nInplace update in phase: ${this.inplaceUpdatePhase}`;
@@ -185,256 +175,13 @@
           return title;
       }
       getDisplayLabel() {
-          const result = `${this.id}: ${this.label}`;
-          if (result.length > 40) {
-              return `${this.id}: ${this.opcode}`;
-          }
-          return result;
+          const label = `${this.id}: ${this.label}`;
+          return label.length > 40 ? `${this.id}: ${this.opcode}` : label;
       }
       setInplaceUpdatePhase(name) {
           this.inplaceUpdatePhase = name;
       }
   }
-
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  const DEFAULT_NODE_BUBBLE_RADIUS = 12;
-  const NODE_INPUT_WIDTH = 50;
-  const MINIMUM_NODE_OUTPUT_APPROACH = 15;
-  const MINIMUM_EDGE_SEPARATION = 20;
-  const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
-  class GNode {
-      constructor(nodeLabel) {
-          this.identifier = () => `${this.id}`;
-          this.id = nodeLabel.id;
-          this.nodeLabel = nodeLabel;
-          this.displayLabel = nodeLabel.getDisplayLabel();
-          this.inputs = [];
-          this.outputs = [];
-          this.visible = false;
-          this.x = 0;
-          this.y = 0;
-          this.rank = MAX_RANK_SENTINEL;
-          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
-          // Every control node is a CFG node.
-          this.cfg = nodeLabel.control;
-          this.labelbbox = measureText(this.displayLabel);
-          const typebbox = measureText(this.getDisplayType());
-          const innerwidth = Math.max(this.labelbbox.width, typebbox.width);
-          this.width = alignUp(innerwidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
-          const innerheight = Math.max(this.labelbbox.height, typebbox.height);
-          this.normalheight = innerheight + 20;
-          this.visitOrderWithinRank = 0;
-      }
-      isControl() {
-          return this.nodeLabel.control;
-      }
-      isInput() {
-          return this.nodeLabel.opcode == 'Parameter' || this.nodeLabel.opcode.endsWith('Constant');
-      }
-      isLive() {
-          return this.nodeLabel.live !== false;
-      }
-      isJavaScript() {
-          return this.nodeLabel.opcode.startsWith('JS');
-      }
-      isSimplified() {
-          if (this.isJavaScript())
-              return false;
-          const opcode = this.nodeLabel.opcode;
-          return opcode.endsWith('Phi') ||
-              opcode.startsWith('Boolean') ||
-              opcode.startsWith('Number') ||
-              opcode.startsWith('String') ||
-              opcode.startsWith('Change') ||
-              opcode.startsWith('Object') ||
-              opcode.startsWith('Reference') ||
-              opcode.startsWith('Any') ||
-              opcode.endsWith('ToNumber') ||
-              (opcode == 'AnyToBoolean') ||
-              (opcode.startsWith('Load') && opcode.length > 4) ||
-              (opcode.startsWith('Store') && opcode.length > 5);
-      }
-      isMachine() {
-          return !(this.isControl() || this.isInput() ||
-              this.isJavaScript() || this.isSimplified());
-      }
-      getTotalNodeWidth() {
-          const inputWidth = this.inputs.length * NODE_INPUT_WIDTH;
-          return Math.max(inputWidth, this.width);
-      }
-      getTitle() {
-          return this.nodeLabel.getTitle();
-      }
-      getDisplayLabel() {
-          return this.nodeLabel.getDisplayLabel();
-      }
-      getType() {
-          return this.nodeLabel.type;
-      }
-      getDisplayType() {
-          let typeString = this.nodeLabel.type;
-          if (typeString == undefined)
-              return "";
-          if (typeString.length > 24) {
-              typeString = typeString.substr(0, 25) + "...";
-          }
-          return typeString;
-      }
-      deepestInputRank() {
-          let deepestRank = 0;
-          this.inputs.forEach(function (e) {
-              if (e.isVisible() && !e.isBackEdge()) {
-                  if (e.source.rank > deepestRank) {
-                      deepestRank = e.source.rank;
-                  }
-              }
-          });
-          return deepestRank;
-      }
-      areAnyOutputsVisible() {
-          let visibleCount = 0;
-          this.outputs.forEach(function (e) { if (e.isVisible())
-              ++visibleCount; });
-          if (this.outputs.length == visibleCount)
-              return 2;
-          if (visibleCount != 0)
-              return 1;
-          return 0;
-      }
-      setOutputVisibility(v) {
-          let result = false;
-          this.outputs.forEach(function (e) {
-              e.visible = v;
-              if (v) {
-                  if (!e.target.visible) {
-                      e.target.visible = true;
-                      result = true;
-                  }
-              }
-          });
-          return result;
-      }
-      setInputVisibility(i, v) {
-          const edge = this.inputs[i];
-          edge.visible = v;
-          if (v) {
-              if (!edge.source.visible) {
-                  edge.source.visible = true;
-                  return true;
-              }
-          }
-          return false;
-      }
-      getInputApproach(index) {
-          return this.y - MINIMUM_NODE_INPUT_APPROACH -
-              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getNodeHeight(showTypes) {
-          if (showTypes) {
-              return this.normalheight + this.labelbbox.height;
-          }
-          else {
-              return this.normalheight;
-          }
-      }
-      getOutputApproach(showTypes) {
-          return this.y + this.outputApproach + this.getNodeHeight(showTypes) +
-              +DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getInputX(index) {
-          const result = this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2) +
-              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
-          return result;
-      }
-      getOutputX() {
-          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2);
-      }
-      hasBackEdges() {
-          return (this.nodeLabel.opcode == "Loop") ||
-              ((this.nodeLabel.opcode == "Phi" || this.nodeLabel.opcode == "EffectPhi" || this.nodeLabel.opcode == "InductionVariablePhi") &&
-                  this.inputs[this.inputs.length - 1].source.nodeLabel.opcode == "Loop");
-      }
-  }
-  const nodeToStr = (n) => "N" + n.id;
-
-  // Copyright 2014 the V8 project authors. All rights reserved.
-  const BEZIER_CONSTANT = 0.3;
-  class Edge {
-      constructor(target, index, source, type) {
-          this.target = target;
-          this.source = source;
-          this.index = index;
-          this.type = type;
-          this.backEdgeNumber = 0;
-          this.visible = false;
-      }
-      stringID() {
-          return this.source.id + "," + this.index + "," + this.target.id;
-      }
-      isVisible() {
-          return this.visible && this.source.visible && this.target.visible;
-      }
-      getInputHorizontalPosition(graph, showTypes) {
-          if (this.backEdgeNumber > 0) {
-              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
-          }
-          const source = this.source;
-          const target = this.target;
-          const index = this.index;
-          const inputX = target.x + target.getInputX(index);
-          const inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          if (inputApproach > outputApproach) {
-              return inputX;
-          }
-          else {
-              const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
-              return (target.x < source.x)
-                  ? (target.x + target.getTotalNodeWidth() + inputOffset)
-                  : (target.x - inputOffset);
-          }
-      }
-      generatePath(graph, showTypes) {
-          const target = this.target;
-          const source = this.source;
-          const inputX = target.x + target.getInputX(this.index);
-          const arrowheadHeight = 7;
-          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
-          const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-          let inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
-          let result;
-          if (inputY < outputY) {
-              result = `M ${outputX} ${outputY}
-                L ${outputX} ${outputApproach}
-                L ${horizontalPos} ${outputApproach}`;
-              if (horizontalPos != inputX) {
-                  result += `L ${horizontalPos} ${inputApproach}`;
-              }
-              else {
-                  if (inputApproach < outputApproach) {
-                      inputApproach = outputApproach;
-                  }
-              }
-              result += `L ${inputX} ${inputApproach}
-                 L ${inputX} ${inputY}`;
-          }
-          else {
-              const controlY = outputY + (inputY - outputY) * BEZIER_CONSTANT;
-              result = `M ${outputX} ${outputY}
-                C ${outputX} ${controlY},
-                  ${inputX} ${outputY},
-                  ${inputX} ${inputY}`;
-          }
-          return result;
-      }
-      isBackEdge() {
-          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
-      }
-  }
-  const edgeToStr = (e) => e.stringID();
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -448,26 +195,31 @@
   class NodeOrigin extends Origin {
       constructor(nodeId, phase, reducer) {
           super(phase, reducer);
-          this.identifier = () => `${this.nodeId}`;
-          this.toString = () => `#${this.nodeId} in phase '${this.phase}/${this.reducer}'`;
           this.nodeId = nodeId;
+      }
+      identifier() {
+          return `${this.nodeId}`;
+      }
+      toString() {
+          return `#${this.nodeId} in phase '${this.phase}/${this.reducer}'`;
       }
   }
   class BytecodeOrigin extends Origin {
       constructor(bytecodePosition, phase, reducer) {
           super(phase, reducer);
-          this.identifier = () => `${this.bytecodePosition}`;
-          this.toString = () => {
-              return `Bytecode line ${this.bytecodePosition} in phase '${this.phase}/${this.reducer}'`;
-          };
           this.bytecodePosition = bytecodePosition;
+      }
+      identifier() {
+          return `${this.bytecodePosition}`;
+      }
+      toString() {
+          return `Bytecode line ${this.bytecodePosition} in phase '${this.phase}/${this.reducer}'`;
       }
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class SourcePosition {
       constructor(scriptOffset, inliningId) {
-          this.toString = () => `SP:${this.inliningId}:${this.scriptOffset}`;
           this.scriptOffset = scriptOffset;
           this.inliningId = inliningId;
       }
@@ -485,14 +237,254 @@
       isValid() {
           return typeof this.scriptOffset !== undefined && typeof this.inliningId !== undefined;
       }
+      toString() {
+          return `SP:${this.inliningId}:${this.scriptOffset}`;
+      }
   }
   class BytecodePosition {
       constructor(bytecodePosition) {
-          this.toString = () => `BCP:${this.bytecodePosition}`;
           this.bytecodePosition = bytecodePosition;
       }
       isValid() {
           return typeof this.bytecodePosition !== undefined;
+      }
+      toString() {
+          return `BCP:${this.bytecodePosition}`;
+      }
+  }
+
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  class Node$1 {
+      constructor(id, displayLabel) {
+          this.id = id;
+          this.displayLabel = displayLabel;
+          this.inputs = new Array();
+          this.outputs = new Array();
+          this.visible = false;
+          this.x = 0;
+          this.y = 0;
+          this.labelBox = measureText(this.displayLabel);
+          this.visitOrderWithinRank = 0;
+      }
+      areAnyOutputsVisible() {
+          // TODO (danylo boiko) Move 0, 1, 2 logic to enum
+          let visibleCount = 0;
+          for (const edge of this.outputs) {
+              if (edge.isVisible()) {
+                  ++visibleCount;
+              }
+          }
+          if (this.outputs.length === visibleCount)
+              return 2;
+          if (visibleCount !== 0)
+              return 1;
+          return 0;
+      }
+      setOutputVisibility(visibility) {
+          let result = false;
+          for (const edge of this.outputs) {
+              edge.visible = visibility;
+              if (visibility && !edge.target.visible) {
+                  edge.target.visible = true;
+                  result = true;
+              }
+          }
+          return result;
+      }
+      setInputVisibility(edgeIdx, visibility) {
+          const edge = this.inputs[edgeIdx];
+          edge.visible = visibility;
+          if (visibility && !edge.source.visible) {
+              edge.source.visible = true;
+              return true;
+          }
+          return false;
+      }
+      identifier() {
+          return `${this.id}`;
+      }
+      toString() {
+          return `N${this.id}`;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class GraphNode extends Node$1 {
+      constructor(nodeLabel) {
+          super(nodeLabel.id, nodeLabel.getDisplayLabel());
+          this.nodeLabel = nodeLabel;
+          this.rank = MAX_RANK_SENTINEL;
+          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
+          // Every control node is a CFG node.
+          this.cfg = nodeLabel.control;
+          const typeBox = measureText(this.getDisplayType());
+          const innerWidth = Math.max(this.labelBox.width, typeBox.width);
+          this.width = alignUp(innerWidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
+          const innerHeight = Math.max(this.labelBox.height, typeBox.height);
+          this.normalHeight = innerHeight + 20;
+      }
+      isControl() {
+          return this.nodeLabel.control;
+      }
+      isInput() {
+          return this.nodeLabel.opcode === "Parameter" || this.nodeLabel.opcode.endsWith("Constant");
+      }
+      isLive() {
+          return this.nodeLabel.live !== false;
+      }
+      isJavaScript() {
+          return this.nodeLabel.opcode.startsWith("JS");
+      }
+      isSimplified() {
+          if (this.isJavaScript())
+              return false;
+          const opcode = this.nodeLabel.opcode;
+          return opcode.endsWith("Phi") ||
+              opcode.startsWith("Boolean") ||
+              opcode.startsWith("Number") ||
+              opcode.startsWith("String") ||
+              opcode.startsWith("Change") ||
+              opcode.startsWith("Object") ||
+              opcode.startsWith("Reference") ||
+              opcode.startsWith("Any") ||
+              opcode.endsWith("ToNumber") ||
+              (opcode == "AnyToBoolean") ||
+              (opcode.startsWith("Load") && opcode.length > 4) ||
+              (opcode.startsWith("Store") && opcode.length > 5);
+      }
+      isMachine() {
+          return !(this.isControl() || this.isInput() ||
+              this.isJavaScript() || this.isSimplified());
+      }
+      getTotalNodeWidth() {
+          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.width);
+      }
+      getTitle() {
+          return this.nodeLabel.getTitle();
+      }
+      getDisplayLabel() {
+          return this.nodeLabel.getDisplayLabel();
+      }
+      getType() {
+          return this.nodeLabel.type;
+      }
+      getDisplayType() {
+          const typeString = this.nodeLabel.type;
+          if (typeString == undefined)
+              return "";
+          return typeString.length > 24 ? `${typeString.slice(0, 25)}...` : typeString;
+      }
+      deepestInputRank() {
+          let deepestRank = 0;
+          for (const edge of this.inputs) {
+              if ((edge.isVisible() && !edge.isBackEdge()) && edge.source.rank > deepestRank) {
+                  deepestRank = edge.source.rank;
+              }
+          }
+          return deepestRank;
+      }
+      getInputApproach(index) {
+          return this.y - MINIMUM_NODE_INPUT_APPROACH -
+              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      getNodeHeight(showTypes) {
+          if (showTypes) {
+              return this.normalHeight + this.labelBox.height;
+          }
+          return this.normalHeight;
+      }
+      getOutputApproach(showTypes) {
+          return this.y + this.outputApproach + this.getNodeHeight(showTypes) +
+              +DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      getInputX(index) {
+          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2) +
+              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
+      }
+      getOutputX() {
+          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2);
+      }
+      hasBackEdges() {
+          return (this.nodeLabel.opcode === "Loop") ||
+              ((this.nodeLabel.opcode === "Phi" || this.nodeLabel.opcode === "EffectPhi" ||
+                  this.nodeLabel.opcode === "InductionVariablePhi") &&
+                  this.inputs[this.inputs.length - 1].source.nodeLabel.opcode === "Loop");
+      }
+  }
+
+  // Copyright 2014 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class Edge {
+      constructor(target, source) {
+          this.target = target;
+          this.source = source;
+          this.backEdgeNumber = 0;
+          this.visible = false;
+      }
+      isVisible() {
+          return this.visible && this.source.visible && this.target.visible;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class GraphEdge extends Edge {
+      constructor(target, index, source, type) {
+          super(target, source);
+          this.index = index;
+          this.type = type;
+      }
+      getInputHorizontalPosition(graph, showTypes) {
+          if (this.backEdgeNumber > 0) {
+              return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
+          }
+          const source = this.source;
+          const target = this.target;
+          const index = this.index;
+          const inputX = target.x + target.getInputX(index);
+          const inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          if (inputApproach > outputApproach) {
+              return inputX;
+          }
+          const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
+          return target.x < source.x
+              ? target.x + target.getTotalNodeWidth() + inputOffset
+              : target.x - inputOffset;
+      }
+      generatePath(graph, showTypes) {
+          const target = this.target;
+          const source = this.source;
+          const inputX = target.x + target.getInputX(this.index);
+          const arrowheadHeight = 7;
+          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
+          const outputX = source.x + source.getOutputX();
+          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+          let inputApproach = target.getInputApproach(this.index);
+          const outputApproach = source.getOutputApproach(showTypes);
+          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
+          let path;
+          if (inputY < outputY) {
+              path = `M ${outputX} ${outputY}\nL ${outputX} ${outputApproach}\nL ${horizontalPos} ${outputApproach}`;
+              if (horizontalPos !== inputX) {
+                  path += `L ${horizontalPos} ${inputApproach}`;
+              }
+              else if (inputApproach < outputApproach) {
+                  inputApproach = outputApproach;
+              }
+              path += `L ${inputX} ${inputApproach}\nL ${inputX} ${inputY}`;
+          }
+          else {
+              const controlY = outputY + (inputY - outputY) * BEZIER_CONSTANT;
+              path = `M ${outputX} ${outputY}\nC ${outputX} ${controlY},\n${inputX} ${outputY},\n${inputX} ${inputY}`;
+          }
+          return path;
+      }
+      isBackEdge() {
+          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
+      }
+      toString() {
+          return `${this.source.id},${this.index},${this.target.id}`;
       }
   }
 
@@ -506,6 +498,7 @@
           this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
       }
       parseDataFromJSON(dataJson, nodeLabelMap) {
+          this.data = new GraphData();
           this.nodeIdToNodeMap = this.parseNodesFromJSON(dataJson.nodes, nodeLabelMap);
           this.parseEdgesFromJSON(dataJson.edges);
       }
@@ -536,7 +529,7 @@
                   }
                   nodeLabelMap[label.id] = label;
               }
-              const newNode = new GNode(label);
+              const newNode = new GraphNode(label);
               this.data.nodes.push(newNode);
               nodeIdToNodeMap[newNode.id] = newNode;
           }
@@ -546,7 +539,7 @@
           for (const edge of edgesJSON) {
               const target = this.nodeIdToNodeMap[edge.target];
               const source = this.nodeIdToNodeMap[edge.source];
-              const newEdge = new Edge(target, edge.index, source, edge.type);
+              const newEdge = new GraphEdge(target, edge.index, source, edge.type);
               this.data.edges.push(newEdge);
               target.inputs.push(newEdge);
               source.outputs.push(newEdge);
@@ -900,6 +893,111 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class Source {
+      constructor(sourceName, functionName, sourceText, sourceId, backwardsCompatibility, sourcePositions, startPosition, endPosition) {
+          this.sourceName = sourceName;
+          this.functionName = functionName;
+          this.sourceText = sourceText;
+          this.sourceId = sourceId;
+          this.backwardsCompatibility = backwardsCompatibility;
+          this.sourcePositions = sourcePositions ?? new Array();
+          this.startPosition = startPosition;
+          this.endPosition = endPosition;
+      }
+      toString() {
+          return `${this.sourceName}:${this.functionName}`;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraphNode extends Node$1 {
+      constructor(id, title, block, properties) {
+          super(id);
+          this.title = title;
+          this.block = block;
+          this.properties = properties;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraphEdge extends Edge {
+      constructor(target, source) {
+          super(target, source);
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class TurboshaftGraphBlock {
+      constructor(id, type, deferred, predecessors) {
+          this.id = id;
+          this.type = type;
+          this.deferred = deferred;
+          this.predecessors = predecessors ?? new Array();
+          this.nodes = new Array();
+      }
+  }
+  var TurboshaftGraphBlockType;
+  (function (TurboshaftGraphBlockType) {
+      TurboshaftGraphBlockType["Loop"] = "LOOP";
+      TurboshaftGraphBlockType["Merge"] = "MERGE";
+      TurboshaftGraphBlockType["Block"] = "BLOCK";
+  })(TurboshaftGraphBlockType || (TurboshaftGraphBlockType = {}));
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraphPhase extends Phase {
+      constructor(name, highestBlockId, data, nodeIdToNodeMap, blockIdToBlockMap) {
+          super(name, PhaseType.TurboshaftGraph);
+          this.highestBlockId = highestBlockId;
+          this.data = data ?? new TurboshaftGraphData();
+          this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
+          this.blockIdToBlockMap = blockIdToBlockMap ?? new Array();
+      }
+      parseDataFromJSON(dataJson) {
+          this.data = new TurboshaftGraphData();
+          this.parseBlocksFromJSON(dataJson.blocks);
+          this.parseNodesFromJSON(dataJson.nodes);
+          this.parseEdgesFromJSON(dataJson.edges);
+      }
+      parseBlocksFromJSON(blocksJson) {
+          for (const blockJson of blocksJson) {
+              const block = new TurboshaftGraphBlock(blockJson.id, blockJson.type, blockJson.deferred, blockJson.predecessors);
+              this.data.blocks.push(block);
+              this.blockIdToBlockMap[block.id] = block;
+          }
+      }
+      parseNodesFromJSON(nodesJson) {
+          for (const nodeJson of nodesJson) {
+              const block = this.blockIdToBlockMap[nodeJson.block_id];
+              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.properties);
+              block.nodes.push(node);
+              this.data.nodes.push(node);
+              this.nodeIdToNodeMap[node.id] = node;
+          }
+      }
+      parseEdgesFromJSON(edgesJson) {
+          for (const edgeJson of edgesJson) {
+              const target = this.nodeIdToNodeMap[edgeJson.target];
+              const source = this.nodeIdToNodeMap[edgeJson.source];
+              const edge = new TurboshaftGraphEdge(target, source);
+              this.data.edges.push(edge);
+              target.inputs.push(edge);
+              source.outputs.push(edge);
+          }
+      }
+  }
+  class TurboshaftGraphData {
+      constructor(nodes, edges, blocks) {
+          this.nodes = nodes ?? new Array();
+          this.edges = edges ?? new Array();
+          this.blocks = blocks ?? new Array();
+      }
+  }
+
   // Copyright 2018 the V8 project authors. All rights reserved.
   function sourcePositionLe(a, b) {
       if (a.inliningId == b.inliningId) {
@@ -946,6 +1044,14 @@
           this.disassemblyPhase = undefined;
           // Maps line numbers to source positions
           this.linePositionMap = new Map();
+      }
+      getMainFunction(jsonObj) {
+          const fncJson = jsonObj.function;
+          // Backwards compatibility.
+          if (typeof fncJson === 'string') {
+              return new Source(null, null, jsonObj.source, -1, true, new Array(), jsonObj.sourcePosition, jsonObj.sourcePosition + jsonObj.source.length);
+          }
+          return new Source(fncJson.sourceName, fncJson.functionName, fncJson.sourceText, fncJson.sourceId, false, new Array(), fncJson.startPosition, fncJson.endPosition);
       }
       setSources(sources, mainBackup) {
           if (sources) {
@@ -1027,9 +1133,6 @@
               sourcePositionArray.push(sp);
           }
           return sourcePositionArray;
-      }
-      forEachSource(f) {
-          this.sources.forEach(f);
       }
       translateToSourceId(sourceId, location) {
           for (const position of this.getInlineStack(location)) {
@@ -1182,7 +1285,11 @@
                       this.phases.push(graphPhase);
                       break;
                   case PhaseType.TurboshaftGraph:
-                      // Allow to avoid exception and view turboshaft schedule phase
+                      const castedTurboshaftGraph = genericPhase;
+                      const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, 0);
+                      turboshaftGraphPhase.parseDataFromJSON(castedTurboshaftGraph.data);
+                      this.phaseNames.set(turboshaftGraphPhase.name, this.phases.length);
+                      this.phases.push(turboshaftGraphPhase);
                       break;
                   default:
                       throw "Unsupported phase type";
@@ -10206,7 +10313,6 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
-  const DEFAULT_NODE_ROW_SEPARATION = 150;
   function newGraphOccupation(graph) {
       const isSlotFilled = [];
       let nodeOccupation = [];
@@ -10586,6 +10692,7 @@
       });
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class Graph {
       constructor(graphPhase) {
           this.nodeMap = [];
@@ -10596,12 +10703,12 @@
           this.width = 1;
           this.height = 1;
           graphPhase.data.nodes.forEach((jsonNode) => {
-              this.nodeMap[jsonNode.id] = new GNode(jsonNode.nodeLabel);
+              this.nodeMap[jsonNode.id] = new GraphNode(jsonNode.nodeLabel);
           });
           graphPhase.data.edges.forEach((e) => {
               const t = this.nodeMap[e.target.id];
               const s = this.nodeMap[e.source.id];
-              const newEdge = new Edge(t, e.index, s, e.type);
+              const newEdge = new GraphEdge(t, e.index, s, e.type);
               t.inputs.push(newEdge);
               s.outputs.push(newEdge);
               if (e.type == 'control') {
@@ -10670,15 +10777,6 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
-  function nodeToStringKey(n) {
-      return "" + n.id;
-  }
-  function nodeOriginToStringKey(n) {
-      if (n.nodeLabel && n.nodeLabel.origin) {
-          return "" + n.nodeLabel.origin.nodeId;
-      }
-      return undefined;
-  }
   class GraphView extends PhaseView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer);
@@ -10733,7 +10831,7 @@
                   if (!view.graph)
                       return;
                   const selection = view.graph.nodes(n => {
-                      return locations.has(nodeToStringKey(n))
+                      return locations.has(n.identifier())
                           && (!view.state.hideDead || n.isLive());
                   });
                   view.state.selection.select(selection, selected);
@@ -10756,7 +10854,7 @@
                   view.updateGraphVisibility();
               }
           };
-          view.state.selection = new MySelection(nodeToStringKey, nodeOriginToStringKey);
+          view.state.selection = new MySelection(n => n.identifier(), n => n.nodeLabel?.origin?.identifier());
           const defs = svg.append('svg:defs');
           defs.append('svg:marker')
               .attr('id', 'end-arrow')
@@ -10898,7 +10996,7 @@
           this.showControlAction(this);
           if (selection != undefined) {
               for (const n of this.graph.nodes()) {
-                  n.visible = n.visible || selection.has(nodeToStringKey(n));
+                  n.visible = n.visible || selection.has(n.identifier());
               }
           }
           this.graph.forEachEdge(e => e.visible = e.source.visible && e.target.visible);
@@ -11282,14 +11380,15 @@
           const filteredEdges = [...graph.filteredEdges(function (e) {
                   return e.source.visible && e.target.visible;
               })];
-          const selEdges = view.visibleEdges.selectAll("path").data(filteredEdges, edgeToStr);
+          const selEdges = view.visibleEdges.selectAll("path")
+              .data(filteredEdges, e => e.toString());
           // remove old links
           selEdges.exit().remove();
           // add new paths
           const newEdges = selEdges.enter()
               .append('path');
           newEdges.style('marker-end', 'url(#end-arrow)')
-              .attr("id", function (edge) { return "e," + edge.stringID(); })
+              .attr("id", function (edge) { return "e," + edge.toString(); })
               .on("click", function (edge) {
               event.stopPropagation();
               if (!event.shiftKey) {
@@ -11316,7 +11415,7 @@
           // select existing nodes
           const filteredNodes = [...graph.nodes(n => n.visible)];
           const allNodes = view.visibleNodes.selectAll("g");
-          const selNodes = allNodes.data(filteredNodes, nodeToStr);
+          const selNodes = allNodes.data(filteredNodes, n => n.toString());
           // remove old nodes
           selNodes.exit().remove();
           // add new nodes
@@ -11338,9 +11437,11 @@
               adjOutputEdges.attr('relToHover', "output");
               const adjInputNodes = adjInputEdges.data().map(e => e.source);
               const visibleNodes = view.visibleNodes.selectAll("g");
-              visibleNodes.data(adjInputNodes, nodeToStr).attr('relToHover', "input");
+              visibleNodes.data(adjInputNodes, n => n.toString())
+                  .attr('relToHover', "input");
               const adjOutputNodes = adjOutputEdges.data().map(e => e.target);
-              visibleNodes.data(adjOutputNodes, nodeToStr).attr('relToHover', "output");
+              visibleNodes.data(adjOutputNodes, n => n.toString())
+                  .attr('relToHover', "output");
               view.updateGraphVisibility();
           })
               .on('mouseleave', function (node) {
@@ -11349,7 +11450,7 @@
               adjEdges.attr('relToHover', "none");
               const adjNodes = adjEdges.data().map(e => e.target).concat(adjEdges.data().map(e => e.source));
               const visibleNodes = view.visibleNodes.selectAll("g");
-              visibleNodes.data(adjNodes, nodeToStr).attr('relToHover', "none");
+              visibleNodes.data(adjNodes, n => n.toString()).attr('relToHover', "none");
               view.updateGraphVisibility();
           })
               .on("click", d => {
@@ -11379,7 +11480,7 @@
                       .classed("bubbleStyle", function (c) {
                       return !d.inputs[i].isVisible();
                   })
-                      .attr("id", "ib," + d.inputs[i].stringID())
+                      .attr("id", `ib,${d.inputs[i]}`)
                       .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
                       .attr("transform", function (d) {
                       return "translate(" + x + "," + y + ")";
@@ -11442,7 +11543,7 @@
                       .classed("type", true)
                       .attr("text-anchor", "right")
                       .attr("dx", 5)
-                      .attr("dy", d.labelbbox.height + 5)
+                      .attr("dy", d.labelBox.height + 5)
                       .append('tspan')
                       .text(function (l) {
                       return d.getDisplayType();
@@ -13285,21 +13386,7 @@
       constructor(container) {
           this.container = container;
           this.nextTabId = 0;
-          this.mkTabBar(container);
-      }
-      mkTabBar(container) {
-          container.classList.add("nav-tabs-container");
-          this.tabBar = document.createElement("ul");
-          this.tabBar.id = `tab-bar-${container.id}`;
-          this.tabBar.className = "nav-tabs";
-          this.tabBar.ondrop = this.tabBarOnDrop.bind(this);
-          this.tabBar.ondragover = this.tabBarOnDragover.bind(this);
-          this.tabBar.onclick = this.tabBarOnClick.bind(this);
-          const defaultDiv = document.createElement("div");
-          defaultDiv.className = "tab-content tab-default";
-          defaultDiv.id = `tab-content-${container.id}-default`;
-          container.insertBefore(defaultDiv, container.firstChild);
-          container.insertBefore(this.tabBar, container.firstChild);
+          this.makeTabBar(container);
       }
       activateTab(tab) {
           if (typeof tab.dataset.divid !== "string")
@@ -13322,18 +13409,6 @@
               tab.parentNode.removeChild(tab);
           }
       }
-      showTab(li, show = true) {
-          const tabDiv = document.getElementById(li.dataset.divid);
-          tabDiv.style.display = show ? "block" : "none";
-      }
-      addTab(caption) {
-          const newTab = document.createElement("li");
-          newTab.innerHTML = caption;
-          newTab.id = `tab-header-${this.container.id}-${this.nextTabId++}`;
-          const lastTab = this.tabBar.querySelector("li.last-tab");
-          this.tabBar.insertBefore(newTab, lastTab);
-          return newTab;
-      }
       addTabAndContent(caption) {
           const contentDiv = document.createElement("div");
           contentDiv.className = "tab-content tab-default";
@@ -13347,6 +13422,32 @@
           const lastTab = this.tabBar.querySelector("li.last-tab");
           this.tabBar.insertBefore(newTab, lastTab);
           return [newTab, contentDiv];
+      }
+      addTab(caption) {
+          const newTab = document.createElement("li");
+          newTab.innerHTML = caption;
+          newTab.id = `tab-header-${this.container.id}-${this.nextTabId++}`;
+          const lastTab = this.tabBar.querySelector("li.last-tab");
+          this.tabBar.insertBefore(newTab, lastTab);
+          return newTab;
+      }
+      makeTabBar(container) {
+          container.classList.add("nav-tabs-container");
+          this.tabBar = document.createElement("ul");
+          this.tabBar.id = `tab-bar-${container.id}`;
+          this.tabBar.className = "nav-tabs";
+          this.tabBar.ondrop = this.tabBarOnDrop.bind(this);
+          this.tabBar.ondragover = this.tabBarOnDragover.bind(this);
+          this.tabBar.onclick = this.tabBarOnClick.bind(this);
+          const defaultDiv = document.createElement("div");
+          defaultDiv.className = "tab-content tab-default";
+          defaultDiv.id = `tab-content-${container.id}-default`;
+          container.insertBefore(defaultDiv, container.firstChild);
+          container.insertBefore(this.tabBar, container.firstChild);
+      }
+      showTab(li, show = true) {
+          const tabDiv = document.getElementById(li.dataset.divid);
+          tabDiv.style.display = show ? "block" : "none";
       }
       moveTabDiv(tab) {
           const tabDiv = document.getElementById(tab.dataset.divid);
@@ -13364,7 +13465,8 @@
               this.moveTabDiv(tab);
           }
           const dropTab = e.target.parentNode == this.tabBar
-              ? e.target : this.tabBar.querySelector("li.last-tab");
+              ? e.target
+              : this.tabBar.querySelector("li.last-tab");
           this.tabBar.insertBefore(tab, dropTab);
           this.activateTab(tab);
       }
@@ -13753,86 +13855,66 @@
 
   // Copyright 2017 the V8 project authors. All rights reserved.
   window.onload = function () {
-      let multiview = null;
-      let disassemblyView = null;
-      let sourceViews = [];
-      let selectionBroker = null;
-      let sourceResolver = null;
-      const resizer = new Resizer(panesUpdatedCallback, 75, 75);
-      const sourceTabsContainer = document.getElementById(SOURCE_PANE_ID);
-      const sourceTabs = new Tabs(sourceTabsContainer);
-      sourceTabs.addTab("&#x2b;").classList.add("last-tab", "persistent-tab");
+      let multiview;
+      let disassemblyView;
+      let sourceViews = new Array();
+      let selectionBroker;
+      let sourceResolver;
+      const resizer = new Resizer(() => multiview?.onresize(), 75, 75);
       const disassemblyTabsContainer = document.getElementById(GENERATED_PANE_ID);
       const disassemblyTabs = new Tabs(disassemblyTabsContainer);
       disassemblyTabs.addTab("&#x2b;").classList.add("last-tab", "persistent-tab");
+      const sourceTabsContainer = document.getElementById(SOURCE_PANE_ID);
+      const sourceTabs = new Tabs(sourceTabsContainer);
+      sourceTabs.addTab("&#x2b;").classList.add("last-tab", "persistent-tab");
       const [infoTab, infoContainer] = sourceTabs.addTabAndContent("Info");
       infoTab.classList.add("persistent-tab");
       infoContainer.classList.add("viewpane", "scrollable");
       const infoView = new InfoView(infoContainer);
       infoView.show();
       sourceTabs.activateTab(infoTab);
-      function panesUpdatedCallback() {
-          if (multiview)
-              multiview.onresize();
-      }
       function loadFile(txtRes) {
           sourceTabs.clearTabsAndContent();
           disassemblyTabs.clearTabsAndContent();
           // If the JSON isn't properly terminated, assume compiler crashed and
           // add best-guess empty termination
-          if (txtRes[txtRes.length - 2] == ',') {
+          if (txtRes[txtRes.length - 2] === ",") {
               txtRes += '{"name":"disassembly","type":"disassembly","data":""}]}';
           }
           try {
               sourceViews.forEach(sv => sv.hide());
-              if (multiview)
-                  multiview.hide();
+              multiview?.hide();
               multiview = null;
-              document.getElementById("ranges").innerHTML = '';
-              document.getElementById('ranges').style.visibility = "hidden";
-              document.getElementById('show-hide-ranges').style.visibility = "hidden";
-              if (disassemblyView)
-                  disassemblyView.hide();
-              sourceViews = [];
+              document.getElementById("ranges").innerHTML = "";
+              document.getElementById("ranges").style.visibility = "hidden";
+              document.getElementById("show-hide-ranges").style.visibility = "hidden";
+              disassemblyView?.hide();
+              sourceViews = new Array();
               sourceResolver = new SourceResolver();
               selectionBroker = new SelectionBroker(sourceResolver);
               const jsonObj = JSON.parse(txtRes);
-              let fnc = null;
-              // Backwards compatibility.
-              if (typeof jsonObj.function == 'string') {
-                  fnc = {
-                      functionName: fnc,
-                      sourceId: -1,
-                      startPosition: jsonObj.sourcePosition,
-                      endPosition: jsonObj.sourcePosition + jsonObj.source.length,
-                      sourceText: jsonObj.source,
-                      backwardsCompatibility: true
-                  };
-              }
-              else {
-                  fnc = Object.assign(jsonObj.function, { backwardsCompatibility: false });
-              }
+              const mainFunction = sourceResolver.getMainFunction(jsonObj);
               sourceResolver.setInlinings(jsonObj.inlinings);
               sourceResolver.setSourceLineToBytecodePosition(jsonObj.sourceLineToBytecodePosition);
-              sourceResolver.setSources(jsonObj.sources, fnc);
+              sourceResolver.setSources(jsonObj.sources, mainFunction);
               sourceResolver.setNodePositionMap(jsonObj.nodePositions);
               sourceResolver.parsePhases(jsonObj.phases);
               const [sourceTab, sourceContainer] = sourceTabs.addTabAndContent("Source");
               sourceContainer.classList.add("viewpane", "scrollable");
               sourceTabs.activateTab(sourceTab);
-              const sourceView = new CodeView(sourceContainer, selectionBroker, sourceResolver, fnc, CodeMode.MAIN_SOURCE);
+              const sourceView = new CodeView(sourceContainer, selectionBroker, sourceResolver, mainFunction, CodeMode.MAIN_SOURCE);
               sourceView.show();
               sourceViews.push(sourceView);
-              sourceResolver.forEachSource(source => {
+              for (const source of sourceResolver.sources) {
                   const sourceView = new CodeView(sourceContainer, selectionBroker, sourceResolver, source, CodeMode.INLINED_SOURCE);
                   sourceView.show();
                   sourceViews.push(sourceView);
-              });
+              }
               const [disassemblyTab, disassemblyContainer] = disassemblyTabs.addTabAndContent("Disassembly");
               disassemblyContainer.classList.add("viewpane", "scrollable");
               disassemblyTabs.activateTab(disassemblyTab);
               disassemblyView = new DisassemblyView(disassemblyContainer, selectionBroker);
-              disassemblyView.initializeCode(fnc.sourceText);
+              disassemblyView.initializeCode(mainFunction.sourceText);
               if (sourceResolver.disassemblyPhase) {
                   disassemblyView.initializePerfProfile(jsonObj.eventCounts);
                   disassemblyView.showContent(sourceResolver.disassemblyPhase.data);
@@ -13843,7 +13925,7 @@
           }
           catch (err) {
               if (window.confirm("Error: Exception during load of TurboFan JSON file:\n" +
-                  "error: " + err.message + "\nDo you want to clear session storage?")) {
+                  `error: ${err.message} \nDo you want to clear session storage?`)) {
                   window.sessionStorage.clear();
               }
               return;
@@ -13860,14 +13942,14 @@
           document.getElementById("upload-helper").addEventListener("change", function () {
               const uploadFile = this.files && this.files[0];
               if (uploadFile) {
-                  const filereader = new FileReader();
-                  filereader.onload = () => {
-                      const txtRes = filereader.result;
-                      if (typeof txtRes == 'string') {
+                  const fileReader = new FileReader();
+                  fileReader.onload = () => {
+                      const txtRes = fileReader.result;
+                      if (typeof txtRes === "string") {
                           loadFile(txtRes);
                       }
                   };
-                  filereader.readAsText(uploadFile);
+                  fileReader.readAsText(uploadFile);
               }
           });
           window.addEventListener("keydown", (e) => {
