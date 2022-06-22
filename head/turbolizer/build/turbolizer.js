@@ -12,6 +12,7 @@
   const MINIMUM_EDGE_SEPARATION = 20;
   const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
   const DEFAULT_NODE_ROW_SEPARATION = 150;
+  const MULTIVIEW_ID = "multiview";
   const SOURCE_PANE_ID = "left";
   const SOURCE_COLLAPSE_ID = "source-shrink";
   const SOURCE_EXPAND_ID = "source-expand";
@@ -104,6 +105,15 @@
           el.innerText = content;
       return el;
   }
+  function storageGetItem(key, defaultValue, parse = true) {
+      let value = window.sessionStorage.getItem(key);
+      if (parse)
+          value = JSON.parse(value);
+      return value === null ? defaultValue : value;
+  }
+  function storageSetItem(key, value) {
+      window.sessionStorage.setItem(key, value);
+  }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -145,23 +155,23 @@
       equals(that) {
           if (!that)
               return false;
-          if (this.id != that.id)
+          if (this.id !== that.id)
               return false;
-          if (this.label != that.label)
+          if (this.label !== that.label)
               return false;
-          if (this.title != that.title)
+          if (this.title !== that.title)
               return false;
-          if (this.live != that.live)
+          if (this.live !== that.live)
               return false;
-          if (this.properties != that.properties)
+          if (this.properties !== that.properties)
               return false;
-          if (this.opcode != that.opcode)
+          if (this.opcode !== that.opcode)
               return false;
-          if (this.control != that.control)
+          if (this.control !== that.control)
               return false;
-          if (this.opinfo != that.opinfo)
+          if (this.opinfo !== that.opinfo)
               return false;
-          return this.type == that.type;
+          return this.type === that.type;
       }
       getTitle() {
           const propsString = this.properties === "" ? "no properties" : `[${this.properties}]`;
@@ -348,7 +358,7 @@
               opcode.startsWith("Reference") ||
               opcode.startsWith("Any") ||
               opcode.endsWith("ToNumber") ||
-              (opcode == "AnyToBoolean") ||
+              (opcode === "AnyToBoolean") ||
               (opcode.startsWith("Load") && opcode.length > 4) ||
               (opcode.startsWith("Store") && opcode.length > 5);
       }
@@ -410,6 +420,15 @@
                   this.nodeLabel.opcode === "InductionVariablePhi") &&
                   this.inputs[this.inputs.length - 1].source.nodeLabel.opcode === "Loop");
       }
+      compare(other) {
+          if (this.visitOrderWithinRank < other.visitOrderWithinRank) {
+              return -1;
+          }
+          else if (this.visitOrderWithinRank == other.visitOrderWithinRank) {
+              return 0;
+          }
+          return 1;
+      }
   }
 
   // Copyright 2014 the V8 project authors. All rights reserved.
@@ -435,7 +454,7 @@
           this.type = type;
       }
       getInputHorizontalPosition(graph, showTypes) {
-          if (this.backEdgeNumber > 0) {
+          if (graph.graphPhase.rendered && this.backEdgeNumber > 0) {
               return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
           }
           const source = this.source;
@@ -494,8 +513,10 @@
           super(name, PhaseType.Graph);
           this.highestNodeId = highestNodeId;
           this.data = data ?? new GraphData();
+          this.stateType = GraphStateType.NeedToFullRebuild;
           this.nodeLabelMap = nodeLabelMap ?? new Array();
           this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
+          this.rendered = false;
       }
       parseDataFromJSON(dataJson, nodeLabelMap) {
           this.data = new GraphData();
@@ -555,6 +576,11 @@
           this.edges = edges ?? new Array();
       }
   }
+  var GraphStateType;
+  (function (GraphStateType) {
+      GraphStateType[GraphStateType["NeedToFullRebuild"] = 0] = "NeedToFullRebuild";
+      GraphStateType[GraphStateType["Cached"] = 1] = "Cached";
+  })(GraphStateType || (GraphStateType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class DisassemblyPhase extends Phase {
@@ -10312,54 +10338,456 @@
     return zoom;
   }
 
-  // Copyright 2015 the V8 project authors. All rights reserved.
-  function newGraphOccupation(graph) {
-      const isSlotFilled = [];
-      let nodeOccupation = [];
-      function slotToIndex(slot) {
-          if (slot >= 0) {
-              return slot * 2;
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class Graph {
+      constructor(graphPhase) {
+          this.graphPhase = graphPhase;
+          this.nodeMap = graphPhase.nodeIdToNodeMap;
+          this.minGraphX = 0;
+          this.maxGraphX = 1;
+          this.minGraphY = 0;
+          this.maxGraphY = 1;
+          this.width = 1;
+          this.height = 1;
+      }
+      *nodes(func = (n) => true) {
+          for (const node of this.nodeMap) {
+              if (!node || !func(node))
+                  continue;
+              yield node;
+          }
+      }
+      *filteredEdges(func) {
+          for (const node of this.nodes()) {
+              for (const edge of node.inputs) {
+                  if (func(edge))
+                      yield edge;
+              }
+          }
+      }
+      forEachEdge(func) {
+          for (const node of this.nodeMap) {
+              if (!node)
+                  continue;
+              for (const edge of node.inputs) {
+                  func(edge);
+              }
+          }
+      }
+      redetermineGraphBoundingBox(showTypes) {
+          this.minGraphX = 0;
+          this.maxGraphNodeX = 1;
+          this.maxGraphX = undefined; // see below
+          this.minGraphY = 0;
+          this.maxGraphY = 1;
+          for (const node of this.nodes()) {
+              if (!node.visible)
+                  continue;
+              this.minGraphX = Math.min(this.minGraphX, node.x);
+              this.maxGraphNodeX = Math.max(this.maxGraphNodeX, node.x + node.getTotalNodeWidth());
+              this.minGraphY = Math.min(this.minGraphY, node.y - NODE_INPUT_WIDTH);
+              this.maxGraphY = Math.max(this.maxGraphY, node.y + node.getNodeHeight(showTypes) + NODE_INPUT_WIDTH);
+          }
+          this.maxGraphX = this.maxGraphNodeX + this.maxBackEdgeNumber
+              * MINIMUM_EDGE_SEPARATION;
+          this.width = this.maxGraphX - this.minGraphX;
+          this.height = this.maxGraphY - this.minGraphY;
+          return [
+              [this.minGraphX - this.width / 2, this.minGraphY - this.height / 2],
+              [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
+          ];
+      }
+      makeEdgesVisible() {
+          if (this.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
+              this.forEachEdge(edge => edge.visible = edge.source.visible && edge.target.visible);
           }
           else {
-              return slot * 2 + 1;
+              this.forEachEdge(edge => edge.visible = edge.visible || (this.isRendered() &&
+                  edge.type === "control" && edge.source.visible && edge.target.visible));
           }
       }
-      function positionToSlot(pos) {
-          return Math.floor(pos / NODE_INPUT_WIDTH);
+      isRendered() {
+          return this.graphPhase.rendered;
       }
-      function slotToLeftPosition(slot) {
-          return slot * NODE_INPUT_WIDTH;
+  }
+
+  // Copyright 2015 the V8 project authors. All rights reserved.
+  class GraphLayout {
+      constructor(graph) {
+          this.graph = graph;
+          this.graphOccupation = new GraphOccupation(graph);
+          this.maxRank = 0;
+          this.visitOrderWithinRank = 0;
       }
-      function findSpace(pos, width, direction) {
+      rebuild(showTypes) {
+          switch (this.graph.graphPhase.stateType) {
+              case GraphStateType.NeedToFullRebuild:
+                  this.fullRebuild(showTypes);
+                  break;
+              case GraphStateType.Cached:
+                  this.cachedRebuild();
+                  break;
+              default:
+                  throw "Unsupported graph state type";
+          }
+          this.graph.graphPhase.rendered = true;
+      }
+      fullRebuild(showTypes) {
+          this.startTime = performance.now();
+          this.maxRank = 0;
+          this.visitOrderWithinRank = 0;
+          const [startNodes, endNodes] = this.initNodes();
+          this.initWorkList(startNodes);
+          let visited = new Array();
+          startNodes.forEach((sn) => this.dfsFindRankLate(visited, sn));
+          visited = new Array();
+          startNodes.forEach((sn) => this.dfsRankOrder(visited, sn));
+          endNodes.forEach((node) => node.rank = this.maxRank + 1);
+          const rankSets = this.getRankSets(showTypes);
+          this.placeNodes(rankSets, showTypes);
+          this.calculateBackEdgeNumbers();
+          this.graph.graphPhase.stateType = GraphStateType.Cached;
+      }
+      cachedRebuild() {
+          this.calculateBackEdgeNumbers();
+      }
+      initNodes() {
+          // First determine the set of nodes that have no outputs. Those are the
+          // basis for bottom-up DFS to determine rank and node placement.
+          const endNodesHasNoOutputs = new Array();
+          const startNodesHasNoInputs = new Array();
+          for (const node of this.graph.nodes()) {
+              endNodesHasNoOutputs[node.id] = true;
+              startNodesHasNoInputs[node.id] = true;
+          }
+          this.graph.forEachEdge((edge) => {
+              endNodesHasNoOutputs[edge.source.id] = false;
+              startNodesHasNoInputs[edge.target.id] = false;
+          });
+          // Finialize the list of start and end nodes.
+          const endNodes = new Array();
+          const startNodes = new Array();
+          const visited = new Array();
+          for (const node of this.graph.nodes()) {
+              if (endNodesHasNoOutputs[node.id]) {
+                  endNodes.push(node);
+              }
+              if (startNodesHasNoInputs[node.id]) {
+                  startNodes.push(node);
+              }
+              visited[node.id] = false;
+              node.rank = 0;
+              node.visitOrderWithinRank = 0;
+              node.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
+          }
+          this.trace("layoutGraph init");
+          return [startNodes, endNodes];
+      }
+      initWorkList(startNodes) {
+          const workList = startNodes.slice();
+          while (workList.length != 0) {
+              const node = workList.pop();
+              let changed = false;
+              if (node.rank == MAX_RANK_SENTINEL) {
+                  node.rank = 1;
+                  changed = true;
+              }
+              let begin = 0;
+              let end = node.inputs.length;
+              if (node.nodeLabel.opcode === "Phi" ||
+                  node.nodeLabel.opcode === "EffectPhi" ||
+                  node.nodeLabel.opcode === "InductionVariablePhi") {
+                  // Keep with merge or loop node
+                  begin = node.inputs.length - 1;
+              }
+              else if (node.hasBackEdges()) {
+                  end = 1;
+              }
+              for (let l = begin; l < end; ++l) {
+                  const input = node.inputs[l].source;
+                  if (input.visible && input.rank >= node.rank) {
+                      node.rank = input.rank + 1;
+                      changed = true;
+                  }
+              }
+              if (changed) {
+                  const hasBackEdges = node.hasBackEdges();
+                  for (let l = node.outputs.length - 1; l >= 0; --l) {
+                      if (hasBackEdges && (l != 0)) {
+                          workList.unshift(node.outputs[l].target);
+                      }
+                      else {
+                          workList.push(node.outputs[l].target);
+                      }
+                  }
+              }
+              this.maxRank = Math.max(node.rank, this.maxRank);
+          }
+          this.trace("layoutGraph work list");
+      }
+      dfsFindRankLate(visited, node) {
+          if (visited[node.id])
+              return;
+          visited[node.id] = true;
+          const originalRank = node.rank;
+          let newRank = node.rank;
+          let isFirstInput = true;
+          for (const outputEdge of node.outputs) {
+              const output = outputEdge.target;
+              this.dfsFindRankLate(visited, output);
+              const outputRank = output.rank;
+              if (output.visible && (isFirstInput || outputRank <= newRank) &&
+                  (outputRank > originalRank)) {
+                  newRank = outputRank - 1;
+              }
+              isFirstInput = false;
+          }
+          if (node.nodeLabel.opcode !== "Start" && node.nodeLabel.opcode !== "Phi"
+              && node.nodeLabel.opcode !== "EffectPhi"
+              && node.nodeLabel.opcode !== "InductionVariablePhi") {
+              node.rank = newRank;
+          }
+      }
+      dfsRankOrder(visited, node) {
+          if (visited[node.id])
+              return;
+          visited[node.id] = true;
+          for (const outputEdge of node.outputs) {
+              if (outputEdge.isVisible()) {
+                  const output = outputEdge.target;
+                  this.dfsRankOrder(visited, output);
+              }
+          }
+          if (node.visitOrderWithinRank == 0) {
+              node.visitOrderWithinRank = ++this.visitOrderWithinRank;
+          }
+      }
+      getRankSets(showTypes) {
+          const rankSets = new Array();
+          for (const node of this.graph.nodes()) {
+              node.y = node.rank * (DEFAULT_NODE_ROW_SEPARATION +
+                  node.getNodeHeight(showTypes) + 2 * DEFAULT_NODE_BUBBLE_RADIUS);
+              if (node.visible) {
+                  if (!rankSets[node.rank]) {
+                      rankSets[node.rank] = new Array(node);
+                  }
+                  else {
+                      rankSets[node.rank].push(node);
+                  }
+              }
+          }
+          return rankSets;
+      }
+      placeNodes(rankSets, showTypes) {
+          // Iterate backwards from highest to lowest rank, placing nodes so that they
+          // spread out from the "center" as much as possible while still being
+          // compact and not overlapping live input lines.
+          rankSets.reverse().forEach((rankSet) => {
+              for (const node of rankSet) {
+                  this.graphOccupation.clearNodeOutputs(node, showTypes);
+              }
+              this.traceOccupation("After clearing outputs");
+              let placedCount = 0;
+              rankSet = rankSet.sort((a, b) => a.compare(b));
+              for (const node of rankSet) {
+                  if (node.visible) {
+                      node.x = this.graphOccupation.occupyNode(node);
+                      const nodeTotalWidth = node.getTotalNodeWidth();
+                      this.trace(`Node ${node.id} is placed between [${node.x}, ${node.x + nodeTotalWidth})`);
+                      const staggeredFlooredI = Math.floor(placedCount++ % 3);
+                      const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
+                      node.outputApproach += delta;
+                  }
+                  else {
+                      node.x = 0;
+                  }
+              }
+              this.traceOccupation("Before clearing nodes");
+              this.graphOccupation.clearOccupiedNodes();
+              this.traceOccupation("After clearing nodes");
+              for (const node of rankSet) {
+                  this.graphOccupation.occupyNodeInputs(node, showTypes);
+              }
+              this.traceOccupation("After occupying inputs and determining bounding box");
+          });
+      }
+      calculateBackEdgeNumbers() {
+          this.graph.maxBackEdgeNumber = 0;
+          this.graph.forEachEdge((edge) => {
+              if (edge.isBackEdge()) {
+                  edge.backEdgeNumber = ++this.graph.maxBackEdgeNumber;
+              }
+              else {
+                  edge.backEdgeNumber = 0;
+              }
+          });
+      }
+      trace(message) {
+      }
+      traceOccupation(message) {
+      }
+  }
+  class GraphOccupation {
+      constructor(graph) {
+          this.graph = graph;
+          this.filledSlots = new Array();
+          this.nodeOccupations = new Array();
+          this.minSlot = 0;
+          this.maxSlot = 0;
+      }
+      clearNodeOutputs(source, showTypes) {
+          for (const edge of source.outputs) {
+              if (!edge.isVisible())
+                  continue;
+              for (const inputEdge of edge.target.inputs) {
+                  if (inputEdge.source === source) {
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      this.clearPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
+                  }
+              }
+          }
+      }
+      clearOccupiedNodes() {
+          for (const [firstSlot, endSlotExclusive] of this.nodeOccupations) {
+              this.clearSlotRange(firstSlot, endSlotExclusive);
+          }
+          this.nodeOccupations = new Array();
+      }
+      occupyNode(node) {
+          const width = node.getTotalNodeWidth();
+          const margin = MINIMUM_EDGE_SEPARATION;
+          const paddedWidth = width + 2 * margin;
+          const [direction, position] = this.getPlacementHint(node);
+          const x = position - paddedWidth + margin;
+          this.trace(`Node ${node.id} placement hint [${x}, ${(x + paddedWidth)})`);
+          const placement = this.findSpace(x, paddedWidth, direction);
+          const [firstSlot, slotWidth] = placement;
+          const endSlotExclusive = firstSlot + slotWidth - 1;
+          this.occupySlotRange(firstSlot, endSlotExclusive);
+          this.nodeOccupations.push([firstSlot, endSlotExclusive]);
+          if (direction < 0) {
+              return this.slotToLeftPosition(firstSlot + slotWidth) - width - margin;
+          }
+          else if (direction > 0) {
+              return this.slotToLeftPosition(firstSlot) + margin;
+          }
+          else {
+              return this.slotToLeftPosition(firstSlot + slotWidth / 2) - (width / 2);
+          }
+      }
+      occupyNodeInputs(node, showTypes) {
+          for (let i = 0; i < node.inputs.length; ++i) {
+              if (node.inputs[i].isVisible()) {
+                  const edge = node.inputs[i];
+                  if (!edge.isBackEdge()) {
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      this.trace(`Occupying input ${i} of ${node.id} at ${horizontalPos}`);
+                      this.occupyPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
+                  }
+              }
+          }
+      }
+      print() {
+          let output = "";
+          for (let currentSlot = -40; currentSlot < 40; ++currentSlot) {
+              if (currentSlot != 0) {
+                  output += " ";
+              }
+              else {
+                  output += "|";
+              }
+          }
+          console.log(output);
+          output = "";
+          for (let currentSlot2 = -40; currentSlot2 < 40; ++currentSlot2) {
+              if (this.filledSlots[this.slotToIndex(currentSlot2)]) {
+                  output += "*";
+              }
+              else {
+                  output += " ";
+              }
+          }
+          console.log(output);
+      }
+      getPlacementHint(node) {
+          let position = 0;
+          let direction = -1;
+          let outputEdges = 0;
+          let inputEdges = 0;
+          for (const outputEdge of node.outputs) {
+              if (!outputEdge.isVisible())
+                  continue;
+              const output = outputEdge.target;
+              for (let l = 0; l < output.inputs.length; ++l) {
+                  if (output.rank > node.rank) {
+                      const inputEdge = output.inputs[l];
+                      if (inputEdge.isVisible())
+                          ++inputEdges;
+                      if (output.inputs[l].source == node) {
+                          position += output.x + output.getInputX(l) + NODE_INPUT_WIDTH / 2;
+                          outputEdges++;
+                          if (l >= (output.inputs.length / 2)) {
+                              direction = 1;
+                          }
+                      }
+                  }
+              }
+          }
+          if (outputEdges != 0) {
+              position /= outputEdges;
+          }
+          if (outputEdges > 1 || inputEdges == 1) {
+              direction = 0;
+          }
+          return [direction, position];
+      }
+      occupyPositionRange(from, to) {
+          this.occupySlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
+      }
+      clearPositionRange(from, to) {
+          this.clearSlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
+      }
+      occupySlotRange(from, to) {
+          this.trace(`Occupied [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
+          this.setIndexRange(from, to, true);
+      }
+      clearSlotRange(from, to) {
+          this.trace(`Cleared [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
+          this.setIndexRange(from, to, false);
+      }
+      clearPositionRangeWithMargin(from, to, margin) {
+          const fromMargin = from - Math.floor(margin);
+          const toMargin = to + Math.floor(margin);
+          this.clearPositionRange(fromMargin, toMargin);
+      }
+      occupyPositionRangeWithMargin(from, to, margin) {
+          const fromMargin = from - Math.floor(margin);
+          const toMargin = to + Math.floor(margin);
+          this.occupyPositionRange(fromMargin, toMargin);
+      }
+      findSpace(pos, width, direction) {
           const widthSlots = Math.floor((width + NODE_INPUT_WIDTH - 1) /
               NODE_INPUT_WIDTH);
-          const currentSlot = positionToSlot(pos + width / 2);
-          let currentScanSlot = currentSlot;
+          const currentSlot = this.positionToSlot(pos + width / 2);
           let widthSlotsRemainingLeft = widthSlots;
           let widthSlotsRemainingRight = widthSlots;
           let slotsChecked = 0;
           while (true) {
               const mod = slotsChecked++ % 2;
-              currentScanSlot = currentSlot + (mod ? -1 : 1) * (slotsChecked >> 1);
-              if (!isSlotFilled[slotToIndex(currentScanSlot)]) {
+              const currentScanSlot = currentSlot + (mod ? -1 : 1) * (slotsChecked >> 1);
+              if (!this.filledSlots[this.slotToIndex(currentScanSlot)]) {
                   if (mod) {
                       if (direction <= 0)
                           --widthSlotsRemainingLeft;
                   }
-                  else {
-                      if (direction >= 0)
-                          --widthSlotsRemainingRight;
+                  else if (direction >= 0) {
+                      --widthSlotsRemainingRight;
                   }
-                  if (widthSlotsRemainingLeft == 0 ||
-                      widthSlotsRemainingRight == 0 ||
+                  if (widthSlotsRemainingLeft == 0 || widthSlotsRemainingRight == 0 ||
                       (widthSlotsRemainingLeft + widthSlotsRemainingRight) == widthSlots &&
                           (widthSlots == slotsChecked)) {
-                      if (mod) {
-                          return [currentScanSlot, widthSlots];
-                      }
-                      else {
-                          return [currentScanSlot - widthSlots + 1, widthSlots];
-                      }
+                      return mod ? [currentScanSlot, widthSlots]
+                          : [currentScanSlot - widthSlots + 1, widthSlots];
                   }
               }
               else {
@@ -10372,407 +10800,25 @@
               }
           }
       }
-      function setIndexRange(from, to, value) {
-          if (to < from) {
-              throw ("illegal slot range");
-          }
+      setIndexRange(from, to, value) {
+          if (to < from)
+              throw ("Illegal slot range");
           while (from <= to) {
-              isSlotFilled[slotToIndex(from++)] = value;
+              this.maxSlot = Math.max(from, this.maxSlot);
+              this.minSlot = Math.min(from, this.minSlot);
+              this.filledSlots[this.slotToIndex(from++)] = value;
           }
       }
-      function occupySlotRange(from, to) {
-          setIndexRange(from, to, true);
+      positionToSlot(position) {
+          return Math.floor(position / NODE_INPUT_WIDTH);
       }
-      function clearSlotRange(from, to) {
-          setIndexRange(from, to, false);
+      slotToIndex(slot) {
+          return slot >= 0 ? slot * 2 : slot * 2 + 1;
       }
-      function occupyPositionRange(from, to) {
-          occupySlotRange(positionToSlot(from), positionToSlot(to - 1));
+      slotToLeftPosition(slot) {
+          return slot * NODE_INPUT_WIDTH;
       }
-      function clearPositionRange(from, to) {
-          clearSlotRange(positionToSlot(from), positionToSlot(to - 1));
-      }
-      function occupyPositionRangeWithMargin(from, to, margin) {
-          const fromMargin = from - Math.floor(margin);
-          const toMargin = to + Math.floor(margin);
-          occupyPositionRange(fromMargin, toMargin);
-      }
-      function clearPositionRangeWithMargin(from, to, margin) {
-          const fromMargin = from - Math.floor(margin);
-          const toMargin = to + Math.floor(margin);
-          clearPositionRange(fromMargin, toMargin);
-      }
-      const occupation = {
-          occupyNodeInputs: function (node, showTypes) {
-              for (let i = 0; i < node.inputs.length; ++i) {
-                  if (node.inputs[i].isVisible()) {
-                      const edge = node.inputs[i];
-                      if (!edge.isBackEdge()) {
-                          const horizontalPos = edge.getInputHorizontalPosition(graph, showTypes);
-                          occupyPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
-                      }
-                  }
-              }
-          },
-          occupyNode: function (node) {
-              const getPlacementHint = function (n) {
-                  let pos = 0;
-                  let direction = -1;
-                  let outputEdges = 0;
-                  let inputEdges = 0;
-                  for (const outputEdge of n.outputs) {
-                      if (outputEdge.isVisible()) {
-                          const output = outputEdge.target;
-                          for (let l = 0; l < output.inputs.length; ++l) {
-                              if (output.rank > n.rank) {
-                                  const inputEdge = output.inputs[l];
-                                  if (inputEdge.isVisible()) {
-                                      ++inputEdges;
-                                  }
-                                  if (output.inputs[l].source == n) {
-                                      pos += output.x + output.getInputX(l) + NODE_INPUT_WIDTH / 2;
-                                      outputEdges++;
-                                      if (l >= (output.inputs.length / 2)) {
-                                          direction = 1;
-                                      }
-                                  }
-                              }
-                          }
-                      }
-                  }
-                  if (outputEdges != 0) {
-                      pos = pos / outputEdges;
-                  }
-                  if (outputEdges > 1 || inputEdges == 1) {
-                      direction = 0;
-                  }
-                  return [direction, pos];
-              };
-              const width = node.getTotalNodeWidth();
-              const margin = MINIMUM_EDGE_SEPARATION;
-              const paddedWidth = width + 2 * margin;
-              const placementHint = getPlacementHint(node);
-              const x = placementHint[1] - paddedWidth + margin;
-              const placement = findSpace(x, paddedWidth, placementHint[0]);
-              const firstSlot = placement[0];
-              const slotWidth = placement[1];
-              const endSlotExclusive = firstSlot + slotWidth - 1;
-              occupySlotRange(firstSlot, endSlotExclusive);
-              nodeOccupation.push([firstSlot, endSlotExclusive]);
-              if (placementHint[0] < 0) {
-                  return slotToLeftPosition(firstSlot + slotWidth) - width - margin;
-              }
-              else if (placementHint[0] > 0) {
-                  return slotToLeftPosition(firstSlot) + margin;
-              }
-              else {
-                  return slotToLeftPosition(firstSlot + slotWidth / 2) - (width / 2);
-              }
-          },
-          clearOccupiedNodes: function () {
-              nodeOccupation.forEach(([firstSlot, endSlotExclusive]) => {
-                  clearSlotRange(firstSlot, endSlotExclusive);
-              });
-              nodeOccupation = [];
-          },
-          clearNodeOutputs: function (source, showTypes) {
-              source.outputs.forEach(function (edge) {
-                  if (edge.isVisible()) {
-                      const target = edge.target;
-                      for (const inputEdge of target.inputs) {
-                          if (inputEdge.source === source) {
-                              const horizontalPos = edge.getInputHorizontalPosition(graph, showTypes);
-                              clearPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
-                          }
-                      }
-                  }
-              });
-          },
-          print: function () {
-              let s = "";
-              for (let currentSlot = -40; currentSlot < 40; ++currentSlot) {
-                  if (currentSlot != 0) {
-                      s += " ";
-                  }
-                  else {
-                      s += "|";
-                  }
-              }
-              console.log(s);
-              s = "";
-              for (let currentSlot2 = -40; currentSlot2 < 40; ++currentSlot2) {
-                  if (isSlotFilled[slotToIndex(currentSlot2)]) {
-                      s += "*";
-                  }
-                  else {
-                      s += " ";
-                  }
-              }
-              console.log(s);
-          }
-      };
-      return occupation;
-  }
-  function layoutNodeGraph(graph, showTypes) {
-      // First determine the set of nodes that have no outputs. Those are the
-      // basis for bottom-up DFS to determine rank and node placement.
-      performance.now();
-      const endNodesHasNoOutputs = [];
-      const startNodesHasNoInputs = [];
-      for (const n of graph.nodes()) {
-          endNodesHasNoOutputs[n.id] = true;
-          startNodesHasNoInputs[n.id] = true;
-      }
-      graph.forEachEdge((e) => {
-          endNodesHasNoOutputs[e.source.id] = false;
-          startNodesHasNoInputs[e.target.id] = false;
-      });
-      // Finialize the list of start and end nodes.
-      const endNodes = [];
-      const startNodes = [];
-      let visited = [];
-      const rank = [];
-      for (const n of graph.nodes()) {
-          if (endNodesHasNoOutputs[n.id]) {
-              endNodes.push(n);
-          }
-          if (startNodesHasNoInputs[n.id]) {
-              startNodes.push(n);
-          }
-          visited[n.id] = false;
-          rank[n.id] = -1;
-          n.rank = 0;
-          n.visitOrderWithinRank = 0;
-          n.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
-      }
-      let maxRank = 0;
-      visited = [];
-      let visitOrderWithinRank = 0;
-      const worklist = startNodes.slice();
-      while (worklist.length != 0) {
-          const n = worklist.pop();
-          let changed = false;
-          if (n.rank == MAX_RANK_SENTINEL) {
-              n.rank = 1;
-              changed = true;
-          }
-          let begin = 0;
-          let end = n.inputs.length;
-          if (n.nodeLabel.opcode == 'Phi' ||
-              n.nodeLabel.opcode == 'EffectPhi' ||
-              n.nodeLabel.opcode == 'InductionVariablePhi') {
-              // Keep with merge or loop node
-              begin = n.inputs.length - 1;
-          }
-          else if (n.hasBackEdges()) {
-              end = 1;
-          }
-          for (let l = begin; l < end; ++l) {
-              const input = n.inputs[l].source;
-              if (input.visible && input.rank >= n.rank) {
-                  n.rank = input.rank + 1;
-                  changed = true;
-              }
-          }
-          if (changed) {
-              const hasBackEdges = n.hasBackEdges();
-              for (let l = n.outputs.length - 1; l >= 0; --l) {
-                  if (hasBackEdges && (l != 0)) {
-                      worklist.unshift(n.outputs[l].target);
-                  }
-                  else {
-                      worklist.push(n.outputs[l].target);
-                  }
-              }
-          }
-          if (n.rank > maxRank) {
-              maxRank = n.rank;
-          }
-      }
-      visited = [];
-      function dfsFindRankLate(n) {
-          if (visited[n.id])
-              return;
-          visited[n.id] = true;
-          const originalRank = n.rank;
-          let newRank = n.rank;
-          let isFirstInput = true;
-          for (const outputEdge of n.outputs) {
-              const output = outputEdge.target;
-              dfsFindRankLate(output);
-              const outputRank = output.rank;
-              if (output.visible && (isFirstInput || outputRank <= newRank) &&
-                  (outputRank > originalRank)) {
-                  newRank = outputRank - 1;
-              }
-              isFirstInput = false;
-          }
-          if (n.nodeLabel.opcode != "Start" && n.nodeLabel.opcode != "Phi" && n.nodeLabel.opcode != "EffectPhi" && n.nodeLabel.opcode != "InductionVariablePhi") {
-              n.rank = newRank;
-          }
-      }
-      startNodes.forEach(dfsFindRankLate);
-      visited = [];
-      function dfsRankOrder(n) {
-          if (visited[n.id])
-              return;
-          visited[n.id] = true;
-          for (const outputEdge of n.outputs) {
-              if (outputEdge.isVisible()) {
-                  const output = outputEdge.target;
-                  dfsRankOrder(output);
-              }
-          }
-          if (n.visitOrderWithinRank == 0) {
-              n.visitOrderWithinRank = ++visitOrderWithinRank;
-          }
-      }
-      startNodes.forEach(dfsRankOrder);
-      endNodes.forEach(function (n) {
-          n.rank = maxRank + 1;
-      });
-      const rankSets = [];
-      // Collect sets for each rank.
-      for (const n of graph.nodes()) {
-          n.y = n.rank * (DEFAULT_NODE_ROW_SEPARATION + n.getNodeHeight(showTypes) +
-              2 * DEFAULT_NODE_BUBBLE_RADIUS);
-          if (n.visible) {
-              if (rankSets[n.rank] === undefined) {
-                  rankSets[n.rank] = [n];
-              }
-              else {
-                  rankSets[n.rank].push(n);
-              }
-          }
-      }
-      // Iterate backwards from highest to lowest rank, placing nodes so that they
-      // spread out from the "center" as much as possible while still being
-      // compact and not overlapping live input lines.
-      const occupation = newGraphOccupation(graph);
-      rankSets.reverse().forEach(function (rankSet) {
-          for (const node of rankSet) {
-              occupation.clearNodeOutputs(node, showTypes);
-          }
-          let placedCount = 0;
-          rankSet = rankSet.sort((a, b) => {
-              if (a.visitOrderWithinRank < b.visitOrderWithinRank) {
-                  return -1;
-              }
-              else if (a.visitOrderWithinRank == b.visitOrderWithinRank) {
-                  return 0;
-              }
-              else {
-                  return 1;
-              }
-          });
-          for (const nodeToPlace of rankSet) {
-              if (nodeToPlace.visible) {
-                  nodeToPlace.x = occupation.occupyNode(nodeToPlace);
-                  const staggeredFlooredI = Math.floor(placedCount++ % 3);
-                  const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
-                  nodeToPlace.outputApproach += delta;
-              }
-              else {
-                  nodeToPlace.x = 0;
-              }
-          }
-          occupation.clearOccupiedNodes();
-          for (const node of rankSet) {
-              occupation.occupyNodeInputs(node, showTypes);
-          }
-      });
-      graph.maxBackEdgeNumber = 0;
-      graph.forEachEdge((e) => {
-          if (e.isBackEdge()) {
-              e.backEdgeNumber = ++graph.maxBackEdgeNumber;
-          }
-          else {
-              e.backEdgeNumber = 0;
-          }
-      });
-  }
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
-  class Graph {
-      constructor(graphPhase) {
-          this.nodeMap = [];
-          this.minGraphX = 0;
-          this.maxGraphX = 1;
-          this.minGraphY = 0;
-          this.maxGraphY = 1;
-          this.width = 1;
-          this.height = 1;
-          graphPhase.data.nodes.forEach((jsonNode) => {
-              this.nodeMap[jsonNode.id] = new GraphNode(jsonNode.nodeLabel);
-          });
-          graphPhase.data.edges.forEach((e) => {
-              const t = this.nodeMap[e.target.id];
-              const s = this.nodeMap[e.source.id];
-              const newEdge = new GraphEdge(t, e.index, s, e.type);
-              t.inputs.push(newEdge);
-              s.outputs.push(newEdge);
-              if (e.type == 'control') {
-                  // Every source of a control edge is a CFG node.
-                  s.cfg = true;
-              }
-          });
-      }
-      *nodes(p = (n) => true) {
-          for (const node of this.nodeMap) {
-              if (!node || !p(node))
-                  continue;
-              yield node;
-          }
-      }
-      *filteredEdges(p) {
-          for (const node of this.nodes()) {
-              for (const edge of node.inputs) {
-                  if (p(edge))
-                      yield edge;
-              }
-          }
-      }
-      forEachEdge(p) {
-          for (const node of this.nodeMap) {
-              if (!node)
-                  continue;
-              for (const edge of node.inputs) {
-                  p(edge);
-              }
-          }
-      }
-      redetermineGraphBoundingBox(showTypes) {
-          this.minGraphX = 0;
-          this.maxGraphNodeX = 1;
-          this.maxGraphX = undefined; // see below
-          this.minGraphY = 0;
-          this.maxGraphY = 1;
-          for (const node of this.nodes()) {
-              if (!node.visible) {
-                  continue;
-              }
-              if (node.x < this.minGraphX) {
-                  this.minGraphX = node.x;
-              }
-              if ((node.x + node.getTotalNodeWidth()) > this.maxGraphNodeX) {
-                  this.maxGraphNodeX = node.x + node.getTotalNodeWidth();
-              }
-              if ((node.y - 50) < this.minGraphY) {
-                  this.minGraphY = node.y - 50;
-              }
-              if ((node.y + node.getNodeHeight(showTypes) + 50) > this.maxGraphY) {
-                  this.maxGraphY = node.y + node.getNodeHeight(showTypes) + 50;
-              }
-          }
-          this.maxGraphX = this.maxGraphNodeX +
-              this.maxBackEdgeNumber * MINIMUM_EDGE_SEPARATION;
-          this.width = this.maxGraphX - this.minGraphX;
-          this.height = this.maxGraphY - this.minGraphY;
-          const extent = [
-              [this.minGraphX - this.width / 2, this.minGraphY - this.height / 2],
-              [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
-          ];
-          return extent;
+      trace(message) {
       }
   }
 
@@ -10819,8 +10865,8 @@
                       if (node.nodeLabel.sourcePosition) {
                           locations.push(node.nodeLabel.sourcePosition);
                       }
-                      if (node.nodeLabel.origin && node.nodeLabel.origin.bytecodePosition) {
-                          locations.push({ bytecodePosition: node.nodeLabel.origin.bytecodePosition });
+                      if (node.nodeLabel.origin && node.nodeLabel.origin instanceof BytecodeOrigin) {
+                          locations.push(new BytecodePosition(node.nodeLabel.origin.bytecodePosition));
                       }
                   }
                   view.state.selection.select(nodes, selected);
@@ -10954,6 +11000,12 @@
               input.addEventListener("click", onClick);
               return input;
           }
+          function createImgToggleInput(id, title, onClick) {
+              const input = createImgInput(id, title, onClick);
+              const toggled = storageGetItem(id, true);
+              input.classList.toggle("button-input-toggled", toggled);
+              return input;
+          }
           this.toolbox.appendChild(createImgInput("layout", "layout graph", partial(this.layoutAction, this)));
           this.toolbox.appendChild(createImgInput("show-all", "show all nodes", partial(this.showAllAction, this)));
           this.toolbox.appendChild(createImgInput("show-control", "show only control nodes", partial(this.showControlAction, this)));
@@ -10962,46 +11014,72 @@
           this.toolbox.appendChild(createImgInput("hide-selected", "hide selected", partial(this.hideSelectedAction, this)));
           this.toolbox.appendChild(createImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this)));
           this.toolbox.appendChild(createImgInput("toggle-types", "toggle types", partial(this.toggleTypesAction, this)));
+          this.toolbox.appendChild(createImgToggleInput("cache-graphs", "remember graph layout", partial(this.toggleGraphCachingAction)));
           const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
           this.phaseName = data.name;
           this.createGraph(data, adaptedSelection);
           this.broker.addNodeHandler(this.selectionHandler);
-          if (adaptedSelection != null && adaptedSelection.size > 0) {
-              this.attachSelection(adaptedSelection);
+          const selectedNodes = adaptedSelection?.size > 0
+              ? this.attachSelection(adaptedSelection)
+              : null;
+          if (selectedNodes?.length > 0) {
               this.connectVisibleSelectedNodes();
               this.viewSelection();
           }
           else {
               this.viewWholeGraph();
+              if (this.isCachingEnabled() && data.transform) {
+                  this.svg.call(this.panZoom.transform, identity
+                      .translate(data.transform.x, data.transform.y)
+                      .scale(data.transform.scale));
+              }
           }
       }
       deleteContent() {
           for (const item of this.toolbox.querySelectorAll(".graph-toolbox-item")) {
               item.parentElement.removeChild(item);
           }
-          for (const n of this.graph.nodes()) {
-              n.visible = false;
+          if (!this.isCachingEnabled()) {
+              this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
           }
-          this.graph.forEachEdge((e) => {
-              e.visible = false;
-          });
+          this.graph.graphPhase.rendered = false;
           this.updateGraphVisibility();
       }
       hide() {
+          if (this.isCachingEnabled()) {
+              const matrix = this.graphElement.node().transform.baseVal.consolidate().matrix;
+              this.graph.graphPhase.transform = { scale: matrix.a, x: matrix.e, y: matrix.f };
+          }
+          else {
+              this.graph.graphPhase.transform = null;
+          }
           super.hide();
           this.deleteContent();
       }
       createGraph(data, selection) {
           this.graph = new Graph(data);
-          this.showControlAction(this);
-          if (selection != undefined) {
-              for (const n of this.graph.nodes()) {
-                  n.visible = n.visible || selection.has(n.identifier());
+          this.graphLayout = new GraphLayout(this.graph);
+          if (!this.isCachingEnabled() ||
+              this.graph.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
+              this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
+              this.showControlAction(this);
+          }
+          else {
+              this.showVisible();
+          }
+          if (selection !== undefined) {
+              for (const node of this.graph.nodes()) {
+                  node.visible = node.visible || selection.has(node.identifier());
               }
           }
-          this.graph.forEachEdge(e => e.visible = e.source.visible && e.target.visible);
+          this.graph.makeEdgesVisible();
           this.layoutGraph();
           this.updateGraphVisibility();
+      }
+      showVisible() {
+          this.updateGraphVisibility();
+          this.viewWholeGraph();
+          this.focusOnSvg();
       }
       connectVisibleSelectedNodes() {
           const view = this;
@@ -11087,12 +11165,16 @@
           });
           return updatedGraphSelection;
       }
-      attachSelection(s) {
-          if (!(s instanceof Set))
-              return;
+      attachSelection(selection) {
+          if (!(selection instanceof Set))
+              return new Array();
           this.selectionHandler.clear();
-          const selected = [...this.graph.nodes(n => s.has(this.state.selection.stringKey(n)) && (!this.state.hideDead || n.isLive()))];
+          const selected = [
+              ...this.graph.nodes(node => selection.has(this.state.selection.stringKey(node))
+                  && (!this.state.hideDead || node.isLive()))
+          ];
           this.selectionHandler.select(selected, true);
+          return selected;
       }
       detachSelection() {
           return this.state.selection.detachSelection();
@@ -11106,6 +11188,7 @@
           this.updateGraphVisibility();
       }
       layoutAction(graph) {
+          graph.updateGraphStateType(GraphStateType.NeedToFullRebuild);
           graph.layoutGraph();
           graph.updateGraphVisibility();
           graph.viewWholeGraph();
@@ -11127,11 +11210,9 @@
               n.visible = n.cfg && (!view.state.hideDead || n.isLive());
           }
           view.graph.forEachEdge((e) => {
-              e.visible = e.type == 'control' && e.source.visible && e.target.visible;
+              e.visible = e.type === "control" && e.source.visible && e.target.visible;
           });
-          view.updateGraphVisibility();
-          view.viewWholeGraph();
-          view.focusOnSvg();
+          view.showVisible();
       }
       toggleHideDead(view) {
           view.state.hideDead = !view.state.hideDead;
@@ -11187,6 +11268,13 @@
       toggleTypesAction(view) {
           view.toggleTypes();
           view.focusOnSvg();
+      }
+      toggleGraphCachingAction() {
+          const key = "cache-graphs";
+          const toggled = storageGetItem(key, true);
+          storageSetItem(key, !toggled);
+          const element = document.getElementById(key);
+          element.classList.toggle("button-input-toggled", !toggled);
       }
       searchInputAction(searchBar, e, onlyVisible) {
           if (e.keyCode == 13) {
@@ -11335,12 +11423,15 @@
           }
       }
       layoutGraph() {
-          console.time("layoutGraph");
-          layoutNodeGraph(this.graph, this.state.showTypes);
+          const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
+              ? "Layout graph from cache"
+              : "Layout graph";
+          console.time(layoutMessage);
+          this.graphLayout.rebuild(this.state.showTypes);
           const extent = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
           this.panZoom.translateExtent(extent);
           this.minScale();
-          console.timeEnd("layoutGraph");
+          console.timeEnd(layoutMessage);
       }
       selectOrigins() {
           const state = this.state;
@@ -11377,9 +11468,10 @@
           const state = this.state;
           if (!graph)
               return;
-          const filteredEdges = [...graph.filteredEdges(function (e) {
-                  return e.source.visible && e.target.visible;
-              })];
+          const filteredEdges = [
+              ...graph.filteredEdges(edge => this.graph.isRendered()
+                  && edge.source.visible && edge.target.visible)
+          ];
           const selEdges = view.visibleEdges.selectAll("path")
               .data(filteredEdges, e => e.toString());
           // remove old links
@@ -11413,7 +11505,7 @@
           const newAndOldEdges = newEdges.merge(selEdges);
           newAndOldEdges.classed('hidden', e => !e.isVisible());
           // select existing nodes
-          const filteredNodes = [...graph.nodes(n => n.visible)];
+          const filteredNodes = [...graph.nodes(n => this.graph.isRendered() && n.visible)];
           const allNodes = view.visibleNodes.selectAll("g");
           const selNodes = allNodes.data(filteredNodes, n => n.toString());
           // remove old nodes
@@ -11581,9 +11673,9 @@
           return [[0, 0], [this.container.clientWidth, this.container.clientHeight]];
       }
       minScale() {
-          const dimensions = this.getSvgViewDimensions();
-          const minXScale = dimensions[0] / (2 * this.graph.width);
-          const minYScale = dimensions[1] / (2 * this.graph.height);
+          const [clientWith, clientHeight] = this.getSvgViewDimensions();
+          const minXScale = clientWith / (2 * this.graph.width);
+          const minYScale = clientHeight / (2 * this.graph.height);
           const minScale = Math.min(minXScale, minYScale);
           this.panZoom.scaleExtent([minScale, 40]);
           return minScale;
@@ -11636,6 +11728,12 @@
       viewWholeGraph() {
           this.panZoom.scaleTo(this.svg, 0);
           this.panZoom.translateTo(this.svg, this.graph.minGraphX + this.graph.width / 2, this.graph.minGraphY + this.graph.height / 2);
+      }
+      updateGraphStateType(stateType) {
+          this.graph.graphPhase.stateType = stateType;
+      }
+      isCachingEnabled() {
+          return storageGetItem("cache-graphs", true);
       }
   }
 
@@ -12042,7 +12140,7 @@
               // There are two fixed live ranges for each register, one for normal, another for deferred.
               // These are combined into a single row.
               const fixedRegisterMap = new Map();
-              for (const [registerIndex, range] of rangeMap) {
+              for (const [registerIndex, range] of Object.entries(rangeMap)) {
                   const registerName = this.fixedRegisterName(range);
                   if (fixedRegisterMap.has(registerName)) {
                       const entry = fixedRegisterMap.get(registerName);
@@ -12276,7 +12374,7 @@
       }
       addVirtualRanges(row) {
           const source = this.view.sequenceView.sequence.registerAllocation;
-          for (const [registerIndex, range] of source.liveRanges) {
+          for (const [registerIndex, range] of Object.entries(source.liveRanges)) {
               const registerName = Helper.virtualRegisterName(registerIndex);
               const registerEl = this.elementForVirtualRegister(registerName);
               this.addRowToGroup(row, this.elementForRow(row, registerIndex, new RangePair([range, undefined])));
@@ -12439,7 +12537,7 @@
           this.view.gridAccessor.addGrid(newGrid);
           const source = this.view.sequenceView.sequence.registerAllocation;
           let row = 0;
-          for (const [registerIndex, range] of source.liveRanges) {
+          for (const [registerIndex, range] of Object.entries(source.liveRanges)) {
               this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, new RangePair([range, undefined]));
               ++row;
           }
@@ -12984,7 +13082,6 @@
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
-  const multiviewID = "multiview";
   const toolboxHTML = `
 <div class="graph-toolbox">
   <select id="phase-select">
@@ -13006,10 +13103,8 @@
           view.divNode.appendChild(toolbox);
           const searchInput = toolbox.querySelector("#search-input");
           const onlyVisibleCheckbox = toolbox.querySelector("#search-only-visible");
-          searchInput.addEventListener("keyup", e => {
-              if (!view.currentPhaseView)
-                  return;
-              view.currentPhaseView.searchInputAction(searchInput, e, onlyVisibleCheckbox.checked);
+          searchInput.addEventListener("keyup", (e) => {
+              view.currentPhaseView?.searchInputAction(searchInput, e, onlyVisibleCheckbox.checked);
           });
           view.divNode.addEventListener("keyup", (e) => {
               if (e.keyCode == 191) { // keyCode == '/'
@@ -13022,7 +13117,7 @@
                   view.displayPreviousGraphPhase();
               }
           });
-          searchInput.setAttribute("value", window.sessionStorage.getItem("lastSearch") || "");
+          searchInput.setAttribute("value", storageGetItem("lastSearch", "", false));
           this.graph = new GraphView(this.divNode, selectionBroker, view.displayPhaseByName.bind(this), toolbox.querySelector(".graph-toolbox"));
           this.schedule = new ScheduleView(this.divNode, selectionBroker);
           this.sequence = new SequenceView(this.divNode, selectionBroker);
@@ -13030,7 +13125,7 @@
       }
       createViewElement() {
           const pane = document.createElement("div");
-          pane.setAttribute("id", multiviewID);
+          pane.setAttribute("id", MULTIVIEW_ID);
           pane.setAttribute("tabindex", "1");
           pane.className = "viewpane";
           return pane;
@@ -13040,42 +13135,27 @@
           this.hideCurrentPhase();
           super.hide();
       }
-      initializeSelect() {
-          const view = this;
-          view.selectMenu.innerHTML = "";
-          view.sourceResolver.forEachPhase(phase => {
-              const optionElement = document.createElement("option");
-              let maxNodeId = "";
-              if (phase instanceof GraphPhase && phase.highestNodeId != 0) {
-                  maxNodeId = ` ${phase.highestNodeId}`;
-              }
-              optionElement.text = `${phase.name}${maxNodeId}`;
-              view.selectMenu.add(optionElement);
-          });
-          this.selectMenu.onchange = function () {
-              const phaseIndex = this.selectedIndex;
-              window.sessionStorage.setItem("lastSelectedPhase", phaseIndex.toString());
-              view.displayPhase(view.sourceResolver.getPhase(phaseIndex));
-          };
-      }
       show() {
           // Insert before is used so that the display is inserted before the
           // resizer for the RangeView.
           this.container.insertBefore(this.divNode, this.container.firstChild);
           this.initializeSelect();
-          const lastPhaseIndex = +window.sessionStorage.getItem("lastSelectedPhase");
+          const lastPhaseIndex = storageGetItem("lastSelectedPhase");
           const initialPhaseIndex = this.sourceResolver.repairPhaseId(lastPhaseIndex);
           this.selectMenu.selectedIndex = initialPhaseIndex;
           this.displayPhase(this.sourceResolver.getPhase(initialPhaseIndex));
       }
+      onresize() {
+          this.currentPhaseView?.onresize();
+      }
       displayPhase(phase, selection) {
-          if (phase.type == "graph") {
+          if (phase.type == PhaseType.Graph) {
               this.displayPhaseView(this.graph, phase, selection);
           }
-          else if (phase.type == "schedule") {
+          else if (phase.type == PhaseType.Schedule) {
               this.displayPhaseView(this.schedule, phase, selection);
           }
-          else if (phase.type == "sequence") {
+          else if (phase.type == PhaseType.Sequence) {
               this.displayPhaseView(this.sequence, phase, selection);
           }
       }
@@ -13093,9 +13173,9 @@
           let nextPhaseIndex = this.selectMenu.selectedIndex + 1;
           while (nextPhaseIndex < this.sourceResolver.phases.length) {
               const nextPhase = this.sourceResolver.getPhase(nextPhaseIndex);
-              if (nextPhase.type == "graph") {
+              if (nextPhase.type == PhaseType.Graph) {
                   this.selectMenu.selectedIndex = nextPhaseIndex;
-                  window.sessionStorage.setItem("lastSelectedPhase", nextPhaseIndex.toString());
+                  storageSetItem("lastSelectedPhase", nextPhaseIndex);
                   this.displayPhase(nextPhase);
                   break;
               }
@@ -13106,14 +13186,32 @@
           let previousPhaseIndex = this.selectMenu.selectedIndex - 1;
           while (previousPhaseIndex >= 0) {
               const previousPhase = this.sourceResolver.getPhase(previousPhaseIndex);
-              if (previousPhase.type == "graph") {
+              if (previousPhase.type === PhaseType.Graph) {
                   this.selectMenu.selectedIndex = previousPhaseIndex;
-                  window.sessionStorage.setItem("lastSelectedPhase", previousPhaseIndex.toString());
+                  storageSetItem("lastSelectedPhase", previousPhaseIndex);
                   this.displayPhase(previousPhase);
                   break;
               }
               previousPhaseIndex -= 1;
           }
+      }
+      initializeSelect() {
+          const view = this;
+          view.selectMenu.innerHTML = "";
+          view.sourceResolver.forEachPhase((phase) => {
+              const optionElement = document.createElement("option");
+              let maxNodeId = "";
+              if (phase instanceof GraphPhase && phase.highestNodeId != 0) {
+                  maxNodeId = ` ${phase.highestNodeId}`;
+              }
+              optionElement.text = `${phase.name}${maxNodeId}`;
+              view.selectMenu.add(optionElement);
+          });
+          this.selectMenu.onchange = function () {
+              const phaseIndex = this.selectedIndex;
+              storageSetItem("lastSelectedPhase", phaseIndex);
+              view.displayPhase(view.sourceResolver.getPhase(phaseIndex));
+          };
       }
       hideCurrentPhase() {
           let rememberedSelection = null;
@@ -13123,13 +13221,6 @@
               this.currentPhaseView = null;
           }
           return rememberedSelection;
-      }
-      onresize() {
-          if (this.currentPhaseView)
-              this.currentPhaseView.onresize();
-      }
-      detachSelection() {
-          return null;
       }
   }
 
