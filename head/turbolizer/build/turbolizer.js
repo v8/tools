@@ -228,6 +228,14 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class InliningPosition {
+      constructor(sourceId, inliningPosition) {
+          this.sourceId = sourceId;
+          this.inliningPosition = inliningPosition;
+      }
+  }
   class SourcePosition {
       constructor(scriptOffset, inliningId) {
           this.scriptOffset = scriptOffset;
@@ -240,9 +248,7 @@
           return this.inliningId - other.inliningId;
       }
       equals(other) {
-          if (this.scriptOffset != other.scriptOffset)
-              return false;
-          return this.inliningId == other.inliningId;
+          return this.inliningId == other.inliningId && this.scriptOffset == other.scriptOffset;
       }
       isValid() {
           return typeof this.scriptOffset !== undefined && typeof this.inliningId !== undefined;
@@ -1025,45 +1031,20 @@
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
-  function sourcePositionLe(a, b) {
-      if (a.inliningId == b.inliningId) {
-          return a.scriptOffset - b.scriptOffset;
-      }
-      return a.inliningId - b.inliningId;
-  }
-  function sourcePositionEq(a, b) {
-      return a.inliningId == b.inliningId &&
-          a.scriptOffset == b.scriptOffset;
-  }
-  function sourcePositionToStringKey(sourcePosition) {
-      if (!sourcePosition)
-          return "undefined";
-      if ('inliningId' in sourcePosition && 'scriptOffset' in sourcePosition) {
-          return "SP:" + sourcePosition.inliningId + ":" + sourcePosition.scriptOffset;
-      }
-      if (sourcePosition.bytecodePosition) {
-          return "BCP:" + sourcePosition.bytecodePosition;
-      }
-      return "undefined";
-  }
-  function sourcePositionValid(l) {
-      return (typeof l.scriptOffset !== undefined
-          && typeof l.inliningId !== undefined) || typeof l.bytecodePosition != undefined;
-  }
   class SourceResolver {
       constructor() {
           // Maps node ids to source positions.
-          this.nodePositionMap = [];
+          this.nodePositionMap = new Array();
           // Maps source ids to source objects.
-          this.sources = [];
+          this.sources = new Array();
           // Maps inlining ids to inlining objects.
-          this.inlinings = [];
+          this.inlinings = new Array();
           // Maps source position keys to inlinings.
           this.inliningsMap = new Map();
           // Maps source position keys to node ids.
           this.positionToNodes = new Map();
           // Maps phase ids to phases.
-          this.phases = [];
+          this.phases = new Array();
           // Maps phase names to phaseIds.
           this.phaseNames = new Map();
           // The disassembly phase is stored separately.
@@ -1074,188 +1055,64 @@
       getMainFunction(jsonObj) {
           const fncJson = jsonObj.function;
           // Backwards compatibility.
-          if (typeof fncJson === 'string') {
+          if (typeof fncJson === "string") {
               return new Source(null, null, jsonObj.source, -1, true, new Array(), jsonObj.sourcePosition, jsonObj.sourcePosition + jsonObj.source.length);
           }
           return new Source(fncJson.sourceName, fncJson.functionName, fncJson.sourceText, fncJson.sourceId, false, new Array(), fncJson.startPosition, fncJson.endPosition);
       }
-      setSources(sources, mainBackup) {
-          if (sources) {
-              for (const [sourceId, source] of Object.entries(sources)) {
-                  this.sources[sourceId] = source;
-                  this.sources[sourceId].sourcePositions = [];
-              }
-          }
-          // This is a fallback if the JSON is incomplete (e.g. due to compiler crash).
-          if (!this.sources[-1]) {
-              this.sources[-1] = mainBackup;
-              this.sources[-1].sourcePositions = [];
-          }
-      }
-      setInlinings(inlinings) {
-          if (inlinings) {
-              for (const [inliningId, inlining] of Object.entries(inlinings)) {
-                  this.inlinings[inliningId] = inlining;
-                  this.inliningsMap.set(sourcePositionToStringKey(inlining.inliningPosition), inlining);
+      setInlinings(inliningsJson) {
+          if (inliningsJson) {
+              for (const [inliningIdStr, inlining] of Object.entries(inliningsJson)) {
+                  const scriptOffset = inlining.inliningPosition.scriptOffset;
+                  const inliningId = inlining.inliningPosition.inliningId;
+                  const inl = new InliningPosition(inlining.sourceId, new SourcePosition(scriptOffset, inliningId));
+                  this.inlinings[inliningIdStr] = inl;
+                  this.inliningsMap.set(inl.inliningPosition.toString(), inl);
               }
           }
           // This is a default entry for the script itself that helps
           // keep other code more uniform.
-          this.inlinings[-1] = { sourceId: -1, inliningPosition: null };
+          this.inlinings[-1] = new InliningPosition(-1, null);
       }
-      setNodePositionMap(map) {
-          if (!map)
-              return;
-          if (typeof map[0] != 'object') {
-              const alternativeMap = {};
-              for (const [nodeId, scriptOffset] of Object.entries(map)) {
-                  alternativeMap[nodeId] = { scriptOffset: scriptOffset, inliningId: -1 };
+      setSources(sourcesJson, mainFunc) {
+          if (sourcesJson) {
+              for (const [sourceId, source] of Object.entries(sourcesJson)) {
+                  const src = new Source(source.sourceName, source.functionName, source.sourceText, source.sourceId, source.backwardsCompatibility, new Array(), source.startPosition, source.endPosition);
+                  this.sources[sourceId] = src;
               }
-              map = alternativeMap;
           }
-          for (const [nodeId, sourcePosition] of Object.entries(map)) {
-              if (sourcePosition == undefined) {
-                  console.log("Warning: undefined source position ", sourcePosition, " for nodeId ", nodeId);
+          // This is a fallback if the JSON is incomplete (e.g. due to compiler crash).
+          if (!this.sources[-1]) {
+              this.sources[-1] = mainFunc;
+          }
+      }
+      setNodePositionMap(mapJson) {
+          if (!mapJson)
+              return;
+          if (typeof mapJson[0] !== "object") {
+              const alternativeMap = new Map();
+              for (const [nodeId, scriptOffset] of Object.entries(mapJson)) {
+                  alternativeMap[nodeId] = new SourcePosition(scriptOffset, -1);
               }
-              const inliningId = sourcePosition.inliningId;
-              const inlining = this.inlinings[inliningId];
-              if (inlining) {
-                  const sourceId = inlining.sourceId;
-                  this.sources[sourceId].sourcePositions.push(sourcePosition);
+              mapJson = alternativeMap;
+          }
+          for (const [nodeId, sourcePosition] of Object.entries(mapJson)) {
+              if (sourcePosition === undefined) {
+                  console.warn(`Undefined source position for node id ${nodeId}`);
               }
-              this.nodePositionMap[nodeId] = sourcePosition;
-              const key = sourcePositionToStringKey(sourcePosition);
+              const inlining = this.inlinings[sourcePosition.inliningId];
+              const sp = new SourcePosition(sourcePosition.scriptOffset, sourcePosition.inliningId);
+              if (inlining)
+                  this.sources[inlining.sourceId].sourcePositions.push(sp);
+              this.nodePositionMap[nodeId] = sp;
+              const key = sp.toString();
               if (!this.positionToNodes.has(key)) {
-                  this.positionToNodes.set(key, []);
+                  this.positionToNodes.set(key, new Array());
               }
               this.positionToNodes.get(key).push(nodeId);
           }
           for (const [, source] of Object.entries(this.sources)) {
-              source.sourcePositions = sortUnique(source.sourcePositions, sourcePositionLe, sourcePositionEq);
-          }
-      }
-      sourcePositionsToNodeIds(sourcePositions) {
-          const nodeIds = new Set();
-          for (const sp of sourcePositions) {
-              const key = sourcePositionToStringKey(sp);
-              const nodeIdsForPosition = this.positionToNodes.get(key);
-              if (!nodeIdsForPosition)
-                  continue;
-              for (const nodeId of nodeIdsForPosition) {
-                  nodeIds.add(nodeId);
-              }
-          }
-          return nodeIds;
-      }
-      nodeIdsToSourcePositions(nodeIds) {
-          const sourcePositions = new Map();
-          for (const nodeId of nodeIds) {
-              const sp = this.nodePositionMap[nodeId];
-              const key = sourcePositionToStringKey(sp);
-              sourcePositions.set(key, sp);
-          }
-          const sourcePositionArray = [];
-          for (const sp of sourcePositions.values()) {
-              sourcePositionArray.push(sp);
-          }
-          return sourcePositionArray;
-      }
-      translateToSourceId(sourceId, location) {
-          for (const position of this.getInlineStack(location)) {
-              const inlining = this.inlinings[position.inliningId];
-              if (!inlining)
-                  continue;
-              if (inlining.sourceId == sourceId) {
-                  return position;
-              }
-          }
-          return location;
-      }
-      addInliningPositions(sourcePosition, locations) {
-          const inlining = this.inliningsMap.get(sourcePositionToStringKey(sourcePosition));
-          if (!inlining)
-              return;
-          const sourceId = inlining.sourceId;
-          const source = this.sources[sourceId];
-          for (const sp of source.sourcePositions) {
-              locations.push(sp);
-              this.addInliningPositions(sp, locations);
-          }
-      }
-      getInliningForPosition(sourcePosition) {
-          return this.inliningsMap.get(sourcePositionToStringKey(sourcePosition));
-      }
-      getSource(sourceId) {
-          return this.sources[sourceId];
-      }
-      getSourceName(sourceId) {
-          const source = this.sources[sourceId];
-          return `${source.sourceName}:${source.functionName}`;
-      }
-      sourcePositionFor(sourceId, scriptOffset) {
-          if (!this.sources[sourceId]) {
-              return null;
-          }
-          const list = this.sources[sourceId].sourcePositions;
-          for (let i = 0; i < list.length; i++) {
-              const sourcePosition = list[i];
-              const position = sourcePosition.scriptOffset;
-              const nextPosition = list[Math.min(i + 1, list.length - 1)].scriptOffset;
-              if ((position <= scriptOffset && scriptOffset < nextPosition)) {
-                  return sourcePosition;
-              }
-          }
-          return null;
-      }
-      sourcePositionsInRange(sourceId, start, end) {
-          if (!this.sources[sourceId])
-              return [];
-          const res = [];
-          const list = this.sources[sourceId].sourcePositions;
-          for (const sourcePosition of list) {
-              if (start <= sourcePosition.scriptOffset && sourcePosition.scriptOffset < end) {
-                  res.push(sourcePosition);
-              }
-          }
-          return res;
-      }
-      getInlineStack(sourcePosition) {
-          if (!sourcePosition)
-              return [];
-          const inliningStack = [];
-          let cur = sourcePosition;
-          while (cur && cur.inliningId != -1) {
-              inliningStack.push(cur);
-              const inlining = this.inlinings[cur.inliningId];
-              if (!inlining) {
-                  break;
-              }
-              cur = inlining.inliningPosition;
-          }
-          if (cur && cur.inliningId == -1) {
-              inliningStack.push(cur);
-          }
-          return inliningStack;
-      }
-      recordOrigins(graphPhase) {
-          if (graphPhase.type !== PhaseType.Graph)
-              return;
-          for (const node of graphPhase.data.nodes) {
-              graphPhase.highestNodeId = Math.max(graphPhase.highestNodeId, node.id);
-              const origin = node.nodeLabel.origin;
-              const isBytecode = origin instanceof BytecodeOrigin;
-              if (isBytecode) {
-                  const position = new BytecodePosition(origin.bytecodePosition);
-                  this.nodePositionMap[node.id] = position;
-                  const key = position.toString();
-                  if (!this.positionToNodes.has(key)) {
-                      this.positionToNodes.set(key, []);
-                  }
-                  const nodes = this.positionToNodes.get(key);
-                  const identifier = node.identifier();
-                  if (!nodes.includes(identifier))
-                      nodes.push(identifier);
-              }
+              source.sourcePositions = sortUnique(source.sourcePositions, (a, b) => a.lessOrEquals(b), (a, b) => a.equals(b));
           }
       }
       parsePhases(phasesJson) {
@@ -1322,6 +1179,68 @@
               }
           }
       }
+      sourcePositionsToNodeIds(sourcePositions) {
+          const nodeIds = new Set();
+          for (const sp of sourcePositions) {
+              const nodeIdsForPosition = this.positionToNodes.get(sp.toString());
+              if (!nodeIdsForPosition)
+                  continue;
+              for (const nodeId of nodeIdsForPosition) {
+                  nodeIds.add(nodeId);
+              }
+          }
+          return nodeIds;
+      }
+      nodeIdsToSourcePositions(nodeIds) {
+          const sourcePositions = new Map();
+          for (const nodeId of nodeIds) {
+              const position = this.nodePositionMap[nodeId];
+              if (!position)
+                  continue;
+              sourcePositions.set(position.toString(), position);
+          }
+          const sourcePositionArray = new Array();
+          for (const sourcePosition of sourcePositions.values()) {
+              sourcePositionArray.push(sourcePosition);
+          }
+          return sourcePositionArray;
+      }
+      translateToSourceId(sourceId, location) {
+          for (const position of this.getInlineStack(location)) {
+              const inlining = this.inlinings[position.inliningId];
+              if (!inlining)
+                  continue;
+              if (inlining.sourceId == sourceId) {
+                  return position;
+              }
+          }
+          return location;
+      }
+      addInliningPositions(sourcePosition, locations) {
+          const inlining = this.inliningsMap.get(sourcePosition.toString());
+          if (!inlining)
+              return;
+          const source = this.sources[inlining.sourceId];
+          for (const sp of source.sourcePositions) {
+              locations.push(sp);
+              this.addInliningPositions(sp, locations);
+          }
+      }
+      getInliningForPosition(sourcePosition) {
+          return this.inliningsMap.get(sourcePosition.toString());
+      }
+      getSource(sourceId) {
+          return this.sources[sourceId];
+      }
+      addAnyPositionToLine(lineNumber, sourcePosition) {
+          const lineNumberString = anyToString(lineNumber);
+          if (!this.linePositionMap.has(lineNumberString)) {
+              this.linePositionMap.set(lineNumberString, new Array());
+          }
+          const storedPositions = this.linePositionMap.get(lineNumberString);
+          if (!storedPositions.includes(sourcePosition))
+              storedPositions.push(sourcePosition);
+      }
       repairPhaseId(anyPhaseId) {
           return Math.max(0, Math.min(anyPhaseId | 0, this.phases.length - 1));
       }
@@ -1331,43 +1250,83 @@
       getPhaseIdByName(phaseName) {
           return this.phaseNames.get(phaseName);
       }
-      forEachPhase(f) {
-          this.phases.forEach(f);
+      lineToSourcePositions(lineNumber) {
+          return this.linePositionMap.get(anyToString(lineNumber)) ?? new Array();
       }
-      addAnyPositionToLine(lineNumber, sourcePosition) {
-          const lineNumberString = anyToString(lineNumber);
-          if (!this.linePositionMap.has(lineNumberString)) {
-              this.linePositionMap.set(lineNumberString, []);
+      getSourceName(sourceId) {
+          const source = this.sources[sourceId];
+          return `${source.sourceName}:${source.functionName}`;
+      }
+      sourcePositionsInRange(sourceId, start, end) {
+          const inRange = Array();
+          if (!this.sources[sourceId])
+              return inRange;
+          const list = this.sources[sourceId].sourcePositions;
+          for (const sourcePosition of list) {
+              if (start <= sourcePosition.scriptOffset && sourcePosition.scriptOffset < end) {
+                  inRange.push(sourcePosition);
+              }
           }
-          const A = this.linePositionMap.get(lineNumberString);
-          if (!A.includes(sourcePosition))
-              A.push(sourcePosition);
+          return inRange;
       }
-      setSourceLineToBytecodePosition(sourceLineToBytecodePosition) {
-          if (!sourceLineToBytecodePosition)
+      setSourceLineToBytecodePosition(sourceLineToBytecodePositionJson) {
+          if (!sourceLineToBytecodePositionJson)
               return;
-          sourceLineToBytecodePosition.forEach((pos, i) => {
-              this.addAnyPositionToLine(i, new BytecodePosition(pos));
+          sourceLineToBytecodePositionJson.forEach((position, idx) => {
+              this.addAnyPositionToLine(idx, new BytecodePosition(position));
           });
       }
-      lineToSourcePositions(lineNumber) {
-          const positions = this.linePositionMap.get(anyToString(lineNumber));
-          if (positions === undefined)
-              return [];
-          return positions;
+      getInlineStack(sourcePosition) {
+          const inliningStack = Array();
+          if (!sourcePosition)
+              return inliningStack;
+          let cur = sourcePosition;
+          while (cur && cur.inliningId != -1) {
+              inliningStack.push(cur);
+              const inlining = this.inlinings[cur.inliningId];
+              if (!inlining)
+                  break;
+              cur = inlining.inliningPosition;
+          }
+          if (cur && cur.inliningId == -1) {
+              inliningStack.push(cur);
+          }
+          return inliningStack;
+      }
+      recordOrigins(graphPhase) {
+          if (graphPhase.type !== PhaseType.Graph)
+              return;
+          for (const node of graphPhase.data.nodes) {
+              graphPhase.highestNodeId = Math.max(graphPhase.highestNodeId, node.id);
+              const origin = node.nodeLabel.origin;
+              if (origin instanceof BytecodeOrigin) {
+                  const position = new BytecodePosition(origin.bytecodePosition);
+                  this.nodePositionMap[node.id] = position;
+                  const key = position.toString();
+                  if (!this.positionToNodes.has(key)) {
+                      this.positionToNodes.set(key, new Array());
+                  }
+                  const nodes = this.positionToNodes.get(key);
+                  const identifier = node.identifier();
+                  if (!nodes.includes(identifier))
+                      nodes.push(identifier);
+              }
+          }
       }
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SelectionBroker {
       constructor(sourceResolver) {
-          this.allHandlers = [];
-          this.sourcePositionHandlers = [];
-          this.nodeHandlers = [];
-          this.blockHandlers = [];
-          this.instructionHandlers = [];
-          this.registerAllocationHandlers = [];
           this.sourceResolver = sourceResolver;
+          this.allHandlers = new Array();
+          this.sourcePositionHandlers = new Array();
+          this.nodeHandlers = new Array();
+          this.blockHandlers = new Array();
+          this.instructionHandlers = new Array();
+          this.registerAllocationHandlers = new Array();
       }
       addSourcePositionHandler(handler) {
           this.allHandlers.push(handler);
@@ -1391,9 +1350,9 @@
       }
       broadcastInstructionSelect(from, instructionOffsets, selected) {
           // Select the lines from the disassembly (right panel)
-          for (const b of this.instructionHandlers) {
-              if (b != from)
-                  b.brokeredInstructionSelect(instructionOffsets, selected);
+          for (const handler of this.instructionHandlers) {
+              if (handler != from)
+                  handler.brokeredInstructionSelect(instructionOffsets, selected);
           }
           // Select the lines from the source panel (left panel)
           const pcOffsets = this.sourceResolver.instructionsPhase
@@ -1401,31 +1360,31 @@
           for (const offset of pcOffsets) {
               const nodes = this.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
               const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
-              for (const b of this.sourcePositionHandlers) {
-                  if (b != from)
-                      b.brokeredSourcePositionSelect(sourcePositions, selected);
+              for (const handler of this.sourcePositionHandlers) {
+                  if (handler != from)
+                      handler.brokeredSourcePositionSelect(sourcePositions, selected);
               }
           }
           // The middle panel lines have already been selected so there's no need to reselect them.
       }
       broadcastSourcePositionSelect(from, sourcePositions, selected) {
-          sourcePositions = sourcePositions.filter(l => {
-              if (!sourcePositionValid(l)) {
-                  console.log("Warning: invalid source position");
+          sourcePositions = sourcePositions.filter(sourcePosition => {
+              if (!sourcePosition.isValid()) {
+                  console.warn("Invalid source position");
                   return false;
               }
               return true;
           });
           // Select the lines from the source panel (left panel)
-          for (const b of this.sourcePositionHandlers) {
-              if (b != from)
-                  b.brokeredSourcePositionSelect(sourcePositions, selected);
+          for (const handler of this.sourcePositionHandlers) {
+              if (handler != from)
+                  handler.brokeredSourcePositionSelect(sourcePositions, selected);
           }
           // Select the nodes (middle panel)
           const nodes = this.sourceResolver.sourcePositionsToNodeIds(sourcePositions);
-          for (const b of this.nodeHandlers) {
-              if (b != from)
-                  b.brokeredNodeSelect(nodes, selected);
+          for (const handler of this.nodeHandlers) {
+              if (handler != from)
+                  handler.brokeredNodeSelect(nodes, selected);
           }
           for (const node of nodes) {
               const instructionOffsets = this.sourceResolver.instructionsPhase
@@ -1434,28 +1393,28 @@
               if (instructionOffsets == undefined)
                   continue;
               // Select the lines from the disassembly (right panel)
-              for (const b of this.instructionHandlers) {
-                  if (b != from)
-                      b.brokeredInstructionSelect(instructionOffsets, selected);
+              for (const handler of this.instructionHandlers) {
+                  if (handler != from)
+                      handler.brokeredInstructionSelect(instructionOffsets, selected);
               }
               // Select the lines from the middle panel for the register allocation phase.
-              for (const b of this.registerAllocationHandlers) {
-                  if (b != from)
-                      b.brokeredRegisterAllocationSelect(instructionOffsets, selected);
+              for (const handler of this.registerAllocationHandlers) {
+                  if (handler != from)
+                      handler.brokeredRegisterAllocationSelect(instructionOffsets, selected);
               }
           }
       }
       broadcastNodeSelect(from, nodes, selected) {
           // Select the nodes (middle panel)
-          for (const b of this.nodeHandlers) {
-              if (b != from)
-                  b.brokeredNodeSelect(nodes, selected);
+          for (const handler of this.nodeHandlers) {
+              if (handler != from)
+                  handler.brokeredNodeSelect(nodes, selected);
           }
           // Select the lines from the source panel (left panel)
           const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
-          for (const b of this.sourcePositionHandlers) {
-              if (b != from)
-                  b.brokeredSourcePositionSelect(sourcePositions, selected);
+          for (const handler of this.sourcePositionHandlers) {
+              if (handler != from)
+                  handler.brokeredSourcePositionSelect(sourcePositions, selected);
           }
           for (const node of nodes) {
               const instructionOffsets = this.sourceResolver.instructionsPhase
@@ -1464,27 +1423,27 @@
               if (instructionOffsets == undefined)
                   continue;
               // Select the lines from the disassembly (right panel)
-              for (const b of this.instructionHandlers) {
-                  if (b != from)
-                      b.brokeredInstructionSelect(instructionOffsets, selected);
+              for (const handler of this.instructionHandlers) {
+                  if (handler != from)
+                      handler.brokeredInstructionSelect(instructionOffsets, selected);
               }
               // Select the lines from the middle panel for the register allocation phase.
-              for (const b of this.registerAllocationHandlers) {
-                  if (b != from)
-                      b.brokeredRegisterAllocationSelect(instructionOffsets, selected);
+              for (const handler of this.registerAllocationHandlers) {
+                  if (handler != from)
+                      handler.brokeredRegisterAllocationSelect(instructionOffsets, selected);
               }
           }
       }
       broadcastBlockSelect(from, blocks, selected) {
-          for (const b of this.blockHandlers) {
-              if (b != from)
-                  b.brokeredBlockSelect(blocks, selected);
+          for (const handler of this.blockHandlers) {
+              if (handler != from)
+                  handler.brokeredBlockSelect(blocks, selected);
           }
       }
       broadcastClear(from) {
-          this.allHandlers.forEach(function (b) {
-              if (b != from)
-                  b.brokeredClear();
+          this.allHandlers.forEach(handler => {
+              if (handler != from)
+                  handler.brokeredClear();
           });
       }
   }
@@ -1513,7 +1472,7 @@
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
-  class MySelection {
+  class SelectionMap {
       constructor(stringKeyFnc, originStringKeyFnc) {
           this.selection = new Map();
           this.stringKey = stringKeyFnc;
@@ -1525,31 +1484,31 @@
       clear() {
           this.selection = new Map();
       }
-      select(s, isSelected) {
-          for (const i of s) {
-              if (i == undefined)
+      select(items, isSelected) {
+          for (const item of items) {
+              if (item === undefined)
                   continue;
-              if (isSelected == undefined) {
-                  isSelected = !this.selection.has(this.stringKey(i));
+              if (isSelected === undefined) {
+                  isSelected = !this.selection.has(this.stringKey(item));
               }
               if (isSelected) {
-                  this.selection.set(this.stringKey(i), i);
+                  this.selection.set(this.stringKey(item), item);
               }
               else {
-                  this.selection.delete(this.stringKey(i));
+                  this.selection.delete(this.stringKey(item));
               }
           }
       }
-      isSelected(i) {
-          return this.selection.has(this.stringKey(i));
+      isSelected(obj) {
+          return this.selection.has(this.stringKey(obj));
       }
       isKeySelected(key) {
           return this.selection.has(key);
       }
       selectedKeys() {
           const result = new Set();
-          for (const i of this.selection.keys()) {
-              result.add(i);
+          for (const key of this.selection.keys()) {
+              result.add(key);
           }
           return result;
       }
@@ -1615,8 +1574,8 @@
           view.blockIdToHtmlElementsMap = new Map();
           view.blockIdToNodeIds = new Map();
           view.nodeIdToBlockId = [];
-          view.selection = new MySelection(anyToString);
-          view.blockSelection = new MySelection(anyToString);
+          view.selection = new SelectionMap(anyToString);
+          view.blockSelection = new SelectionMap(anyToString);
           view.broker = broker;
           view.sourceResolver = broker.sourceResolver;
           const selectionHandler = {
@@ -1671,7 +1630,7 @@
           };
           this.blockSelectionHandler = blockSelectionHandler;
           broker.addBlockHandler(blockSelectionHandler);
-          view.registerAllocationSelection = new MySelection(anyToString);
+          view.registerAllocationSelection = new SelectionMap(anyToString);
           const registerAllocationSelectionHandler = {
               clear: function () {
                   view.registerAllocationSelection.clear();
@@ -2035,7 +1994,7 @@
               }
           };
           view.divNode.addEventListener('click', linkHandlerBlock);
-          this.offsetSelection = new MySelection(anyToString);
+          this.offsetSelection = new SelectionMap(anyToString);
           const instructionSelectionHandler = {
               clear: function () {
                   view.offsetSelection.clear();
@@ -10900,7 +10859,7 @@
                   view.updateGraphVisibility();
               }
           };
-          view.state.selection = new MySelection(n => n.identifier(), n => n.nodeLabel?.origin?.identifier());
+          view.state.selection = new SelectionMap(n => n.identifier(), n => n.nodeLabel?.origin?.identifier());
           const defs = svg.append('svg:defs');
           defs.append('svg:marker')
               .attr('id', 'end-arrow')
@@ -13198,7 +13157,7 @@
       initializeSelect() {
           const view = this;
           view.selectMenu.innerHTML = "";
-          view.sourceResolver.forEachPhase((phase) => {
+          for (const phase of view.sourceResolver.phases) {
               const optionElement = document.createElement("option");
               let maxNodeId = "";
               if (phase instanceof GraphPhase && phase.highestNodeId != 0) {
@@ -13206,7 +13165,7 @@
               }
               optionElement.text = `${phase.name}${maxNodeId}`;
               view.selectMenu.add(optionElement);
-          });
+          }
           this.selectMenu.onchange = function () {
               const phaseIndex = this.selectedIndex;
               storageSetItem("lastSelectedPhase", phaseIndex);
@@ -13273,7 +13232,7 @@
                   view.updateSelection();
               },
           };
-          view.selection = new MySelection(sourcePositionToStringKey);
+          view.selection = new SelectionMap((sp) => sp.toString());
           broker.addSourcePositionHandler(selectionHandler);
           this.selectionHandler = selectionHandler;
           this.initializeCode();
@@ -13284,15 +13243,14 @@
           return sourceContainer;
       }
       addHtmlElementToSourcePosition(sourcePosition, element) {
-          const key = sourcePositionToStringKey(sourcePosition);
+          const key = sourcePosition.toString();
           if (!this.sourcePositionToHtmlElements.has(key)) {
               this.sourcePositionToHtmlElements.set(key, []);
           }
           this.sourcePositionToHtmlElements.get(key).push(element);
       }
       getHtmlElementForSourcePosition(sourcePosition) {
-          const key = sourcePositionToStringKey(sourcePosition);
-          return this.sourcePositionToHtmlElements.get(key);
+          return this.sourcePositionToHtmlElements.get(sourcePosition.toString());
       }
       updateSelection(scrollIntoView = false) {
           const mkVisible = new ViewElements(this.divNode.parentNode);
@@ -13436,7 +13394,7 @@
               offset += splitLength;
               const replacementNode = textnode.splitText(splitLength);
               const span = document.createElement('span');
-              span.setAttribute("scriptOffset", sourcePosition.scriptOffset);
+              span.setAttribute("scriptOffset", sourcePosition.scriptOffset.toString());
               span.classList.add("source-position");
               const marker = document.createElement('span');
               marker.classList.add("marker");
