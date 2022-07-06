@@ -17,6 +17,7 @@
   const SOURCE_COLLAPSE_ID = "source-shrink";
   const SOURCE_EXPAND_ID = "source-expand";
   const INTERMEDIATE_PANE_ID = "middle";
+  const GRAPH_PANE_ID = "graph";
   const GENERATED_PANE_ID = "right";
   const DISASSEMBLY_COLLAPSE_ID = "disassembly-shrink";
   const DISASSEMBLY_EXPAND_ID = "disassembly-expand";
@@ -123,6 +124,10 @@
           this.name = name;
           this.type = type;
       }
+      isGraph() {
+          return this.type == PhaseType.Graph ||
+              this.type == PhaseType.TurboshaftGraph;
+      }
   }
   var PhaseType;
   (function (PhaseType) {
@@ -133,6 +138,11 @@
       PhaseType["Sequence"] = "sequence";
       PhaseType["Schedule"] = "schedule";
   })(PhaseType || (PhaseType = {}));
+  var GraphStateType$1;
+  (function (GraphStateType) {
+      GraphStateType[GraphStateType["NeedToFullRebuild"] = 0] = "NeedToFullRebuild";
+      GraphStateType[GraphStateType["Cached"] = 1] = "Cached";
+  })(GraphStateType$1 || (GraphStateType$1 = {}));
 
   // Copyright 2019 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -280,21 +290,21 @@
           this.x = 0;
           this.y = 0;
           this.labelBox = measureText(this.displayLabel);
-          this.visitOrderWithinRank = 0;
       }
       areAnyOutputsVisible() {
-          // TODO (danylo boiko) Move 0, 1, 2 logic to enum
           let visibleCount = 0;
           for (const edge of this.outputs) {
               if (edge.isVisible()) {
                   ++visibleCount;
               }
           }
-          if (this.outputs.length === visibleCount)
-              return 2;
-          if (visibleCount !== 0)
-              return 1;
-          return 0;
+          if (this.outputs.length == visibleCount) {
+              return OutputVisibilityType.AllNodesVisible;
+          }
+          if (visibleCount != 0) {
+              return OutputVisibilityType.SomeNodesVisible;
+          }
+          return OutputVisibilityType.NoVisibleNodes;
       }
       setOutputVisibility(visibility) {
           let result = false;
@@ -316,6 +326,13 @@
           }
           return false;
       }
+      getInputX(index) {
+          return this.getWidth() - (NODE_INPUT_WIDTH / 2) +
+              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
+      }
+      getOutputX() {
+          return this.getWidth() - (NODE_INPUT_WIDTH / 2);
+      }
       identifier() {
           return `${this.id}`;
       }
@@ -323,6 +340,12 @@
           return `N${this.id}`;
       }
   }
+  var OutputVisibilityType;
+  (function (OutputVisibilityType) {
+      OutputVisibilityType[OutputVisibilityType["NoVisibleNodes"] = 0] = "NoVisibleNodes";
+      OutputVisibilityType[OutputVisibilityType["SomeNodesVisible"] = 1] = "SomeNodesVisible";
+      OutputVisibilityType[OutputVisibilityType["AllNodesVisible"] = 2] = "AllNodesVisible";
+  })(OutputVisibilityType || (OutputVisibilityType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class GraphNode extends Node$1 {
@@ -338,6 +361,16 @@
           this.width = alignUp(innerWidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
           const innerHeight = Math.max(this.labelBox.height, typeBox.height);
           this.normalHeight = innerHeight + 20;
+          this.visitOrderWithinRank = 0;
+      }
+      getHeight(showTypes) {
+          if (showTypes) {
+              return this.normalHeight + this.labelBox.height;
+          }
+          return this.normalHeight;
+      }
+      getWidth() {
+          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.width);
       }
       isControl() {
           return this.nodeLabel.control;
@@ -372,9 +405,6 @@
           return !(this.isControl() || this.isInput() ||
               this.isJavaScript() || this.isSimplified());
       }
-      getTotalNodeWidth() {
-          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.width);
-      }
       getTitle() {
           return this.nodeLabel.getTitle();
       }
@@ -403,22 +433,9 @@
           return this.y - MINIMUM_NODE_INPUT_APPROACH -
               (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
       }
-      getNodeHeight(showTypes) {
-          if (showTypes) {
-              return this.normalHeight + this.labelBox.height;
-          }
-          return this.normalHeight;
-      }
       getOutputApproach(showTypes) {
-          return this.y + this.outputApproach + this.getNodeHeight(showTypes) +
+          return this.y + this.outputApproach + this.getHeight(showTypes) +
               +DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getInputX(index) {
-          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2) +
-              (index - this.inputs.length + 1) * NODE_INPUT_WIDTH;
-      }
-      getOutputX() {
-          return this.getTotalNodeWidth() - (NODE_INPUT_WIDTH / 2);
       }
       hasBackEdges() {
           return (this.nodeLabel.opcode === "Loop") ||
@@ -474,7 +491,7 @@
           }
           const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
           return target.x < source.x
-              ? target.x + target.getTotalNodeWidth() + inputOffset
+              ? target.x + target.getWidth() + inputOffset
               : target.x - inputOffset;
       }
       generatePath(graph, showTypes) {
@@ -484,7 +501,7 @@
           const arrowheadHeight = 7;
           const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
           const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getNodeHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+          const outputY = source.y + source.getHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
           let inputApproach = target.getInputApproach(this.index);
           const outputApproach = source.getOutputApproach(showTypes);
           const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
@@ -946,31 +963,98 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphNode extends Node$1 {
-      constructor(id, title, block, properties) {
-          super(id);
+      constructor(id, title, block, opPropertiesType, properties) {
+          super(id, `${id} ${title}`);
           this.title = title;
           this.block = block;
+          this.opPropertiesType = opPropertiesType;
           this.properties = properties;
+          this.visible = true;
+      }
+      getHeight(showProperties) {
+          if (this.properties && showProperties) {
+              return this.labelBox.height * 2;
+          }
+          return this.labelBox.height;
+      }
+      getWidth() {
+          const measure = measureText(`${this.getInlineLabel()}[${this.getPropertiesTypeAbbreviation()}]`);
+          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, measure.width);
+      }
+      getInlineLabel() {
+          if (this.inputs.length == 0)
+              return `${this.id} ${this.title}`;
+          return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(",")})`;
+      }
+      getReadableProperties(blockWidth) {
+          const propertiesWidth = measureText(this.properties).width;
+          if (blockWidth > propertiesWidth)
+              return this.properties;
+          const widthOfOneSymbol = Math.floor(propertiesWidth / this.properties.length);
+          const lengthOfReadableProperties = Math.floor(blockWidth / widthOfOneSymbol);
+          return `${this.properties.slice(0, lengthOfReadableProperties - 3)}..`;
+      }
+      getPropertiesTypeAbbreviation() {
+          switch (this.opPropertiesType) {
+              case OpPropertiesType.Pure:
+                  return "P";
+              case OpPropertiesType.Reading:
+                  return "R";
+              case OpPropertiesType.Writing:
+                  return "W";
+              case OpPropertiesType.CanDeopt:
+                  return "CD";
+              case OpPropertiesType.AnySideEffects:
+                  return "ASE";
+              case OpPropertiesType.BlockTerminator:
+                  return "BT";
+          }
       }
   }
+  var OpPropertiesType;
+  (function (OpPropertiesType) {
+      OpPropertiesType["Pure"] = "Pure";
+      OpPropertiesType["Reading"] = "Reading";
+      OpPropertiesType["Writing"] = "Writing";
+      OpPropertiesType["CanDeopt"] = "CanDeopt";
+      OpPropertiesType["AnySideEffects"] = "AnySideEffects";
+      OpPropertiesType["BlockTerminator"] = "BlockTerminator";
+  })(OpPropertiesType || (OpPropertiesType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphEdge extends Edge {
       constructor(target, source) {
           super(target, source);
+          this.visible = target.visible && source.visible;
+      }
+      toString(idx) {
+          if (idx !== null)
+              return `${this.source.id},${idx},${this.target.id}`;
+          return `${this.source.id},${this.target.id}`;
       }
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
-  class TurboshaftGraphBlock {
+  class TurboshaftGraphBlock extends Node$1 {
       constructor(id, type, deferred, predecessors) {
-          this.id = id;
+          super(id, `${type} ${id}${deferred ? " (deferred)" : ""}`);
           this.type = type;
           this.deferred = deferred;
           this.predecessors = predecessors ?? new Array();
           this.nodes = new Array();
+          this.visible = true;
+      }
+      getHeight(showProperties) {
+          return this.nodes.reduce((accumulator, node) => {
+              return accumulator + node.getHeight(showProperties);
+          }, this.labelBox.height);
+      }
+      getWidth() {
+          const maxWidth = Math.max(...this.nodes.map((node) => node.getWidth()));
+          return Math.max(maxWidth, this.labelBox.width) + 50;
+      }
+      toString() {
+          return `B${this.id}`;
       }
   }
   var TurboshaftGraphBlockType;
@@ -986,8 +1070,11 @@
           super(name, PhaseType.TurboshaftGraph);
           this.highestBlockId = highestBlockId;
           this.data = data ?? new TurboshaftGraphData();
+          this.stateType = GraphStateType$1.NeedToFullRebuild;
+          this.layoutType = TurboshaftLayoutType.Inline;
           this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
           this.blockIdToBlockMap = blockIdToBlockMap ?? new Array();
+          this.rendered = false;
       }
       parseDataFromJSON(dataJson) {
           this.data = new TurboshaftGraphData();
@@ -997,15 +1084,26 @@
       }
       parseBlocksFromJSON(blocksJson) {
           for (const blockJson of blocksJson) {
-              const block = new TurboshaftGraphBlock(blockJson.id, blockJson.type, blockJson.deferred, blockJson.predecessors);
+              // TODO (danylo boiko) Change type of block id in JSON output
+              const numId = Number(blockJson.id.substring(1));
+              const block = new TurboshaftGraphBlock(numId, blockJson.type, blockJson.deferred, blockJson.predecessors);
               this.data.blocks.push(block);
               this.blockIdToBlockMap[block.id] = block;
+          }
+          for (const block of this.blockIdToBlockMap) {
+              for (const predecessor of block.predecessors) {
+                  const source = this.blockIdToBlockMap[Number(predecessor.substring(1))];
+                  const edge = new TurboshaftGraphEdge(block, source);
+                  block.inputs.push(edge);
+                  source.outputs.push(edge);
+              }
           }
       }
       parseNodesFromJSON(nodesJson) {
           for (const nodeJson of nodesJson) {
-              const block = this.blockIdToBlockMap[nodeJson.block_id];
-              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.properties);
+              const numId = Number(nodeJson.block_id.substring(1));
+              const block = this.blockIdToBlockMap[numId];
+              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.op_properties_type, nodeJson.properties);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.id] = node;
@@ -1029,6 +1127,11 @@
           this.blocks = blocks ?? new Array();
       }
   }
+  var TurboshaftLayoutType;
+  (function (TurboshaftLayoutType) {
+      TurboshaftLayoutType[TurboshaftLayoutType["Inline"] = 0] = "Inline";
+      TurboshaftLayoutType[TurboshaftLayoutType["Nodes"] = 1] = "Nodes";
+  })(TurboshaftLayoutType || (TurboshaftLayoutType = {}));
 
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SourceResolver {
@@ -10298,16 +10401,28 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
-  class Graph {
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class MovableContainer {
       constructor(graphPhase) {
           this.graphPhase = graphPhase;
-          this.nodeMap = graphPhase.nodeIdToNodeMap;
           this.minGraphX = 0;
           this.maxGraphX = 1;
           this.minGraphY = 0;
           this.maxGraphY = 1;
           this.width = 1;
           this.height = 1;
+      }
+      isRendered() {
+          return this.graphPhase.rendered;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class Graph extends MovableContainer {
+      constructor(graphPhase) {
+          super(graphPhase);
+          this.nodeMap = graphPhase.nodeIdToNodeMap;
       }
       *nodes(func = (n) => true) {
           for (const node of this.nodeMap) {
@@ -10343,9 +10458,10 @@
               if (!node.visible)
                   continue;
               this.minGraphX = Math.min(this.minGraphX, node.x);
-              this.maxGraphNodeX = Math.max(this.maxGraphNodeX, node.x + node.getTotalNodeWidth());
+              this.maxGraphNodeX = Math.max(this.maxGraphNodeX, node.x + node.getWidth());
               this.minGraphY = Math.min(this.minGraphY, node.y - NODE_INPUT_WIDTH);
-              this.maxGraphY = Math.max(this.maxGraphY, node.y + node.getNodeHeight(showTypes) + NODE_INPUT_WIDTH);
+              this.maxGraphY = Math.max(this.maxGraphY, node.y + node.getHeight(showTypes)
+                  + NODE_INPUT_WIDTH);
           }
           this.maxGraphX = this.maxGraphNodeX + this.maxBackEdgeNumber
               * MINIMUM_EDGE_SEPARATION;
@@ -10364,9 +10480,6 @@
               this.forEachEdge(edge => edge.visible = edge.visible || (this.isRendered() &&
                   edge.type === "control" && edge.source.visible && edge.target.visible));
           }
-      }
-      isRendered() {
-          return this.graphPhase.rendered;
       }
   }
 
@@ -10525,7 +10638,7 @@
           const rankSets = new Array();
           for (const node of this.graph.nodes()) {
               node.y = node.rank * (DEFAULT_NODE_ROW_SEPARATION +
-                  node.getNodeHeight(showTypes) + 2 * DEFAULT_NODE_BUBBLE_RADIUS);
+                  node.getHeight(showTypes) + 2 * DEFAULT_NODE_BUBBLE_RADIUS);
               if (node.visible) {
                   if (!rankSets[node.rank]) {
                       rankSets[node.rank] = new Array(node);
@@ -10551,8 +10664,7 @@
               for (const node of rankSet) {
                   if (node.visible) {
                       node.x = this.graphOccupation.occupyNode(node);
-                      const nodeTotalWidth = node.getTotalNodeWidth();
-                      this.trace(`Node ${node.id} is placed between [${node.x}, ${node.x + nodeTotalWidth})`);
+                      this.trace(`Node ${node.id} is placed between [${node.x}, ${node.x + node.getWidth()})`);
                       const staggeredFlooredI = Math.floor(placedCount++ % 3);
                       const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
                       node.outputApproach += delta;
@@ -10613,7 +10725,7 @@
           this.nodeOccupations = new Array();
       }
       occupyNode(node) {
-          const width = node.getTotalNodeWidth();
+          const width = node.getWidth();
           const margin = MINIMUM_EDGE_SEPARATION;
           const paddedWidth = width + 2 * margin;
           const [direction, position] = this.getPlacementHint(node);
@@ -10781,46 +10893,543 @@
       }
   }
 
-  // Copyright 2015 the V8 project authors. All rights reserved.
-  class GraphView extends PhaseView {
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class MovableView extends PhaseView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer);
-          const view = this;
           this.broker = broker;
           this.showPhaseByName = showPhaseByName;
-          this.divElement = select(this.divNode);
-          this.phaseName = "";
           this.toolbox = toolbox;
-          const svg = this.divElement.append("svg")
-              .attr('version', '2.0')
-              .attr("width", "100%")
-              .attr("height", "100%");
-          svg.on("click", function (d) {
-              view.selectionHandler.clear();
-          });
+          this.state = new MovableViewState();
+          this.divElement = select(this.divNode);
           // Listen for key events. Note that the focus handler seems
           // to be important even if it does nothing.
-          svg
-              .on("focus", e => { })
-              .on("keydown", e => { view.svgKeyDown(); });
-          view.svg = svg;
-          this.state = {
-              selection: null,
-              mouseDownNode: null,
-              justDragged: false,
-              justScaleTransGraph: false,
-              showTypes: false,
-              hideDead: false
-          };
-          this.selectionHandler = {
+          this.svg = this.divElement.append("svg")
+              .attr("version", "2.0")
+              .attr("width", "100%")
+              .attr("height", "100%")
+              .on("focus", () => { })
+              .on("keydown", () => this.svgKeyDown());
+          this.svg.append("svg:defs")
+              .append("svg:marker")
+              .attr("id", "end-arrow")
+              .attr("viewBox", "0 -4 8 8")
+              .attr("refX", 2)
+              .attr("markerWidth", 2.5)
+              .attr("markerHeight", 2.5)
+              .attr("orient", "auto")
+              .append("svg:path")
+              .attr("d", "M0,-4L8,0L0,4");
+          this.graphElement = this.svg.append("g");
+          this.panZoom = zoom()
+              .scaleExtent([0.2, 40])
+              .on("zoom", () => {
+              if (event.shiftKey)
+                  return false;
+              this.graphElement.attr("transform", event.transform);
+              return true;
+          })
+              .on("start", () => {
+              if (event.shiftKey)
+                  return;
+              select("body").style("cursor", "move");
+          })
+              .on("end", () => select("body").style("cursor", "auto"));
+          this.svg.call(this.panZoom).on("dblclick.zoom", null);
+      }
+      createViewElement() {
+          const pane = document.createElement("div");
+          pane.setAttribute("id", GRAPH_PANE_ID);
+          return pane;
+      }
+      detachSelection() {
+          return this.state.selection.detachSelection();
+      }
+      onresize() {
+          const trans = transform(this.svg.node());
+          const ctrans = this.panZoom.constrain()(trans, this.getSvgExtent(), this.panZoom.translateExtent());
+          this.panZoom.transform(this.svg, ctrans);
+      }
+      hide() {
+          if (this.state.cacheLayout) {
+              const matrix = this.graphElement.node().transform.baseVal.consolidate().matrix;
+              this.graph.graphPhase.transform = { scale: matrix.a, x: matrix.e, y: matrix.f };
+          }
+          else {
+              this.graph.graphPhase.transform = null;
+          }
+          super.hide();
+          this.deleteContent();
+      }
+      focusOnSvg() {
+          const svg = document.getElementById(GRAPH_PANE_ID).childNodes[0];
+          svg.focus();
+      }
+      updateGraphStateType(stateType) {
+          this.graph.graphPhase.stateType = stateType;
+      }
+      viewGraphRegion(minX, minY, maxX, maxY) {
+          const [width, height] = this.getSvgViewDimensions();
+          const dx = maxX - minX;
+          const dy = maxY - minY;
+          const x = (minX + maxX) / 2;
+          const y = (minY + maxY) / 2;
+          const scale = Math.min(width / dx, height / dy) * 0.9;
+          this.svg
+              .transition().duration(120).call(this.panZoom.scaleTo, scale)
+              .transition().duration(120).call(this.panZoom.translateTo, x, y);
+      }
+      addImgInput(id, title, onClick) {
+          const input = this.createImgInput(id, title, onClick);
+          this.toolbox.appendChild(input);
+      }
+      addToggleImgInput(id, title, initState, onClick) {
+          const input = this.createImgToggleInput(id, title, initState, onClick);
+          this.toolbox.appendChild(input);
+      }
+      minScale(graphWidth, graphHeight) {
+          const [clientWith, clientHeight] = this.getSvgViewDimensions();
+          const minXScale = clientWith / (2 * graphWidth);
+          const minYScale = clientHeight / (2 * graphHeight);
+          const minScale = Math.min(minXScale, minYScale);
+          this.panZoom.scaleExtent([minScale, 40]);
+          return minScale;
+      }
+      getNodeFrontier(nodes, inEdges, edgeFilter) {
+          const frontier = new Set();
+          let newState = true;
+          const edgeFrontier = this.getEdgeFrontier(nodes, inEdges, edgeFilter);
+          // Control key toggles edges rather than just turning them on
+          if (event.ctrlKey) {
+              for (const edge of edgeFrontier) {
+                  if (edge.visible)
+                      newState = false;
+              }
+          }
+          for (const edge of edgeFrontier) {
+              edge.visible = newState;
+              if (newState) {
+                  const node = inEdges ? edge.source : edge.target;
+                  node.visible = true;
+                  frontier.add(node);
+              }
+          }
+          this.updateGraphVisibility();
+          return newState ? frontier : undefined;
+      }
+      showSelectionFrontierNodes(inEdges, filter, select) {
+          const frontier = this.getNodeFrontier(this.state.selection, inEdges, filter);
+          if (frontier !== undefined && frontier.size) {
+              if (select) {
+                  if (!event.shiftKey)
+                      this.state.selection.clear();
+                  this.state.selection.select([...frontier], true);
+              }
+              this.updateGraphVisibility();
+          }
+      }
+      getEdgeFrontier(nodes, inEdges, edgeFilter) {
+          const frontier = new Set();
+          for (const node of nodes) {
+              let edgeNumber = 0;
+              const edges = inEdges ? node.inputs : node.outputs;
+              for (const edge of edges) {
+                  if (edgeFilter === undefined || edgeFilter(edge, edgeNumber)) {
+                      frontier.add(edge);
+                  }
+                  ++edgeNumber;
+              }
+          }
+          return frontier;
+      }
+      connectVisibleSelectedElements() {
+          for (const element of this.state.selection) {
+              element.inputs.forEach((edge) => {
+                  if (edge.source.visible && edge.target.visible) {
+                      edge.visible = true;
+                  }
+              });
+              element.outputs.forEach((edge) => {
+                  if (edge.source.visible && edge.target.visible) {
+                      edge.visible = true;
+                  }
+              });
+          }
+      }
+      showVisible() {
+          this.updateGraphVisibility();
+          this.viewWholeGraph();
+          this.focusOnSvg();
+      }
+      viewWholeGraph() {
+          this.panZoom.scaleTo(this.svg, 0);
+          this.panZoom.translateTo(this.svg, this.graph.minGraphX + this.graph.width / 2, this.graph.minGraphY + this.graph.height / 2);
+      }
+      deleteContent() {
+          for (const item of this.toolbox.querySelectorAll(".graph-toolbox-item")) {
+              item.parentElement.removeChild(item);
+          }
+          if (!this.state.cacheLayout) {
+              this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
+          }
+          this.graph.graphPhase.rendered = false;
+          this.updateGraphVisibility();
+      }
+      getSvgViewDimensions() {
+          return [this.container.clientWidth, this.container.clientHeight];
+      }
+      getSvgExtent() {
+          return [[0, 0], [this.container.clientWidth, this.container.clientHeight]];
+      }
+      createImgInput(id, title, onClick) {
+          const input = document.createElement("input");
+          input.setAttribute("id", id);
+          input.setAttribute("type", "image");
+          input.setAttribute("title", title);
+          input.setAttribute("src", `img/toolbox/${id}-icon.png`);
+          input.className = "button-input graph-toolbox-item";
+          input.addEventListener("click", onClick);
+          return input;
+      }
+      createImgToggleInput(id, title, initState, onClick) {
+          const input = this.createImgInput(id, title, onClick);
+          input.classList.toggle("button-input-toggled", initState);
+          return input;
+      }
+  }
+  class MovableViewState {
+      get hideDead() {
+          return storageGetItem("toggle-hide-dead", false);
+      }
+      set hideDead(value) {
+          storageSetItem("toggle-hide-dead", value);
+      }
+      get showTypes() {
+          return storageGetItem("toggle-types", false);
+      }
+      set showTypes(value) {
+          storageSetItem("toggle-types", value);
+      }
+      get showProperties() {
+          return storageGetItem("toggle-properties", false);
+      }
+      set showProperties(value) {
+          storageSetItem("toggle-properties", value);
+      }
+      get cacheLayout() {
+          return storageGetItem("toggle-cache-layout", true);
+      }
+      set cacheLayout(value) {
+          storageSetItem("toggle-cache-layout", value);
+      }
+  }
+
+  // Copyright 2015 the V8 project authors. All rights reserved.
+  class GraphView extends MovableView {
+      constructor(idOrContainer, broker, showPhaseByName, toolbox) {
+          super(idOrContainer, broker, showPhaseByName, toolbox);
+          this.state.selection = new SelectionMap(node => node.identifier(), node => node.nodeLabel?.origin?.identifier());
+          this.nodesSelectionHandler = this.initializeNodesSelectionHandler();
+          this.svg.on("click", () => this.nodesSelectionHandler.clear());
+          this.visibleEdges = this.graphElement.append("g");
+          this.visibleNodes = this.graphElement.append("g");
+          this.drag = drag()
+              .on("drag", (node) => {
+              node.x += event.dx;
+              node.y += event.dy;
+              this.updateGraphVisibility();
+          });
+      }
+      // TODO (danylo boiko) Extend selection type (add num, string?)
+      initializeContent(data, rememberedSelection) {
+          this.show();
+          this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
+          this.addImgInput("show-all", "show all nodes", partial(this.showAllAction, this));
+          this.addImgInput("show-control", "show only control nodes", partial(this.showControlAction, this));
+          this.addImgInput("hide-unselected", "hide unselected", partial(this.hideUnselectedAction, this));
+          this.addImgInput("hide-selected", "hide selected", partial(this.hideSelectedAction, this));
+          this.addImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this));
+          this.addToggleImgInput("toggle-hide-dead", "toggle hide dead nodes", this.state.hideDead, partial(this.toggleHideDeadAction, this));
+          this.addToggleImgInput("toggle-types", "toggle types", this.state.showTypes, partial(this.toggleTypesAction, this));
+          this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
+          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
+          this.phaseName = data.name;
+          this.createGraph(data, adaptedSelection);
+          this.broker.addNodeHandler(this.nodesSelectionHandler);
+          const selectedNodes = adaptedSelection?.size > 0
+              ? this.attachSelection(adaptedSelection)
+              : null;
+          if (selectedNodes?.length > 0) {
+              this.connectVisibleSelectedElements();
+              this.viewSelection();
+          }
+          else {
+              this.viewWholeGraph();
+              if (this.state.cacheLayout && data.transform) {
+                  this.svg.call(this.panZoom.transform, identity
+                      .translate(data.transform.x, data.transform.y)
+                      .scale(data.transform.scale));
+              }
+          }
+      }
+      updateGraphVisibility() {
+          const view = this;
+          const graph = this.graph;
+          const state = this.state;
+          if (!graph)
+              return;
+          const filteredEdges = [
+              ...graph.filteredEdges(edge => graph.isRendered()
+                  && edge.source.visible && edge.target.visible)
+          ];
+          const selEdges = view.visibleEdges
+              .selectAll("path")
+              .data(filteredEdges, edge => edge.toString());
+          // remove old links
+          selEdges.exit().remove();
+          // add new paths
+          const newEdges = selEdges
+              .enter()
+              .append("path")
+              .style("marker-end", "url(#end-arrow)")
+              .attr("id", edge => `e,${edge.toString()}`)
+              .on("click", edge => {
+              event.stopPropagation();
+              if (!event.shiftKey) {
+                  view.nodesSelectionHandler.clear();
+              }
+              view.nodesSelectionHandler.select([edge.source, edge.target], true);
+          })
+              .attr("adjacentToHover", "false")
+              .classed("value", edge => edge.type === "value" || edge.type === "context")
+              .classed("control", edge => edge.type === "control")
+              .classed("effect", edge => edge.type === "effect")
+              .classed("frame-state", edge => edge.type === "frame-state")
+              .attr("stroke-dasharray", edge => {
+              if (edge.type === "frame-state")
+                  return "10,10";
+              return edge.type === "effect" ? "5,5" : "";
+          });
+          const newAndOldEdges = newEdges.merge(selEdges);
+          newAndOldEdges.classed("hidden", edge => !edge.isVisible());
+          // select existing nodes
+          const filteredNodes = [...graph.nodes(node => graph.isRendered() && node.visible)];
+          const allNodes = view.visibleNodes.selectAll("g");
+          const selNodes = allNodes.data(filteredNodes, node => node.toString());
+          // remove old nodes
+          selNodes.exit().remove();
+          // add new nodes
+          const newGs = selNodes.enter()
+              .append("g")
+              .classed("turbonode", true)
+              .classed("control", node => node.isControl())
+              .classed("live", node => node.isLive())
+              .classed("dead", node => !node.isLive())
+              .classed("javascript", node => node.isJavaScript())
+              .classed("input", node => node.isInput())
+              .classed("simplified", node => node.isSimplified())
+              .classed("machine", node => node.isMachine())
+              .on("mouseenter", node => {
+              const visibleEdges = view.visibleEdges.selectAll("path");
+              const adjInputEdges = visibleEdges.filter(edge => edge.target === node);
+              const adjOutputEdges = visibleEdges.filter(edge => edge.source === node);
+              adjInputEdges.attr("relToHover", "input");
+              adjOutputEdges.attr("relToHover", "output");
+              const adjInputNodes = adjInputEdges.data().map(edge => edge.source);
+              const visibleNodes = view.visibleNodes.selectAll("g");
+              visibleNodes.data(adjInputNodes, node => node.toString())
+                  .attr("relToHover", "input");
+              const adjOutputNodes = adjOutputEdges.data().map(edge => edge.target);
+              visibleNodes.data(adjOutputNodes, node => node.toString())
+                  .attr("relToHover", "output");
+              view.updateGraphVisibility();
+          })
+              .on("mouseleave", node => {
+              const visibleEdges = view.visibleEdges.selectAll("path");
+              const adjEdges = visibleEdges.filter(edge => edge.target === node || edge.source === node);
+              adjEdges.attr("relToHover", "none");
+              const adjNodes = adjEdges.data().map(edge => edge.target)
+                  .concat(adjEdges.data().map(edge => edge.source));
+              const visibleNodes = view.visibleNodes.selectAll("g");
+              visibleNodes.data(adjNodes, node => node.toString()).attr("relToHover", "none");
+              view.updateGraphVisibility();
+          })
+              .on("click", node => {
+              if (!event.shiftKey)
+                  view.nodesSelectionHandler.clear();
+              view.nodesSelectionHandler.select([node], undefined);
+              event.stopPropagation();
+          })
+              .call(view.drag);
+          newGs.each(function (node) {
+              const svg = select(this);
+              svg.append("rect")
+                  .attr("rx", 10)
+                  .attr("ry", 10)
+                  .attr("width", node => node.getWidth())
+                  .attr("height", node => node.getHeight(view.state.showTypes));
+              svg.append("text")
+                  .classed("label", true)
+                  .attr("text-anchor", "right")
+                  .attr("dx", 5)
+                  .attr("dy", 5)
+                  .append("tspan")
+                  .text(node.getDisplayLabel())
+                  .append("title")
+                  .text(node.getTitle());
+              if (node.nodeLabel.type) {
+                  svg.append("text")
+                      .classed("label", true)
+                      .classed("type", true)
+                      .attr("text-anchor", "right")
+                      .attr("dx", 5)
+                      .attr("dy", node.labelBox.height + 5)
+                      .append("tspan")
+                      .text(node.getDisplayType())
+                      .append("title")
+                      .text(node.getType());
+              }
+              view.appendInputAndOutputBubbles(svg, node);
+          });
+          const newAndOldNodes = newGs.merge(selNodes);
+          newAndOldNodes.select(".type").each(function () {
+              this.setAttribute("visibility", view.state.showTypes ? "visible" : "hidden");
+          });
+          newAndOldNodes
+              .classed("selected", node => state.selection.isSelected(node))
+              .attr("transform", node => `translate(${node.x},${node.y})`)
+              .select("rect")
+              .attr("height", node => node.getHeight(view.state.showTypes));
+          view.visibleBubbles = selectAll("circle");
+          view.updateInputAndOutputBubbles();
+          graph.maxGraphX = graph.maxGraphNodeX;
+          newAndOldEdges.attr("d", node => node.generatePath(graph, view.state.showTypes));
+      }
+      svgKeyDown() {
+          let eventHandled = true; // unless the below switch defaults
+          switch (event.keyCode) {
+              case 49:
+              case 50:
+              case 51:
+              case 52:
+              case 53:
+              case 54:
+              case 55:
+              case 56:
+              case 57: // '1'-'9'
+                  this.showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 49), !event.ctrlKey);
+                  break;
+              case 97:
+              case 98:
+              case 99:
+              case 100:
+              case 101:
+              case 102:
+              case 103:
+              case 104:
+              case 105: // 'numpad 1'-'numpad 9'
+                  this.showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 97), !event.ctrlKey);
+                  break;
+              case 67: // 'c'
+                  this.showSelectionFrontierNodes(event.altKey, (edge) => edge.type === "control", true);
+                  break;
+              case 69: // 'e'
+                  this.showSelectionFrontierNodes(event.altKey, (edge) => edge.type === "effect", true);
+                  break;
+              case 79: // 'o'
+                  this.showSelectionFrontierNodes(false, undefined, false);
+                  break;
+              case 73: // 'i'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.showSelectionFrontierNodes(true, undefined, false);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 65: // 'a'
+                  this.selectAllNodes();
+                  break;
+              case 38: // UP
+              case 40: // DOWN
+                  this.showSelectionFrontierNodes(event.keyCode == 38, undefined, true);
+                  break;
+              case 82: // 'r'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.layoutAction(this);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 80: // 'p'
+                  this.selectOrigins();
+                  break;
+              default:
+                  eventHandled = false;
+                  break;
+              case 83: // 's'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.hideSelectedAction(this);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 85: // 'u'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.hideUnselectedAction(this);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+          }
+          if (eventHandled)
+              event.preventDefault();
+      }
+      searchInputAction(searchBar, e, onlyVisible) {
+          if (e.keyCode == 13) {
+              this.nodesSelectionHandler.clear();
+              const query = searchBar.value;
+              storageSetItem("lastSearch", query);
+              if (query.length == 0)
+                  return;
+              const reg = new RegExp(query);
+              const filterFunction = (node) => {
+                  return (reg.exec(node.getDisplayLabel()) !== null ||
+                      (this.state.showTypes && reg.exec(node.getDisplayType())) ||
+                      (reg.exec(node.getTitle())) ||
+                      reg.exec(node.nodeLabel.opcode) !== null);
+              };
+              const selection = [...this.graph.nodes(node => {
+                      if ((e.ctrlKey || node.visible || !onlyVisible) && filterFunction(node)) {
+                          if (e.ctrlKey || !onlyVisible)
+                              node.visible = true;
+                          return true;
+                      }
+                      return false;
+                  })];
+              this.nodesSelectionHandler.select(selection, true);
+              this.connectVisibleSelectedElements();
+              this.updateGraphVisibility();
+              searchBar.blur();
+              this.viewSelection();
+              this.focusOnSvg();
+          }
+          e.stopPropagation();
+      }
+      initializeNodesSelectionHandler() {
+          const view = this;
+          return {
               clear: function () {
                   view.state.selection.clear();
-                  broker.broadcastClear(this);
+                  view.broker.broadcastClear(this);
                   view.updateGraphVisibility();
               },
-              select: function (nodes, selected) {
-                  const locations = [];
-                  for (const node of nodes) {
+              select: function (selectedNodes, selected) {
+                  const locations = new Array();
+                  for (const node of selectedNodes) {
                       if (node.nodeLabel.sourcePosition) {
                           locations.push(node.nodeLabel.sourcePosition);
                       }
@@ -10828,27 +11437,24 @@
                           locations.push(new BytecodePosition(node.nodeLabel.origin.bytecodePosition));
                       }
                   }
-                  view.state.selection.select(nodes, selected);
-                  broker.broadcastSourcePositionSelect(this, locations, selected);
+                  view.state.selection.select(selectedNodes, selected);
+                  view.broker.broadcastSourcePositionSelect(this, locations, selected);
                   view.updateGraphVisibility();
               },
               brokeredNodeSelect: function (locations, selected) {
                   if (!view.graph)
                       return;
-                  const selection = view.graph.nodes(n => {
-                      return locations.has(n.identifier())
-                          && (!view.state.hideDead || n.isLive());
-                  });
+                  const selection = view.graph.nodes(node => locations.has(node.identifier()) && (!view.state.hideDead || node.isLive()));
                   view.state.selection.select(selection, selected);
                   // Update edge visibility based on selection.
-                  for (const n of view.graph.nodes()) {
-                      if (view.state.selection.isSelected(n)) {
-                          n.visible = true;
-                          n.inputs.forEach(e => {
-                              e.visible = e.visible || view.state.selection.isSelected(e.source);
+                  for (const node of view.graph.nodes()) {
+                      if (view.state.selection.isSelected(node)) {
+                          node.visible = true;
+                          node.inputs.forEach(edge => {
+                              edge.visible = edge.visible || view.state.selection.isSelected(edge.source);
                           });
-                          n.outputs.forEach(e => {
-                              e.visible = e.visible || view.state.selection.isSelected(e.target);
+                          node.outputs.forEach(edge => {
+                              edge.visible = edge.visible || view.state.selection.isSelected(edge.target);
                           });
                       }
                   }
@@ -10859,166 +11465,11 @@
                   view.updateGraphVisibility();
               }
           };
-          view.state.selection = new SelectionMap(n => n.identifier(), n => n.nodeLabel?.origin?.identifier());
-          const defs = svg.append('svg:defs');
-          defs.append('svg:marker')
-              .attr('id', 'end-arrow')
-              .attr('viewBox', '0 -4 8 8')
-              .attr('refX', 2)
-              .attr('markerWidth', 2.5)
-              .attr('markerHeight', 2.5)
-              .attr('orient', 'auto')
-              .append('svg:path')
-              .attr('d', 'M0,-4L8,0L0,4');
-          this.graphElement = svg.append("g");
-          view.visibleEdges = this.graphElement.append("g");
-          view.visibleNodes = this.graphElement.append("g");
-          view.drag = drag()
-              .on("drag", function (d) {
-              d.x += event.dx;
-              d.y += event.dy;
-              view.updateGraphVisibility();
-          });
-          function zoomed() {
-              if (event.shiftKey)
-                  return false;
-              view.graphElement.attr("transform", event.transform);
-              return true;
-          }
-          const zoomSvg = zoom()
-              .scaleExtent([0.2, 40])
-              .on("zoom", zoomed)
-              .on("start", function () {
-              if (event.shiftKey)
-                  return;
-              select('body').style("cursor", "move");
-          })
-              .on("end", function () {
-              select('body').style("cursor", "auto");
-          });
-          svg.call(zoomSvg).on("dblclick.zoom", null);
-          view.panZoom = zoomSvg;
-      }
-      createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "graph");
-          return pane;
-      }
-      getEdgeFrontier(nodes, inEdges, edgeFilter) {
-          const frontier = new Set();
-          for (const n of nodes) {
-              const edges = inEdges ? n.inputs : n.outputs;
-              let edgeNumber = 0;
-              edges.forEach((edge) => {
-                  if (edgeFilter == undefined || edgeFilter(edge, edgeNumber)) {
-                      frontier.add(edge);
-                  }
-                  ++edgeNumber;
-              });
-          }
-          return frontier;
-      }
-      getNodeFrontier(nodes, inEdges, edgeFilter) {
-          const view = this;
-          const frontier = new Set();
-          let newState = true;
-          const edgeFrontier = view.getEdgeFrontier(nodes, inEdges, edgeFilter);
-          // Control key toggles edges rather than just turning them on
-          if (event.ctrlKey) {
-              edgeFrontier.forEach(function (edge) {
-                  if (edge.visible) {
-                      newState = false;
-                  }
-              });
-          }
-          edgeFrontier.forEach(function (edge) {
-              edge.visible = newState;
-              if (newState) {
-                  const node = inEdges ? edge.source : edge.target;
-                  node.visible = true;
-                  frontier.add(node);
-              }
-          });
-          view.updateGraphVisibility();
-          if (newState) {
-              return frontier;
-          }
-          else {
-              return undefined;
-          }
-      }
-      initializeContent(data, rememberedSelection) {
-          this.show();
-          function createImgInput(id, title, onClick) {
-              const input = document.createElement("input");
-              input.setAttribute("id", id);
-              input.setAttribute("type", "image");
-              input.setAttribute("title", title);
-              input.setAttribute("src", `img/toolbox/${id}-icon.png`);
-              input.className = "button-input graph-toolbox-item";
-              input.addEventListener("click", onClick);
-              return input;
-          }
-          function createImgToggleInput(id, title, onClick) {
-              const input = createImgInput(id, title, onClick);
-              const toggled = storageGetItem(id, true);
-              input.classList.toggle("button-input-toggled", toggled);
-              return input;
-          }
-          this.toolbox.appendChild(createImgInput("layout", "layout graph", partial(this.layoutAction, this)));
-          this.toolbox.appendChild(createImgInput("show-all", "show all nodes", partial(this.showAllAction, this)));
-          this.toolbox.appendChild(createImgInput("show-control", "show only control nodes", partial(this.showControlAction, this)));
-          this.toolbox.appendChild(createImgInput("toggle-hide-dead", "toggle hide dead nodes", partial(this.toggleHideDead, this)));
-          this.toolbox.appendChild(createImgInput("hide-unselected", "hide unselected", partial(this.hideUnselectedAction, this)));
-          this.toolbox.appendChild(createImgInput("hide-selected", "hide selected", partial(this.hideSelectedAction, this)));
-          this.toolbox.appendChild(createImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this)));
-          this.toolbox.appendChild(createImgInput("toggle-types", "toggle types", partial(this.toggleTypesAction, this)));
-          this.toolbox.appendChild(createImgToggleInput("cache-graphs", "remember graph layout", partial(this.toggleGraphCachingAction)));
-          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
-          this.phaseName = data.name;
-          this.createGraph(data, adaptedSelection);
-          this.broker.addNodeHandler(this.selectionHandler);
-          const selectedNodes = adaptedSelection?.size > 0
-              ? this.attachSelection(adaptedSelection)
-              : null;
-          if (selectedNodes?.length > 0) {
-              this.connectVisibleSelectedNodes();
-              this.viewSelection();
-          }
-          else {
-              this.viewWholeGraph();
-              if (this.isCachingEnabled() && data.transform) {
-                  this.svg.call(this.panZoom.transform, identity
-                      .translate(data.transform.x, data.transform.y)
-                      .scale(data.transform.scale));
-              }
-          }
-      }
-      deleteContent() {
-          for (const item of this.toolbox.querySelectorAll(".graph-toolbox-item")) {
-              item.parentElement.removeChild(item);
-          }
-          if (!this.isCachingEnabled()) {
-              this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
-          }
-          this.graph.graphPhase.rendered = false;
-          this.updateGraphVisibility();
-      }
-      hide() {
-          if (this.isCachingEnabled()) {
-              const matrix = this.graphElement.node().transform.baseVal.consolidate().matrix;
-              this.graph.graphPhase.transform = { scale: matrix.a, x: matrix.e, y: matrix.f };
-          }
-          else {
-              this.graph.graphPhase.transform = null;
-          }
-          super.hide();
-          this.deleteContent();
       }
       createGraph(data, selection) {
           this.graph = new Graph(data);
           this.graphLayout = new GraphLayout(this.graph);
-          if (!this.isCachingEnabled() ||
+          if (!this.state.cacheLayout ||
               this.graph.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
               this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
               this.showControlAction(this);
@@ -11027,77 +11478,107 @@
               this.showVisible();
           }
           if (selection !== undefined) {
-              for (const node of this.graph.nodes()) {
-                  node.visible = node.visible || selection.has(node.identifier());
+              for (const item of selection) {
+                  if (this.graph.nodeMap[item])
+                      this.graph.nodeMap[item].visible = true;
               }
           }
           this.graph.makeEdgesVisible();
           this.layoutGraph();
           this.updateGraphVisibility();
       }
-      showVisible() {
-          this.updateGraphVisibility();
-          this.viewWholeGraph();
-          this.focusOnSvg();
+      layoutGraph() {
+          const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
+              ? "Layout graph from cache"
+              : "Layout graph";
+          console.time(layoutMessage);
+          this.graphLayout.rebuild(this.state.showTypes);
+          const extent = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
+          this.panZoom.translateExtent(extent);
+          this.minScale(this.graph.width, this.graph.height);
+          console.timeEnd(layoutMessage);
       }
-      connectVisibleSelectedNodes() {
+      appendInputAndOutputBubbles(svg, node) {
           const view = this;
-          for (const n of view.state.selection) {
-              n.inputs.forEach(function (edge) {
-                  if (edge.source.visible && edge.target.visible) {
-                      edge.visible = true;
-                  }
+          for (let i = 0; i < node.inputs.length; ++i) {
+              const x = node.getInputX(i);
+              const y = -DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", node.inputs[i].isVisible())
+                  .classed("bubbleStyle", !node.inputs[i].isVisible())
+                  .attr("id", `ib,${node.inputs[i]}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`)
+                  .on("click", function () {
+                  const components = this.id.split(",");
+                  const node = view.graph.nodeMap[components[3]];
+                  const edge = node.inputs[components[2]];
+                  const visible = !edge.isVisible();
+                  node.setInputVisibility(components[2], visible);
+                  event.stopPropagation();
+                  view.updateGraphVisibility();
               });
-              n.outputs.forEach(function (edge) {
-                  if (edge.source.visible && edge.target.visible) {
-                      edge.visible = true;
-                  }
+          }
+          if (node.outputs.length > 0) {
+              const x = node.getOutputX();
+              const y = node.getHeight(view.state.showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", node.areAnyOutputsVisible()
+                  == OutputVisibilityType.AllNodesVisible)
+                  .classed("halFilledBubbleStyle", node.areAnyOutputsVisible()
+                  == OutputVisibilityType.SomeNodesVisible)
+                  .classed("bubbleStyle", node.areAnyOutputsVisible()
+                  == OutputVisibilityType.NoVisibleNodes)
+                  .attr("id", `ob,${node.id}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`)
+                  .on("click", node => {
+                  node.setOutputVisibility(node.areAnyOutputsVisible()
+                      == OutputVisibilityType.NoVisibleNodes);
+                  event.stopPropagation();
+                  view.updateGraphVisibility();
               });
           }
       }
       updateInputAndOutputBubbles() {
           const view = this;
-          const g = this.graph;
-          const s = this.visibleBubbles;
-          s.classed("filledBubbleStyle", function (c) {
-              const components = this.id.split(',');
-              if (components[0] == "ib") {
-                  const edge = g.nodeMap[components[3]].inputs[components[2]];
+          const graph = this.graph;
+          const bubbles = this.visibleBubbles;
+          bubbles.classed("filledBubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib") {
+                  const edge = graph.nodeMap[components[3]].inputs[components[2]];
                   return edge.isVisible();
               }
-              else {
-                  return g.nodeMap[components[1]].areAnyOutputsVisible() == 2;
-              }
-          }).classed("halfFilledBubbleStyle", function (c) {
-              const components = this.id.split(',');
-              if (components[0] == "ib") {
+              return graph.nodeMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.AllNodesVisible;
+          }).classed("halfFilledBubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib")
                   return false;
-              }
-              else {
-                  return g.nodeMap[components[1]].areAnyOutputsVisible() == 1;
-              }
-          }).classed("bubbleStyle", function (c) {
-              const components = this.id.split(',');
-              if (components[0] == "ib") {
-                  const edge = g.nodeMap[components[3]].inputs[components[2]];
+              return graph.nodeMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.SomeNodesVisible;
+          }).classed("bubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib") {
+                  const edge = graph.nodeMap[components[3]].inputs[components[2]];
                   return !edge.isVisible();
               }
-              else {
-                  return g.nodeMap[components[1]].areAnyOutputsVisible() == 0;
-              }
+              return graph.nodeMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.NoVisibleNodes;
           });
-          s.each(function (c) {
-              const components = this.id.split(',');
-              if (components[0] == "ob") {
-                  const from = g.nodeMap[components[1]];
+          bubbles.each(function () {
+              const components = this.id.split(",");
+              if (components[0] === "ob") {
+                  const from = graph.nodeMap[components[1]];
                   const x = from.getOutputX();
-                  const y = from.getNodeHeight(view.state.showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-                  const transform = "translate(" + x + "," + y + ")";
-                  this.setAttribute('transform', transform);
+                  const y = from.getHeight(view.state.showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+                  this.setAttribute("transform", `translate(${x},${y})`);
               }
           });
       }
       adaptSelectionToCurrentPhase(data, selection) {
+          // TODO (danylo boiko) Speed up adapting
           const updatedGraphSelection = new Set();
           if (!data || !(selection instanceof Map))
               return updatedGraphSelection;
@@ -11127,53 +11608,86 @@
       attachSelection(selection) {
           if (!(selection instanceof Set))
               return new Array();
-          this.selectionHandler.clear();
+          this.nodesSelectionHandler.clear();
           const selected = [
               ...this.graph.nodes(node => selection.has(this.state.selection.stringKey(node))
                   && (!this.state.hideDead || node.isLive()))
           ];
-          this.selectionHandler.select(selected, true);
+          this.nodesSelectionHandler.select(selected, true);
           return selected;
       }
-      detachSelection() {
-          return this.state.selection.detachSelection();
-      }
-      selectAllNodes() {
-          if (!event.shiftKey) {
-              this.state.selection.clear();
+      viewSelection() {
+          let minX;
+          let maxX;
+          let minY;
+          let maxY;
+          let hasSelection = false;
+          this.visibleNodes.selectAll("g").each((node) => {
+              if (this.state.selection.isSelected(node)) {
+                  hasSelection = true;
+                  minX = minX ? Math.min(minX, node.x) : node.x;
+                  maxX = maxX ? Math.max(maxX, node.x + node.getWidth()) : node.x + node.getWidth();
+                  minY = minY ? Math.min(minY, node.y) : node.y;
+                  maxY = maxY
+                      ? Math.max(maxY, node.y + node.getHeight(this.state.showTypes))
+                      : node.y + node.getHeight(this.state.showTypes);
+              }
+          });
+          if (hasSelection) {
+              this.viewGraphRegion(minX - NODE_INPUT_WIDTH, minY - 60, maxX + NODE_INPUT_WIDTH, maxY + 60);
           }
-          const allVisibleNodes = [...this.graph.nodes(n => n.visible)];
-          this.state.selection.select(allVisibleNodes, true);
-          this.updateGraphVisibility();
       }
-      layoutAction(graph) {
-          graph.updateGraphStateType(GraphStateType.NeedToFullRebuild);
-          graph.layoutGraph();
-          graph.updateGraphVisibility();
-          graph.viewWholeGraph();
-          graph.focusOnSvg();
+      // Actions (handlers of toolbox menu and hotkeys events)
+      layoutAction(view) {
+          view.updateGraphStateType(GraphStateType.NeedToFullRebuild);
+          view.layoutGraph();
+          view.updateGraphVisibility();
+          view.viewWholeGraph();
+          view.focusOnSvg();
       }
       showAllAction(view) {
-          for (const n of view.graph.nodes()) {
-              n.visible = !view.state.hideDead || n.isLive();
+          for (const node of view.graph.nodes()) {
+              node.visible = !view.state.hideDead || node.isLive();
           }
-          view.graph.forEachEdge((e) => {
-              e.visible = e.source.visible || e.target.visible;
+          view.graph.forEachEdge((edge) => {
+              edge.visible = edge.source.visible || edge.target.visible;
           });
           view.updateGraphVisibility();
           view.viewWholeGraph();
           view.focusOnSvg();
       }
       showControlAction(view) {
-          for (const n of view.graph.nodes()) {
-              n.visible = n.cfg && (!view.state.hideDead || n.isLive());
+          for (const node of view.graph.nodes()) {
+              node.visible = node.cfg && (!view.state.hideDead || node.isLive());
           }
-          view.graph.forEachEdge((e) => {
-              e.visible = e.type === "control" && e.source.visible && e.target.visible;
+          view.graph.forEachEdge((edge) => {
+              edge.visible = edge.type === "control" && edge.source.visible && edge.target.visible;
           });
           view.showVisible();
       }
-      toggleHideDead(view) {
+      hideUnselectedAction(view) {
+          for (const node of view.graph.nodes()) {
+              if (!view.state.selection.isSelected(node)) {
+                  node.visible = false;
+              }
+          }
+          view.updateGraphVisibility();
+          view.focusOnSvg();
+      }
+      hideSelectedAction(view) {
+          for (const node of view.graph.nodes()) {
+              if (view.state.selection.isSelected(node)) {
+                  node.visible = false;
+              }
+          }
+          view.nodesSelectionHandler.clear();
+          view.focusOnSvg();
+      }
+      zoomSelectionAction(view) {
+          view.viewSelection();
+          view.focusOnSvg();
+      }
+      toggleHideDeadAction(view) {
           view.state.hideDead = !view.state.hideDead;
           if (view.state.hideDead) {
               view.hideDead();
@@ -11181,228 +11695,60 @@
           else {
               view.showDead();
           }
-          const element = document.getElementById('toggle-hide-dead');
-          element.classList.toggle('button-input-toggled', view.state.hideDead);
+          const element = document.getElementById("toggle-hide-dead");
+          element.classList.toggle("button-input-toggled", view.state.hideDead);
           view.focusOnSvg();
       }
+      toggleTypesAction(view) {
+          view.state.showTypes = !view.state.showTypes;
+          const element = document.getElementById("toggle-types");
+          element.classList.toggle("button-input-toggled", view.state.showTypes);
+          view.updateGraphVisibility();
+          view.focusOnSvg();
+      }
+      toggleLayoutCachingAction(view) {
+          view.state.cacheLayout = !view.state.cacheLayout;
+          const element = document.getElementById("toggle-cache-layout");
+          element.classList.toggle("button-input-toggled", view.state.cacheLayout);
+      }
       hideDead() {
-          for (const n of this.graph.nodes()) {
-              if (!n.isLive()) {
-                  n.visible = false;
-                  this.state.selection.select([n], false);
+          for (const node of this.graph.nodes()) {
+              if (!node.isLive()) {
+                  node.visible = false;
+                  this.state.selection.select([node], false);
               }
           }
           this.updateGraphVisibility();
       }
       showDead() {
-          for (const n of this.graph.nodes()) {
-              if (!n.isLive()) {
-                  n.visible = true;
+          for (const node of this.graph.nodes()) {
+              if (!node.isLive()) {
+                  node.visible = true;
               }
           }
           this.updateGraphVisibility();
       }
-      hideUnselectedAction(view) {
-          for (const n of view.graph.nodes()) {
-              if (!view.state.selection.isSelected(n)) {
-                  n.visible = false;
-              }
+      // Hotkeys handlers
+      selectAllNodes() {
+          if (!event.shiftKey) {
+              this.state.selection.clear();
           }
-          view.updateGraphVisibility();
-          view.focusOnSvg();
-      }
-      hideSelectedAction(view) {
-          for (const n of view.graph.nodes()) {
-              if (view.state.selection.isSelected(n)) {
-                  n.visible = false;
-              }
-          }
-          view.selectionHandler.clear();
-          view.focusOnSvg();
-      }
-      zoomSelectionAction(view) {
-          view.viewSelection();
-          view.focusOnSvg();
-      }
-      toggleTypesAction(view) {
-          view.toggleTypes();
-          view.focusOnSvg();
-      }
-      toggleGraphCachingAction() {
-          const key = "cache-graphs";
-          const toggled = storageGetItem(key, true);
-          storageSetItem(key, !toggled);
-          const element = document.getElementById(key);
-          element.classList.toggle("button-input-toggled", !toggled);
-      }
-      searchInputAction(searchBar, e, onlyVisible) {
-          if (e.keyCode == 13) {
-              this.selectionHandler.clear();
-              const query = searchBar.value;
-              window.sessionStorage.setItem("lastSearch", query);
-              if (query.length == 0)
-                  return;
-              const reg = new RegExp(query);
-              const filterFunction = (n) => {
-                  return (reg.exec(n.getDisplayLabel()) != null ||
-                      (this.state.showTypes && reg.exec(n.getDisplayType())) ||
-                      (reg.exec(n.getTitle())) ||
-                      reg.exec(n.nodeLabel.opcode) != null);
-              };
-              const selection = [...this.graph.nodes(n => {
-                      if ((e.ctrlKey || n.visible || !onlyVisible) && filterFunction(n)) {
-                          if (e.ctrlKey || !onlyVisible)
-                              n.visible = true;
-                          return true;
-                      }
-                      return false;
-                  })];
-              this.selectionHandler.select(selection, true);
-              this.connectVisibleSelectedNodes();
-              this.updateGraphVisibility();
-              searchBar.blur();
-              this.viewSelection();
-              this.focusOnSvg();
-          }
-          e.stopPropagation();
-      }
-      focusOnSvg() {
-          document.getElementById("graph").childNodes[0].focus();
-      }
-      svgKeyDown() {
-          const view = this;
-          const state = this.state;
-          const showSelectionFrontierNodes = (inEdges, filter, doSelect) => {
-              const frontier = view.getNodeFrontier(state.selection, inEdges, filter);
-              if (frontier != undefined && frontier.size) {
-                  if (doSelect) {
-                      if (!event.shiftKey) {
-                          state.selection.clear();
-                      }
-                      state.selection.select([...frontier], true);
-                  }
-                  view.updateGraphVisibility();
-              }
-          };
-          let eventHandled = true; // unless the below switch defaults
-          switch (event.keyCode) {
-              case 49:
-              case 50:
-              case 51:
-              case 52:
-              case 53:
-              case 54:
-              case 55:
-              case 56:
-              case 57:
-                  // '1'-'9'
-                  showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 49), !event.ctrlKey);
-                  break;
-              case 97:
-              case 98:
-              case 99:
-              case 100:
-              case 101:
-              case 102:
-              case 103:
-              case 104:
-              case 105:
-                  // 'numpad 1'-'numpad 9'
-                  showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 97), !event.ctrlKey);
-                  break;
-              case 67:
-                  // 'c'
-                  showSelectionFrontierNodes(event.altKey, (edge, index) => edge.type == 'control', true);
-                  break;
-              case 69:
-                  // 'e'
-                  showSelectionFrontierNodes(event.altKey, (edge, index) => edge.type == 'effect', true);
-                  break;
-              case 79:
-                  // 'o'
-                  showSelectionFrontierNodes(false, undefined, false);
-                  break;
-              case 73:
-                  // 'i'
-                  if (!event.ctrlKey && !event.shiftKey) {
-                      showSelectionFrontierNodes(true, undefined, false);
-                  }
-                  else {
-                      eventHandled = false;
-                  }
-                  break;
-              case 65:
-                  // 'a'
-                  view.selectAllNodes();
-                  break;
-              case 38:
-              // UP
-              case 40: {
-                  // DOWN
-                  showSelectionFrontierNodes(event.keyCode == 38, undefined, true);
-                  break;
-              }
-              case 82:
-                  // 'r'
-                  if (!event.ctrlKey && !event.shiftKey) {
-                      this.layoutAction(this);
-                  }
-                  else {
-                      eventHandled = false;
-                  }
-                  break;
-              case 80:
-                  // 'p'
-                  view.selectOrigins();
-                  break;
-              default:
-                  eventHandled = false;
-                  break;
-              case 83:
-                  // 's'
-                  if (!event.ctrlKey && !event.shiftKey) {
-                      this.hideSelectedAction(this);
-                  }
-                  else {
-                      eventHandled = false;
-                  }
-                  break;
-              case 85:
-                  // 'u'
-                  if (!event.ctrlKey && !event.shiftKey) {
-                      this.hideUnselectedAction(this);
-                  }
-                  else {
-                      eventHandled = false;
-                  }
-                  break;
-          }
-          if (eventHandled) {
-              event.preventDefault();
-          }
-      }
-      layoutGraph() {
-          const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
-              ? "Layout graph from cache"
-              : "Layout graph";
-          console.time(layoutMessage);
-          this.graphLayout.rebuild(this.state.showTypes);
-          const extent = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
-          this.panZoom.translateExtent(extent);
-          this.minScale();
-          console.timeEnd(layoutMessage);
+          const allVisibleNodes = [...this.graph.nodes(node => node.visible)];
+          this.state.selection.select(allVisibleNodes, true);
+          this.updateGraphVisibility();
       }
       selectOrigins() {
           const state = this.state;
+          // TODO (danylo boiko) Add array type
           const origins = [];
           let phase = this.phaseName;
           const selection = new Set();
-          for (const n of state.selection) {
-              const origin = n.nodeLabel.origin;
+          for (const node of state.selection) {
+              const origin = node.nodeLabel.origin;
               if (origin) {
                   phase = origin.phase;
                   const node = this.graph.nodeMap[origin.nodeId];
-                  if (phase === this.phaseName && node) {
+                  if (node && phase === this.phaseName) {
                       origins.push(node);
                   }
                   else {
@@ -11416,283 +11762,9 @@
               this.showPhaseByName(phase, selection);
           }
           else if (origins.length > 0) {
-              this.selectionHandler.clear();
-              this.selectionHandler.select(origins, true);
+              this.nodesSelectionHandler.clear();
+              this.nodesSelectionHandler.select(origins, true);
           }
-      }
-      // call to propagate changes to graph
-      updateGraphVisibility() {
-          const view = this;
-          const graph = this.graph;
-          const state = this.state;
-          if (!graph)
-              return;
-          const filteredEdges = [
-              ...graph.filteredEdges(edge => this.graph.isRendered()
-                  && edge.source.visible && edge.target.visible)
-          ];
-          const selEdges = view.visibleEdges.selectAll("path")
-              .data(filteredEdges, e => e.toString());
-          // remove old links
-          selEdges.exit().remove();
-          // add new paths
-          const newEdges = selEdges.enter()
-              .append('path');
-          newEdges.style('marker-end', 'url(#end-arrow)')
-              .attr("id", function (edge) { return "e," + edge.toString(); })
-              .on("click", function (edge) {
-              event.stopPropagation();
-              if (!event.shiftKey) {
-                  view.selectionHandler.clear();
-              }
-              view.selectionHandler.select([edge.source, edge.target], true);
-          })
-              .attr("adjacentToHover", "false")
-              .classed('value', function (e) {
-              return e.type == 'value' || e.type == 'context';
-          }).classed('control', function (e) {
-              return e.type == 'control';
-          }).classed('effect', function (e) {
-              return e.type == 'effect';
-          }).classed('frame-state', function (e) {
-              return e.type == 'frame-state';
-          }).attr('stroke-dasharray', function (e) {
-              if (e.type == 'frame-state')
-                  return "10,10";
-              return (e.type == 'effect') ? "5,5" : "";
-          });
-          const newAndOldEdges = newEdges.merge(selEdges);
-          newAndOldEdges.classed('hidden', e => !e.isVisible());
-          // select existing nodes
-          const filteredNodes = [...graph.nodes(n => this.graph.isRendered() && n.visible)];
-          const allNodes = view.visibleNodes.selectAll("g");
-          const selNodes = allNodes.data(filteredNodes, n => n.toString());
-          // remove old nodes
-          selNodes.exit().remove();
-          // add new nodes
-          const newGs = selNodes.enter()
-              .append("g");
-          newGs.classed("turbonode", function (n) { return true; })
-              .classed("control", function (n) { return n.isControl(); })
-              .classed("live", function (n) { return n.isLive(); })
-              .classed("dead", function (n) { return !n.isLive(); })
-              .classed("javascript", function (n) { return n.isJavaScript(); })
-              .classed("input", function (n) { return n.isInput(); })
-              .classed("simplified", function (n) { return n.isSimplified(); })
-              .classed("machine", function (n) { return n.isMachine(); })
-              .on('mouseenter', function (node) {
-              const visibleEdges = view.visibleEdges.selectAll('path');
-              const adjInputEdges = visibleEdges.filter(e => e.target === node);
-              const adjOutputEdges = visibleEdges.filter(e => e.source === node);
-              adjInputEdges.attr('relToHover', "input");
-              adjOutputEdges.attr('relToHover', "output");
-              const adjInputNodes = adjInputEdges.data().map(e => e.source);
-              const visibleNodes = view.visibleNodes.selectAll("g");
-              visibleNodes.data(adjInputNodes, n => n.toString())
-                  .attr('relToHover', "input");
-              const adjOutputNodes = adjOutputEdges.data().map(e => e.target);
-              visibleNodes.data(adjOutputNodes, n => n.toString())
-                  .attr('relToHover', "output");
-              view.updateGraphVisibility();
-          })
-              .on('mouseleave', function (node) {
-              const visibleEdges = view.visibleEdges.selectAll('path');
-              const adjEdges = visibleEdges.filter(e => e.target === node || e.source === node);
-              adjEdges.attr('relToHover', "none");
-              const adjNodes = adjEdges.data().map(e => e.target).concat(adjEdges.data().map(e => e.source));
-              const visibleNodes = view.visibleNodes.selectAll("g");
-              visibleNodes.data(adjNodes, n => n.toString()).attr('relToHover', "none");
-              view.updateGraphVisibility();
-          })
-              .on("click", d => {
-              if (!event.shiftKey)
-                  view.selectionHandler.clear();
-              view.selectionHandler.select([d], undefined);
-              event.stopPropagation();
-          })
-              .call(view.drag);
-          newGs.append("rect")
-              .attr("rx", 10)
-              .attr("ry", 10)
-              .attr('width', function (d) {
-              return d.getTotalNodeWidth();
-          })
-              .attr('height', function (d) {
-              return d.getNodeHeight(view.state.showTypes);
-          });
-          function appendInputAndOutputBubbles(g, d) {
-              for (let i = 0; i < d.inputs.length; ++i) {
-                  const x = d.getInputX(i);
-                  const y = -DEFAULT_NODE_BUBBLE_RADIUS;
-                  g.append('circle')
-                      .classed("filledBubbleStyle", function (c) {
-                      return d.inputs[i].isVisible();
-                  })
-                      .classed("bubbleStyle", function (c) {
-                      return !d.inputs[i].isVisible();
-                  })
-                      .attr("id", `ib,${d.inputs[i]}`)
-                      .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
-                      .attr("transform", function (d) {
-                      return "translate(" + x + "," + y + ")";
-                  })
-                      .on("click", function (d) {
-                      const components = this.id.split(',');
-                      const node = graph.nodeMap[components[3]];
-                      const edge = node.inputs[components[2]];
-                      const visible = !edge.isVisible();
-                      node.setInputVisibility(components[2], visible);
-                      event.stopPropagation();
-                      view.updateGraphVisibility();
-                  });
-              }
-              if (d.outputs.length != 0) {
-                  const x = d.getOutputX();
-                  const y = d.getNodeHeight(view.state.showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
-                  g.append('circle')
-                      .classed("filledBubbleStyle", function (c) {
-                      return d.areAnyOutputsVisible() == 2;
-                  })
-                      .classed("halFilledBubbleStyle", function (c) {
-                      return d.areAnyOutputsVisible() == 1;
-                  })
-                      .classed("bubbleStyle", function (c) {
-                      return d.areAnyOutputsVisible() == 0;
-                  })
-                      .attr("id", "ob," + d.id)
-                      .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
-                      .attr("transform", function (d) {
-                      return "translate(" + x + "," + y + ")";
-                  })
-                      .on("click", function (d) {
-                      d.setOutputVisibility(d.areAnyOutputsVisible() == 0);
-                      event.stopPropagation();
-                      view.updateGraphVisibility();
-                  });
-              }
-          }
-          newGs.each(function (d) {
-              appendInputAndOutputBubbles(select(this), d);
-          });
-          newGs.each(function (d) {
-              select(this).append("text")
-                  .classed("label", true)
-                  .attr("text-anchor", "right")
-                  .attr("dx", 5)
-                  .attr("dy", 5)
-                  .append('tspan')
-                  .text(function (l) {
-                  return d.getDisplayLabel();
-              })
-                  .append("title")
-                  .text(function (l) {
-                  return d.getTitle();
-              });
-              if (d.nodeLabel.type != undefined) {
-                  select(this).append("text")
-                      .classed("label", true)
-                      .classed("type", true)
-                      .attr("text-anchor", "right")
-                      .attr("dx", 5)
-                      .attr("dy", d.labelBox.height + 5)
-                      .append('tspan')
-                      .text(function (l) {
-                      return d.getDisplayType();
-                  })
-                      .append("title")
-                      .text(function (l) {
-                      return d.getType();
-                  });
-              }
-          });
-          const newAndOldNodes = newGs.merge(selNodes);
-          newAndOldNodes.select('.type').each(function (d) {
-              this.setAttribute('visibility', view.state.showTypes ? 'visible' : 'hidden');
-          });
-          newAndOldNodes
-              .classed("selected", function (n) {
-              if (state.selection.isSelected(n))
-                  return true;
-              return false;
-          })
-              .attr("transform", function (d) { return "translate(" + d.x + "," + d.y + ")"; })
-              .select('rect')
-              .attr('height', function (d) { return d.getNodeHeight(view.state.showTypes); });
-          view.visibleBubbles = selectAll('circle');
-          view.updateInputAndOutputBubbles();
-          graph.maxGraphX = graph.maxGraphNodeX;
-          newAndOldEdges.attr("d", function (edge) {
-              return edge.generatePath(graph, view.state.showTypes);
-          });
-      }
-      getSvgViewDimensions() {
-          return [this.container.clientWidth, this.container.clientHeight];
-      }
-      getSvgExtent() {
-          return [[0, 0], [this.container.clientWidth, this.container.clientHeight]];
-      }
-      minScale() {
-          const [clientWith, clientHeight] = this.getSvgViewDimensions();
-          const minXScale = clientWith / (2 * this.graph.width);
-          const minYScale = clientHeight / (2 * this.graph.height);
-          const minScale = Math.min(minXScale, minYScale);
-          this.panZoom.scaleExtent([minScale, 40]);
-          return minScale;
-      }
-      onresize() {
-          const trans = transform(this.svg.node());
-          const ctrans = this.panZoom.constrain()(trans, this.getSvgExtent(), this.panZoom.translateExtent());
-          this.panZoom.transform(this.svg, ctrans);
-      }
-      toggleTypes() {
-          const view = this;
-          view.state.showTypes = !view.state.showTypes;
-          const element = document.getElementById('toggle-types');
-          element.classList.toggle('button-input-toggled', view.state.showTypes);
-          view.updateGraphVisibility();
-      }
-      viewSelection() {
-          const view = this;
-          let minX;
-          let maxX;
-          let minY;
-          let maxY;
-          let hasSelection = false;
-          view.visibleNodes.selectAll("g").each(function (n) {
-              if (view.state.selection.isSelected(n)) {
-                  hasSelection = true;
-                  minX = minX ? Math.min(minX, n.x) : n.x;
-                  maxX = maxX ? Math.max(maxX, n.x + n.getTotalNodeWidth()) :
-                      n.x + n.getTotalNodeWidth();
-                  minY = minY ? Math.min(minY, n.y) : n.y;
-                  maxY = maxY ? Math.max(maxY, n.y + n.getNodeHeight(view.state.showTypes)) :
-                      n.y + n.getNodeHeight(view.state.showTypes);
-              }
-          });
-          if (hasSelection) {
-              view.viewGraphRegion(minX - NODE_INPUT_WIDTH, minY - 60, maxX + NODE_INPUT_WIDTH, maxY + 60);
-          }
-      }
-      viewGraphRegion(minX, minY, maxX, maxY) {
-          const [width, height] = this.getSvgViewDimensions();
-          const dx = maxX - minX;
-          const dy = maxY - minY;
-          const x = (minX + maxX) / 2;
-          const y = (minY + maxY) / 2;
-          const scale = Math.min(width / dx, height / dy) * 0.9;
-          this.svg
-              .transition().duration(120).call(this.panZoom.scaleTo, scale)
-              .transition().duration(120).call(this.panZoom.translateTo, x, y);
-      }
-      viewWholeGraph() {
-          this.panZoom.scaleTo(this.svg, 0);
-          this.panZoom.translateTo(this.svg, this.graph.minGraphX + this.graph.width / 2, this.graph.minGraphY + this.graph.height / 2);
-      }
-      updateGraphStateType(stateType) {
-          this.graph.graphPhase.stateType = stateType;
-      }
-      isCachingEnabled() {
-          return storageGetItem("cache-graphs", true);
       }
   }
 
@@ -13040,6 +13112,363 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraph extends MovableContainer {
+      constructor(graphPhase) {
+          super(graphPhase);
+          this.blockMap = graphPhase.blockIdToBlockMap;
+          this.nodeMap = graphPhase.nodeIdToNodeMap;
+      }
+      *blocks(func = (b) => true) {
+          for (const block of this.blockMap) {
+              if (!block || !func(block))
+                  continue;
+              yield block;
+          }
+      }
+      *nodes(func = (n) => true) {
+          for (const node of this.nodeMap) {
+              if (!node || !func(node))
+                  continue;
+              yield node;
+          }
+      }
+      *blocksEdges(func = (e) => true) {
+          for (const block of this.blockMap) {
+              if (!block)
+                  continue;
+              for (const edge of block.inputs) {
+                  if (!edge || func(edge))
+                      continue;
+                  yield edge;
+              }
+          }
+      }
+      redetermineGraphBoundingBox(showProperties) {
+          this.minGraphX = 0;
+          this.maxGraphNodeX = 1;
+          this.minGraphY = 0;
+          this.maxGraphY = 1;
+          for (const block of this.blocks()) {
+              if (!block.visible)
+                  continue;
+              this.minGraphX = Math.min(this.minGraphX, block.x);
+              this.maxGraphNodeX = Math.max(this.maxGraphNodeX, block.x + block.getWidth());
+              this.minGraphY = Math.min(this.minGraphY, block.y - NODE_INPUT_WIDTH);
+              this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showProperties)
+                  + NODE_INPUT_WIDTH);
+          }
+          this.maxGraphX = this.maxGraphNodeX + 3 * MINIMUM_EDGE_SEPARATION;
+          this.width = this.maxGraphX - this.minGraphX;
+          this.height = this.maxGraphY - this.minGraphY;
+          return [
+              [this.minGraphX - this.width / 2, this.minGraphY - this.height / 2],
+              [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
+          ];
+      }
+  }
+
+  class TurboshaftGraphLayout {
+      constructor(graph) {
+          this.graph = graph;
+      }
+      rebuild(showProperties) {
+          if (this.graph.graphPhase.stateType == GraphStateType$1.NeedToFullRebuild) {
+              switch (this.graph.graphPhase.layoutType) {
+                  case TurboshaftLayoutType.Inline:
+                      this.inlineRebuild(showProperties);
+                      break;
+                  default:
+                      throw "Unsupported graph layout type";
+              }
+              this.graph.graphPhase.stateType = GraphStateType$1.Cached;
+          }
+          this.graph.graphPhase.rendered = true;
+      }
+      inlineRebuild(showProperties) {
+          // Useless logic to simulate blocks coordinates (will be replaced in the future)
+          let x = 0;
+          let y = 0;
+          for (const block of this.graph.blockMap) {
+              block.x = x;
+              block.y = y;
+              y += block.getHeight(showProperties) + 50;
+              if (y > 1800) {
+                  x += block.getWidth() * 1.5;
+                  y = 0;
+              }
+          }
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraphView extends MovableView {
+      constructor(idOrContainer, broker, showPhaseByName, toolbox) {
+          super(idOrContainer, broker, showPhaseByName, toolbox);
+          this.state.selection = new SelectionMap((b) => b.identifier());
+          this.visibleBlocks = this.graphElement.append("g");
+          this.visibleEdges = this.graphElement.append("g");
+          this.visibleNodes = this.graphElement.append("g");
+          this.blockDrag = drag()
+              .on("drag", (block) => {
+              block.x += event.dx;
+              block.y += event.dy;
+              this.updateVisibleBlocks();
+          });
+      }
+      initializeContent(data, rememberedSelection) {
+          this.show();
+          this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
+          this.addImgInput("show-all", "show all blocks", partial(this.showAllBlocksAction, this));
+          this.addToggleImgInput("toggle-properties", "toggle propetries", this.state.showProperties, partial(this.togglePropertiesAction, this));
+          this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
+          this.phaseName = data.name;
+          this.createGraph(data, rememberedSelection);
+          this.viewWholeGraph();
+          if (this.state.cacheLayout && data.transform) {
+              this.svg.call(this.panZoom.transform, identity
+                  .translate(data.transform.x, data.transform.y)
+                  .scale(data.transform.scale));
+          }
+      }
+      updateGraphVisibility() {
+          if (!this.graph)
+              return;
+          this.updateVisibleBlocks();
+          this.visibleNodes = selectAll(".turboshaft-node");
+          this.visibleBubbles = selectAll("circle");
+          this.updateInlineNodes();
+          this.updateInputAndOutputBubbles();
+      }
+      svgKeyDown() {
+      }
+      searchInputAction(searchInput, e, onlyVisible) {
+      }
+      createGraph(data, selection) {
+          this.graph = new TurboshaftGraph(data);
+          this.graphLayout = new TurboshaftGraphLayout(this.graph);
+          if (!this.state.cacheLayout ||
+              this.graph.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
+              this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
+              this.showAllBlocksAction(this);
+          }
+          else {
+              this.showVisible();
+          }
+          this.layoutGraph();
+          this.updateGraphVisibility();
+      }
+      layoutGraph() {
+          const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
+              ? "Layout graph from cache"
+              : "Layout graph";
+          console.time(layoutMessage);
+          this.graphLayout.rebuild(this.state.showProperties);
+          const extent = this.graph.redetermineGraphBoundingBox(this.state.showProperties);
+          this.panZoom.translateExtent(extent);
+          this.minScale(this.graph.width, this.graph.height);
+          console.timeEnd(layoutMessage);
+      }
+      updateVisibleBlocks() {
+          const view = this;
+          // select existing blocks
+          const filteredBlocks = [
+              ...this.graph.blocks(block => this.graph.isRendered() && block.visible)
+          ];
+          const allBlocks = view.visibleBlocks
+              .selectAll(".turboshaft-block");
+          const selBlocks = allBlocks.data(filteredBlocks, block => block.toString());
+          // remove old blocks
+          selBlocks.exit().remove();
+          // add new blocks
+          const newBlocks = selBlocks
+              .enter()
+              .append("g")
+              .classed("turboshaft-block", true)
+              .classed("block", b => b.type == TurboshaftGraphBlockType.Block)
+              .classed("merge", b => b.type == TurboshaftGraphBlockType.Merge)
+              .classed("loop", b => b.type == TurboshaftGraphBlockType.Loop)
+              .call(view.blockDrag);
+          newBlocks
+              .append("rect")
+              .attr("rx", 35)
+              .attr("ry", 35)
+              .attr("width", block => block.getWidth())
+              .attr("height", block => block.getHeight(view.state.showProperties));
+          newBlocks.each(function (block) {
+              const svg = select(this);
+              svg
+                  .append("text")
+                  .attr("text-anchor", "middle")
+                  .attr("x", block.getWidth() / 2)
+                  .classed("block-label", true)
+                  .append("tspan")
+                  .text(block.displayLabel);
+              view.appendInlineNodes(svg, block);
+              view.appendInputAndOutputBubbles(svg, block);
+          });
+          newBlocks.merge(selBlocks)
+              .classed("selected", block => view.state.selection.isSelected(block))
+              .attr("transform", block => `translate(${block.x},${block.y})`)
+              .select("rect")
+              .attr("height", block => block.getHeight(view.state.showProperties));
+      }
+      appendInlineNodes(svg, block) {
+          const state = this.state;
+          const graph = this.graph;
+          const filteredNodes = [...block.nodes.filter(node => graph.isRendered() && node.visible)];
+          const allNodes = svg.selectAll(".turboshaft-inline-node");
+          const selNodes = allNodes.data(filteredNodes, node => node.toString());
+          // remove old nodes
+          selNodes.exit().remove();
+          // add new nodes
+          const newNodes = selNodes
+              .enter()
+              .append("g")
+              .classed("turboshaft-node", true)
+              .classed("inline-node", true);
+          let nodeY = block.labelBox.height;
+          const blockWidth = block.getWidth();
+          newNodes.each(function (node) {
+              const nodeSvg = select(this);
+              nodeSvg
+                  .attr("id", node.id)
+                  .append("text")
+                  .attr("dx", 25)
+                  .classed("inline-node-label", true)
+                  .attr("dy", nodeY)
+                  .append("tspan")
+                  .text(`${node.getInlineLabel()}[${node.getPropertiesTypeAbbreviation()}]`);
+              nodeY += node.labelBox.height;
+              if (node.properties) {
+                  nodeSvg
+                      .append("text")
+                      .attr("dx", 25)
+                      .classed("inline-node-properties", true)
+                      .attr("dy", nodeY)
+                      .append("tspan")
+                      .text(node.getReadableProperties(blockWidth))
+                      .append("title")
+                      .text(node.properties);
+                  nodeY += node.labelBox.height;
+              }
+          });
+          newNodes.merge(selNodes)
+              .classed("selected", node => state.selection.isSelected(node))
+              .select("rect")
+              .attr("height", node => node.getHeight(state.showProperties));
+      }
+      updateInputAndOutputBubbles() {
+          const view = this;
+          const graph = this.graph;
+          this.visibleBubbles.classed("filledBubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib") {
+                  return graph.blockMap[components[3]].inputs[components[2]].isVisible();
+              }
+              return graph.blockMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.AllNodesVisible;
+          }).classed("halfFilledBubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib")
+                  return false;
+              return graph.blockMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.SomeNodesVisible;
+          }).classed("bubbleStyle", function () {
+              const components = this.id.split(",");
+              if (components[0] === "ib") {
+                  return !graph.blockMap[components[3]].inputs[components[2]].isVisible();
+              }
+              return graph.blockMap[components[1]].areAnyOutputsVisible()
+                  == OutputVisibilityType.NoVisibleNodes;
+          });
+          this.visibleBubbles.each(function () {
+              const components = this.id.split(",");
+              if (components[0] === "ob") {
+                  const from = graph.blockMap[components[1]];
+                  const x = from.getOutputX();
+                  const y = from.getHeight(view.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
+                  this.setAttribute("transform", `translate(${x},${y})`);
+              }
+          });
+      }
+      appendInputAndOutputBubbles(svg, block) {
+          for (let i = 0; i < block.inputs.length; i++) {
+              const x = block.getInputX(i);
+              const y = -DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", block.inputs[i].isVisible())
+                  .classed("bubbleStyle", !block.inputs[i].isVisible())
+                  .attr("id", `ib,${block.inputs[i].toString(i)}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`);
+          }
+          if (block.outputs.length > 0) {
+              const x = block.getOutputX();
+              const y = block.getHeight(this.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", block.areAnyOutputsVisible()
+                  == OutputVisibilityType.AllNodesVisible)
+                  .classed("halFilledBubbleStyle", block.areAnyOutputsVisible()
+                  == OutputVisibilityType.SomeNodesVisible)
+                  .classed("bubbleStyle", block.areAnyOutputsVisible()
+                  == OutputVisibilityType.NoVisibleNodes)
+                  .attr("id", `ob,${block.id}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`);
+          }
+      }
+      updateInlineNodes() {
+          const state = this.state;
+          let totalHeight = 0;
+          let blockId = 0;
+          this.visibleNodes.each(function (node) {
+              if (blockId != node.block.id) {
+                  blockId = node.block.id;
+                  totalHeight = 0;
+              }
+              totalHeight += node.getHeight(state.showProperties);
+              const nodeSvg = select(this);
+              const nodeY = state.showProperties && node.properties
+                  ? totalHeight - node.labelBox.height
+                  : totalHeight;
+              nodeSvg.select(".inline-node-label").attr("dy", nodeY);
+              nodeSvg.select(".inline-node-properties").attr("visibility", state.showProperties
+                  ? "visible"
+                  : "hidden");
+          });
+      }
+      // Actions (handlers of toolbox menu and hotkeys events)
+      layoutAction(view) {
+          view.updateGraphStateType(GraphStateType.NeedToFullRebuild);
+          view.layoutGraph();
+          view.updateGraphVisibility();
+          view.viewWholeGraph();
+          view.focusOnSvg();
+      }
+      showAllBlocksAction(view) {
+          for (const node of view.graph.blocks()) {
+              node.visible = true;
+          }
+          for (const edge of view.graph.blocksEdges()) {
+              edge.visible = true;
+          }
+          view.showVisible();
+      }
+      togglePropertiesAction(view) {
+          view.state.showProperties = !view.state.showProperties;
+          const element = document.getElementById("toggle-properties");
+          element.classList.toggle("button-input-toggled", view.state.showProperties);
+          view.updateGraphVisibility();
+          view.focusOnSvg();
+      }
+      toggleLayoutCachingAction(view) {
+          view.state.cacheLayout = !view.state.cacheLayout;
+          const element = document.getElementById("toggle-cache-layout");
+          element.classList.toggle("button-input-toggled", view.state.cacheLayout);
+      }
+  }
+
   // Copyright 2018 the V8 project authors. All rights reserved.
   const toolboxHTML = `
 <div class="graph-toolbox">
@@ -13078,6 +13507,7 @@
           });
           searchInput.setAttribute("value", storageGetItem("lastSearch", "", false));
           this.graph = new GraphView(this.divNode, selectionBroker, view.displayPhaseByName.bind(this), toolbox.querySelector(".graph-toolbox"));
+          this.turboshaftGraph = new TurboshaftGraphView(this.divNode, selectionBroker, view.displayPhaseByName.bind(this), toolbox.querySelector(".graph-toolbox"));
           this.schedule = new ScheduleView(this.divNode, selectionBroker);
           this.sequence = new SequenceView(this.divNode, selectionBroker);
           this.selectMenu = toolbox.querySelector("#phase-select");
@@ -13111,6 +13541,9 @@
           if (phase.type == PhaseType.Graph) {
               this.displayPhaseView(this.graph, phase, selection);
           }
+          else if (phase.type == PhaseType.TurboshaftGraph) {
+              this.displayPhaseView(this.turboshaftGraph, phase, selection);
+          }
           else if (phase.type == PhaseType.Schedule) {
               this.displayPhaseView(this.schedule, phase, selection);
           }
@@ -13132,7 +13565,7 @@
           let nextPhaseIndex = this.selectMenu.selectedIndex + 1;
           while (nextPhaseIndex < this.sourceResolver.phases.length) {
               const nextPhase = this.sourceResolver.getPhase(nextPhaseIndex);
-              if (nextPhase.type == PhaseType.Graph) {
+              if (nextPhase.isGraph()) {
                   this.selectMenu.selectedIndex = nextPhaseIndex;
                   storageSetItem("lastSelectedPhase", nextPhaseIndex);
                   this.displayPhase(nextPhase);
@@ -13145,7 +13578,7 @@
           let previousPhaseIndex = this.selectMenu.selectedIndex - 1;
           while (previousPhaseIndex >= 0) {
               const previousPhase = this.sourceResolver.getPhase(previousPhaseIndex);
-              if (previousPhase.type === PhaseType.Graph) {
+              if (previousPhase.isGraph()) {
                   this.selectMenu.selectedIndex = previousPhaseIndex;
                   storageSetItem("lastSelectedPhase", previousPhaseIndex);
                   this.displayPhase(previousPhase);
