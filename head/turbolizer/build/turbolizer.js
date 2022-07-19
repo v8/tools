@@ -7,6 +7,7 @@
   const MAX_RANK_SENTINEL = 0;
   const BEZIER_CONSTANT = 0.3;
   const TURBOSHAFT_NODE_X_INDENT = 25;
+  const TURBOSHAFT_COLLAPSE_ICON_X_INDENT = 20;
   const TURBOSHAFT_BLOCK_BORDER_RADIUS = 35;
   const TURBOSHAFT_BLOCK_ROW_SEPARATION = 200;
   const ARROW_HEAD_HEIGHT = 7;
@@ -16,13 +17,22 @@
   const MINIMUM_EDGE_SEPARATION = 20;
   const MINIMUM_NODE_INPUT_APPROACH = 15 + 2 * DEFAULT_NODE_BUBBLE_RADIUS;
   const DEFAULT_NODE_ROW_SEPARATION = 150;
+  const SOURCE_PANE_DEFAULT_PERCENT = 1 / 4;
+  const DISASSEMBLY_PANE_DEFAULT_PERCENT = 3 / 4;
+  const RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
+  const RANGES_PANE_WIDTH_DEFAULT_PERCENT = 1 / 2;
+  const RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
   const MULTIVIEW_ID = "multiview";
+  const SHOW_HIDE_RANGES_ID = "show-hide-ranges";
+  const SHOW_HIDE_SOURCE_ID = "show-hide-source";
+  const SHOW_HIDE_DISASSEMBLY_ID = "show-hide-disassembly";
   const SOURCE_PANE_ID = "left";
   const SOURCE_COLLAPSE_ID = "source-shrink";
   const SOURCE_EXPAND_ID = "source-expand";
   const INTERMEDIATE_PANE_ID = "middle";
   const GRAPH_PANE_ID = "graph";
   const GENERATED_PANE_ID = "right";
+  const DISASSEMBLY_PANE_ID = "disassembly";
   const DISASSEMBLY_COLLAPSE_ID = "disassembly-shrink";
   const DISASSEMBLY_EXPAND_ID = "disassembly-expand";
   const RANGES_PANE_ID = "ranges";
@@ -42,9 +52,6 @@
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
-  function anyToString(obj) {
-      return `${obj}`;
-  }
   function snakeToCamel(str) {
       return str.toLowerCase().replace(/([-_][a-z])/g, group => group
           .toUpperCase()
@@ -119,6 +126,10 @@
   function storageSetItem(key, value) {
       window.sessionStorage.setItem(key, value);
   }
+  function storageSetIfIsNotExist(key, toSet) {
+      if (storageGetItem(key, null, false) === null)
+          storageSetItem(key, toSet);
+  }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -188,7 +199,7 @@
           return this.type === that.type;
       }
       getTitle() {
-          const propsString = this.properties === "" ? "no properties" : `[${this.properties}]`;
+          const propsString = this.properties.length == 0 ? "no properties" : `[${this.properties}]`;
           let title = `${this.title}\n${propsString}\n${this.opinfo}`;
           if (this.origin) {
               title += `\nOrigin: ${this.origin.toString()}`;
@@ -345,8 +356,8 @@
           return this.y - MINIMUM_NODE_INPUT_APPROACH -
               (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
       }
-      getOutputApproach(showTypes) {
-          return this.y + this.outputApproach + this.getHeight(showTypes) +
+      getOutputApproach(extendHeight) {
+          return this.y + this.outputApproach + this.getHeight(extendHeight) +
               +DEFAULT_NODE_BUBBLE_RADIUS;
       }
       compare(other) {
@@ -478,9 +489,8 @@
           const inputX = target.x + target.getInputX(index);
           const inputApproach = target.getInputApproach(this.index);
           const outputApproach = source.getOutputApproach(extendHeight);
-          if (inputApproach > outputApproach) {
+          if (inputApproach > outputApproach)
               return inputX;
-          }
           const inputOffset = MINIMUM_EDGE_SEPARATION * (index + 1);
           return target.x < source.x
               ? target.x + target.getWidth() + inputOffset
@@ -534,15 +544,16 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class GraphPhase extends Phase {
-      constructor(name, highestNodeId, data, nodeLabelMap, nodeIdToNodeMap) {
+      constructor(name, highestNodeId, dataJson, nodeLabelMap) {
           super(name, PhaseType.Graph);
           this.highestNodeId = highestNodeId;
-          this.data = data ?? new GraphData();
+          this.data = new GraphData();
           this.stateType = GraphStateType.NeedToFullRebuild;
-          this.nodeLabelMap = nodeLabelMap ?? new Array();
-          this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
+          this.nodeIdToNodeMap = new Array();
           this.originIdToNodesMap = new Map();
           this.rendered = false;
+          this.parseDataFromJSON(dataJson, nodeLabelMap);
+          this.nodeLabelMap = nodeLabelMap?.slice();
       }
       parseDataFromJSON(dataJson, nodeLabelMap) {
           this.data = new GraphData();
@@ -604,9 +615,9 @@
       }
   }
   class GraphData {
-      constructor(nodes, edges) {
-          this.nodes = nodes ?? new Array();
-          this.edges = edges ?? new Array();
+      constructor() {
+          this.nodes = new Array();
+          this.edges = new Array();
       }
   }
   var GraphStateType;
@@ -617,11 +628,12 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class DisassemblyPhase extends Phase {
-      constructor(name, data) {
+      constructor(name, data, blockIdToOffsetJson) {
           super(name, PhaseType.Disassembly);
           this.data = data;
           this.blockIdToOffset = new Array();
           this.blockStartPCtoBlockIds = new Map();
+          this.parseBlockIdToOffsetFromJSON(blockIdToOffsetJson);
       }
       hasBlockStartInfo() {
           return this.blockIdToOffset.length > 0;
@@ -644,11 +656,10 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class InstructionsPhase extends Phase {
-      constructor(name, nodeIdToInstructionRange, blockIdToInstructionRange, codeOffsetsInfo) {
+      constructor(name = "") {
           super(name, PhaseType.Instructions);
-          this.nodeIdToInstructionRange = nodeIdToInstructionRange ?? new Array();
-          this.blockIdToInstructionRange = blockIdToInstructionRange ?? new Array();
-          this.codeOffsetsInfo = codeOffsetsInfo;
+          this.nodeIdToInstructionRange = new Array();
+          this.blockIdToInstructionRange = new Array();
           this.instructionToPCOffset = new Array();
           this.pcOffsetToInstructions = new Map();
           this.pcOffsets = new Array();
@@ -688,10 +699,10 @@
                               continue;
                           const [start, end] = range;
                           if (start == end && instruction == start) {
-                              nodes.push(anyToString(nodeId));
+                              nodes.push(String(nodeId));
                           }
                           if (start <= instruction && instruction < end) {
-                              nodes.push(anyToString(nodeId));
+                              nodes.push(String(nodeId));
                           }
                       }
                   }
@@ -859,7 +870,7 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class SchedulePhase extends Phase {
-      constructor(name, data, schedule) {
+      constructor(name, data) {
           super(name, PhaseType.Schedule);
           this.createNode = match => {
               let inputs = [];
@@ -920,11 +931,12 @@
               }
           ];
           this.data = data;
-          this.schedule = schedule ?? {
+          this.schedule = {
               currentBlock: undefined,
               blocks: new Array(),
               nodes: new Array()
           };
+          this.parseScheduleFromJSON(data);
       }
       parseScheduleFromJSON(scheduleDataJson) {
           const lines = scheduleDataJson.split(/[\n]/);
@@ -1004,7 +1016,7 @@
               title += `\nOutputs: ${this.outputs.map(i => i.target.id).join(", ")}`;
           }
           const opPropertiesStr = this.properties.length > 0 ? this.properties : "No op properties";
-          return title + `\n${opPropertiesStr}`;
+          return `${title}\n${opPropertiesStr}`;
       }
       getInlineLabel() {
           if (this.inputs.length == 0)
@@ -1040,6 +1052,8 @@
           this.visible = true;
       }
       getHeight(showProperties) {
+          if (this.collapsed)
+              return this.labelBox.height + this.collapsedLabelBox.height;
           if (this.showProperties != showProperties) {
               this.height = this.nodes.reduce((accumulator, node) => {
                   return accumulator + node.getHeight(showProperties);
@@ -1050,10 +1064,20 @@
       }
       getWidth() {
           if (!this.width) {
+              const labelWidth = this.labelBox.width + this.labelBox.height
+                  + TURBOSHAFT_COLLAPSE_ICON_X_INDENT;
               const maxNodesWidth = Math.max(...this.nodes.map((node) => node.getWidth()));
-              this.width = Math.max(maxNodesWidth, this.labelBox.width) + TURBOSHAFT_NODE_X_INDENT * 2;
+              this.width = Math.max(maxNodesWidth, labelWidth, this.collapsedLabelBox.width)
+                  + TURBOSHAFT_NODE_X_INDENT * 2;
           }
           return this.width;
+      }
+      getRankIndent() {
+          return this.rank * (TURBOSHAFT_BLOCK_ROW_SEPARATION + 2 * DEFAULT_NODE_BUBBLE_RADIUS);
+      }
+      initCollapsedLabel() {
+          this.collapsedLabel = `${this.nodes.length} operations`;
+          this.collapsedLabelBox = measureText(this.collapsedLabel);
       }
       hasBackEdges() {
           return (this.type == TurboshaftGraphBlockType.Loop) ||
@@ -1088,14 +1112,13 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphPhase extends Phase {
-      constructor(name, highestBlockId, data, nodeIdToNodeMap, blockIdToBlockMap) {
+      constructor(name, dataJson) {
           super(name, PhaseType.TurboshaftGraph);
-          this.highestBlockId = highestBlockId;
-          this.data = data ?? new TurboshaftGraphData();
           this.stateType = GraphStateType$1.NeedToFullRebuild;
-          this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
-          this.blockIdToBlockMap = blockIdToBlockMap ?? new Array();
+          this.nodeIdToNodeMap = new Array();
+          this.blockIdToBlockMap = new Array();
           this.rendered = false;
+          this.parseDataFromJSON(dataJson);
       }
       parseDataFromJSON(dataJson) {
           this.data = new TurboshaftGraphData();
@@ -1126,6 +1149,9 @@
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
           }
+          for (const block of this.blockIdToBlockMap) {
+              block.initCollapsedLabel();
+          }
       }
       parseEdgesFromJSON(edgesJson) {
           for (const edgeJson of edgesJson) {
@@ -1142,17 +1168,12 @@
       }
   }
   class TurboshaftGraphData {
-      constructor(nodes, edges, blocks) {
-          this.nodes = nodes ?? new Array();
-          this.edges = edges ?? new Array();
-          this.blocks = blocks ?? new Array();
+      constructor() {
+          this.nodes = new Array();
+          this.edges = new Array();
+          this.blocks = new Array();
       }
   }
-  var TurboshaftLayoutType;
-  (function (TurboshaftLayoutType) {
-      TurboshaftLayoutType[TurboshaftLayoutType["Inline"] = 0] = "Inline";
-      TurboshaftLayoutType[TurboshaftLayoutType["Nodes"] = 1] = "Nodes";
-  })(TurboshaftLayoutType || (TurboshaftLayoutType = {}));
 
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SourceResolver {
@@ -1171,9 +1192,7 @@
           this.phases = new Array();
           // Maps phase names to phaseIds.
           this.phaseNames = new Map();
-          this.instructionsPhase = new InstructionsPhase("");
-          // The disassembly phase is stored separately.
-          this.disassemblyPhase = undefined;
+          this.instructionsPhase = new InstructionsPhase();
           // Maps line numbers to source positions
           this.linePositionMap = new Map();
       }
@@ -1246,15 +1265,13 @@
               switch (genericPhase.type) {
                   case PhaseType.Disassembly:
                       const castedDisassembly = genericPhase;
-                      const disassemblyPhase = new DisassemblyPhase(castedDisassembly.name, castedDisassembly.data);
-                      disassemblyPhase.parseBlockIdToOffsetFromJSON(castedDisassembly?.blockIdToOffset);
+                      const disassemblyPhase = new DisassemblyPhase(castedDisassembly.name, castedDisassembly.data, castedDisassembly?.blockIdToOffset);
                       this.disassemblyPhase = disassemblyPhase;
                       break;
                   case PhaseType.Schedule:
                       const castedSchedule = genericPhase;
                       const schedulePhase = new SchedulePhase(castedSchedule.name, castedSchedule.data);
                       this.phaseNames.set(schedulePhase.name, this.phases.length);
-                      schedulePhase.parseScheduleFromJSON(castedSchedule.data);
                       this.phases.push(schedulePhase);
                       break;
                   case PhaseType.Sequence:
@@ -1282,17 +1299,14 @@
                       break;
                   case PhaseType.Graph:
                       const castedGraph = genericPhase;
-                      const graphPhase = new GraphPhase(castedGraph.name, 0);
-                      graphPhase.parseDataFromJSON(castedGraph.data, nodeLabelMap);
-                      graphPhase.nodeLabelMap = nodeLabelMap.slice();
+                      const graphPhase = new GraphPhase(castedGraph.name, 0, castedGraph.data, nodeLabelMap);
                       this.recordOrigins(graphPhase);
                       this.phaseNames.set(graphPhase.name, this.phases.length);
                       this.phases.push(graphPhase);
                       break;
                   case PhaseType.TurboshaftGraph:
                       const castedTurboshaftGraph = genericPhase;
-                      const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, 0);
-                      turboshaftGraphPhase.parseDataFromJSON(castedTurboshaftGraph.data);
+                      const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, castedTurboshaftGraph.data);
                       this.phaseNames.set(turboshaftGraphPhase.name, this.phases.length);
                       this.phases.push(turboshaftGraphPhase);
                       break;
@@ -1355,7 +1369,7 @@
           return this.sources[sourceId];
       }
       addAnyPositionToLine(lineNumber, sourcePosition) {
-          const lineNumberString = anyToString(lineNumber);
+          const lineNumberString = String(lineNumber);
           if (!this.linePositionMap.has(lineNumberString)) {
               this.linePositionMap.set(lineNumberString, new Array());
           }
@@ -1373,7 +1387,7 @@
           return this.phaseNames.get(phaseName);
       }
       lineToSourcePositions(lineNumber) {
-          return this.linePositionMap.get(anyToString(lineNumber)) ?? new Array();
+          return this.linePositionMap.get(String(lineNumber)) ?? new Array();
       }
       getSourceName(sourceId) {
           const source = this.sources[sourceId];
@@ -1694,148 +1708,49 @@
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   class TextView extends PhaseView {
-      constructor(id, broker) {
-          super(id);
-          const view = this;
-          view.textListNode = view.divNode.getElementsByTagName('ul')[0];
-          view.patterns = null;
-          view.instructionIdToHtmlElementsMap = new Map();
-          view.nodeIdToHtmlElementsMap = new Map();
-          view.blockIdToHtmlElementsMap = new Map();
-          view.blockIdToNodeIds = new Map();
-          view.nodeIdToBlockId = [];
-          view.selection = new SelectionMap(anyToString);
-          view.blockSelection = new SelectionMap(anyToString);
-          view.broker = broker;
-          view.sourceResolver = broker.sourceResolver;
-          const selectionHandler = {
-              clear: function () {
-                  view.selection.clear();
-                  view.updateSelection();
-                  broker.broadcastClear(selectionHandler);
-              },
-              select: function (nodeIds, selected) {
-                  view.selection.select(nodeIds, selected);
-                  view.updateSelection();
-                  broker.broadcastNodeSelect(selectionHandler, view.selection.selectedKeys(), selected);
-              },
-              brokeredNodeSelect: function (nodeIds, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
-                  view.selection.select(nodeIds, selected);
-                  view.updateSelection(firstSelect);
-              },
-              brokeredClear: function () {
-                  view.selection.clear();
-                  view.updateSelection();
-              }
-          };
-          this.selectionHandler = selectionHandler;
-          broker.addNodeHandler(selectionHandler);
-          view.divNode.addEventListener('click', e => {
+      constructor(parent, broker) {
+          super(parent);
+          this.broker = broker;
+          this.sourceResolver = broker.sourceResolver;
+          this.textListNode = this.divNode.getElementsByTagName("ul")[0];
+          this.instructionIdToHtmlElementsMap = new Map();
+          this.nodeIdToHtmlElementsMap = new Map();
+          this.blockIdToHtmlElementsMap = new Map();
+          this.blockIdToNodeIds = new Map();
+          this.nodeIdToBlockId = new Array();
+          this.selection = new SelectionMap(node => String(node));
+          this.blockSelection = new SelectionMap(block => String(block));
+          this.registerAllocationSelection = new SelectionMap(register => String(register));
+          this.selectionHandler = this.initializeNodeSelectionHandler();
+          this.blockSelectionHandler = this.initializeBlockSelectionHandler();
+          this.registerAllocationSelectionHandler = this.initializeRegisterAllocationSelectionHandler();
+          broker.addNodeHandler(this.selectionHandler);
+          broker.addBlockHandler(this.blockSelectionHandler);
+          broker.addRegisterAllocatorHandler(this.registerAllocationSelectionHandler);
+          this.divNode.addEventListener("click", e => {
               if (!e.shiftKey) {
-                  view.selectionHandler.clear();
+                  this.selectionHandler.clear();
               }
               e.stopPropagation();
           });
-          const blockSelectionHandler = {
-              clear: function () {
-                  view.blockSelection.clear();
-                  view.updateSelection();
-                  broker.broadcastClear(blockSelectionHandler);
-              },
-              select: function (blockIds, selected) {
-                  view.blockSelection.select(blockIds, selected);
-                  view.updateSelection();
-                  broker.broadcastBlockSelect(blockSelectionHandler, blockIds, selected);
-              },
-              brokeredBlockSelect: function (blockIds, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
-                  view.blockSelection.select(blockIds, selected);
-                  view.updateSelection(firstSelect);
-              },
-              brokeredClear: function () {
-                  view.blockSelection.clear();
-                  view.updateSelection();
-              }
-          };
-          this.blockSelectionHandler = blockSelectionHandler;
-          broker.addBlockHandler(blockSelectionHandler);
-          view.registerAllocationSelection = new SelectionMap(anyToString);
-          const registerAllocationSelectionHandler = {
-              clear: function () {
-                  view.registerAllocationSelection.clear();
-                  view.updateSelection();
-                  broker.broadcastClear(registerAllocationSelectionHandler);
-              },
-              select: function (instructionIds, selected) {
-                  view.registerAllocationSelection.select(instructionIds, selected);
-                  view.updateSelection();
-                  broker.broadcastInstructionSelect(null, [instructionIds], selected);
-              },
-              brokeredRegisterAllocationSelect: function (instructionIds, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
-                  view.registerAllocationSelection.select(instructionIds, selected);
-                  view.updateSelection(firstSelect);
-              },
-              brokeredClear: function () {
-                  view.registerAllocationSelection.clear();
-                  view.updateSelection();
-              }
-          };
-          broker.addRegisterAllocatorHandler(registerAllocationSelectionHandler);
-          view.registerAllocationSelectionHandler = registerAllocationSelectionHandler;
       }
-      // instruction-id are the divs for the register allocator phase
-      addHtmlElementForInstructionId(anyInstructionId, htmlElement) {
-          const instructionId = anyToString(anyInstructionId);
-          if (!this.instructionIdToHtmlElementsMap.has(instructionId)) {
-              this.instructionIdToHtmlElementsMap.set(instructionId, []);
+      initializeContent(genericPhase, _) {
+          this.clearText();
+          if (!(genericPhase instanceof SequencePhase)) {
+              this.processText(genericPhase.data);
           }
-          this.instructionIdToHtmlElementsMap.get(instructionId).push(htmlElement);
-      }
-      addHtmlElementForNodeId(anyNodeId, htmlElement) {
-          const nodeId = anyToString(anyNodeId);
-          if (!this.nodeIdToHtmlElementsMap.has(nodeId)) {
-              this.nodeIdToHtmlElementsMap.set(nodeId, []);
-          }
-          this.nodeIdToHtmlElementsMap.get(nodeId).push(htmlElement);
-      }
-      addHtmlElementForBlockId(anyBlockId, htmlElement) {
-          const blockId = anyToString(anyBlockId);
-          if (!this.blockIdToHtmlElementsMap.has(blockId)) {
-              this.blockIdToHtmlElementsMap.set(blockId, []);
-          }
-          this.blockIdToHtmlElementsMap.get(blockId).push(htmlElement);
-      }
-      addNodeIdToBlockId(anyNodeId, anyBlockId) {
-          const blockId = anyToString(anyBlockId);
-          if (!this.blockIdToNodeIds.has(blockId)) {
-              this.blockIdToNodeIds.set(blockId, []);
-          }
-          this.blockIdToNodeIds.get(blockId).push(anyToString(anyNodeId));
-          this.nodeIdToBlockId[anyNodeId] = blockId;
-      }
-      blockIdsForNodeIds(nodeIds) {
-          const blockIds = [];
-          for (const nodeId of nodeIds) {
-              const blockId = this.nodeIdToBlockId[nodeId];
-              if (blockId == undefined)
-                  continue;
-              blockIds.push(blockId);
-          }
-          return blockIds;
+          this.show();
       }
       updateSelection(scrollIntoView = false) {
           if (this.divNode.parentNode == null)
               return;
           const mkVisible = new ViewElements(this.divNode.parentNode);
-          const view = this;
-          const elementsToSelect = view.divNode.querySelectorAll(`[data-pc-offset]`);
+          const elementsToSelect = this.divNode.querySelectorAll(`[data-pc-offset]`);
           for (const el of elementsToSelect) {
               el.classList.toggle("selected", false);
           }
           for (const [blockId, elements] of this.blockIdToHtmlElementsMap.entries()) {
-              const isSelected = view.blockSelection.isSelected(blockId);
+              const isSelected = this.blockSelection.isSelected(blockId);
               for (const element of elements) {
                   mkVisible.consider(element, isSelected);
                   element.classList.toggle("selected", isSelected);
@@ -1846,7 +1761,7 @@
                   element.classList.toggle("selected", false);
               }
           }
-          for (const instrId of view.registerAllocationSelection.selectedKeys()) {
+          for (const instrId of this.registerAllocationSelection.selectedKeys()) {
               const elements = this.instructionIdToHtmlElementsMap.get(instrId);
               if (!elements)
                   continue;
@@ -1860,7 +1775,7 @@
                   element.classList.toggle("selected", false);
               }
           }
-          for (const nodeId of view.selection.selectedKeys()) {
+          for (const nodeId of this.selection.selectedKeys()) {
               const elements = this.nodeIdToHtmlElementsMap.get(nodeId);
               if (!elements)
                   continue;
@@ -1871,23 +1786,74 @@
           }
           mkVisible.apply(scrollIntoView);
       }
-      setPatterns(patterns) {
-          this.patterns = patterns;
-      }
-      clearText() {
-          while (this.textListNode.firstChild) {
-              this.textListNode.removeChild(this.textListNode.firstChild);
-          }
-      }
-      createFragment(text, style) {
-          const fragment = document.createElement("SPAN");
-          if (typeof style.associateData == 'function') {
-              if (style.associateData(text, fragment) === false) {
-                  return null;
+      processLine(line) {
+          const fragments = new Array();
+          let patternSet = 0;
+          while (true) {
+              const beforeLine = line;
+              for (const pattern of this.patterns[patternSet]) {
+                  const matches = line.match(pattern[0]);
+                  if (matches) {
+                      if (matches[0].length > 0) {
+                          const style = pattern[1] != null ? pattern[1] : {};
+                          const text = matches[0];
+                          if (text.length > 0) {
+                              const fragment = this.createFragment(matches[0], style);
+                              if (fragment !== null)
+                                  fragments.push(fragment);
+                          }
+                          line = line.substr(matches[0].length);
+                      }
+                      let nextPatternSet = patternSet;
+                      if (pattern.length > 2) {
+                          nextPatternSet = pattern[2];
+                      }
+                      if (line.length == 0) {
+                          if (nextPatternSet != -1) {
+                              throw (`illegal parsing state in text-view in patternSet: ${patternSet}`);
+                          }
+                          return fragments;
+                      }
+                      patternSet = nextPatternSet;
+                      break;
+                  }
+              }
+              if (beforeLine == line) {
+                  throw (`input not consumed in text-view in patternSet: ${patternSet}`);
               }
           }
+      }
+      onresize() { }
+      // instruction-id are the divs for the register allocator phase
+      addHtmlElementForInstructionId(anyInstructionId, htmlElement) {
+          const instructionId = String(anyInstructionId);
+          if (!this.instructionIdToHtmlElementsMap.has(instructionId)) {
+              this.instructionIdToHtmlElementsMap.set(instructionId, new Array());
+          }
+          this.instructionIdToHtmlElementsMap.get(instructionId).push(htmlElement);
+      }
+      addHtmlElementForNodeId(anyNodeId, htmlElement) {
+          const nodeId = String(anyNodeId);
+          if (!this.nodeIdToHtmlElementsMap.has(nodeId)) {
+              this.nodeIdToHtmlElementsMap.set(nodeId, new Array());
+          }
+          this.nodeIdToHtmlElementsMap.get(nodeId).push(htmlElement);
+      }
+      addHtmlElementForBlockId(anyBlockId, htmlElement) {
+          const blockId = String(anyBlockId);
+          if (!this.blockIdToHtmlElementsMap.has(blockId)) {
+              this.blockIdToHtmlElementsMap.set(blockId, new Array());
+          }
+          this.blockIdToHtmlElementsMap.get(blockId).push(htmlElement);
+      }
+      createFragment(text, style) {
+          const fragment = document.createElement("span");
+          if (typeof style.associateData === "function") {
+              if (!style.associateData(text, fragment))
+                  return null;
+          }
           else {
-              if (style.css != undefined) {
+              if (style.css !== undefined) {
                   const css = isIterable(style.css) ? style.css : [style.css];
                   for (const cls of css) {
                       fragment.classList.add(cls);
@@ -1897,303 +1863,125 @@
           }
           return fragment;
       }
-      processLine(line) {
+      initializeNodeSelectionHandler() {
           const view = this;
-          const result = [];
-          let patternSet = 0;
-          while (true) {
-              const beforeLine = line;
-              for (const pattern of view.patterns[patternSet]) {
-                  const matches = line.match(pattern[0]);
-                  if (matches != null) {
-                      if (matches[0] != '') {
-                          const style = pattern[1] != null ? pattern[1] : {};
-                          const text = matches[0];
-                          if (text != '') {
-                              const fragment = view.createFragment(matches[0], style);
-                              if (fragment !== null)
-                                  result.push(fragment);
-                          }
-                          line = line.substr(matches[0].length);
-                      }
-                      let nextPatternSet = patternSet;
-                      if (pattern.length > 2) {
-                          nextPatternSet = pattern[2];
-                      }
-                      if (line == "") {
-                          if (nextPatternSet != -1) {
-                              throw ("illegal parsing state in text-view in patternSet" + patternSet);
-                          }
-                          return result;
-                      }
-                      patternSet = nextPatternSet;
-                      break;
-                  }
+          return {
+              select: function (nodeIds, selected) {
+                  view.selection.select(nodeIds, selected);
+                  view.updateSelection();
+                  view.broker.broadcastNodeSelect(this, view.selection.selectedKeys(), selected);
+              },
+              clear: function () {
+                  view.selection.clear();
+                  view.updateSelection();
+                  view.broker.broadcastClear(this);
+              },
+              brokeredNodeSelect: function (nodeIds, selected) {
+                  const firstSelect = view.blockSelection.isEmpty();
+                  view.selection.select(nodeIds, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.selection.clear();
+                  view.updateSelection();
               }
-              if (beforeLine == line) {
-                  throw ("input not consumed in text-view in patternSet" + patternSet);
+          };
+      }
+      initializeBlockSelectionHandler() {
+          const view = this;
+          return {
+              select: function (blockIds, selected) {
+                  view.blockSelection.select(blockIds, selected);
+                  view.updateSelection();
+                  view.broker.broadcastBlockSelect(this, blockIds, selected);
+              },
+              clear: function () {
+                  view.blockSelection.clear();
+                  view.updateSelection();
+                  view.broker.broadcastClear(this);
+              },
+              brokeredBlockSelect: function (blockIds, selected) {
+                  const firstSelect = view.blockSelection.isEmpty();
+                  view.blockSelection.select(blockIds, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.blockSelection.clear();
+                  view.updateSelection();
               }
+          };
+      }
+      initializeRegisterAllocationSelectionHandler() {
+          const view = this;
+          return {
+              select: function (instructionIds, selected) {
+                  view.registerAllocationSelection.select(instructionIds, selected);
+                  view.updateSelection();
+                  view.broker.broadcastInstructionSelect(null, [instructionIds], selected);
+              },
+              clear: function () {
+                  view.registerAllocationSelection.clear();
+                  view.updateSelection();
+                  view.broker.broadcastClear(this);
+              },
+              brokeredRegisterAllocationSelect: function (instructionIds, selected) {
+                  const firstSelect = view.blockSelection.isEmpty();
+                  view.registerAllocationSelection.select(instructionIds, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.registerAllocationSelection.clear();
+                  view.updateSelection();
+              }
+          };
+      }
+      clearText() {
+          while (this.textListNode.firstChild) {
+              this.textListNode.removeChild(this.textListNode.firstChild);
           }
       }
       processText(text) {
-          const view = this;
           const textLines = text.split(/[\n]/);
           let lineNo = 0;
           for (const line of textLines) {
-              const li = document.createElement("LI");
+              const li = document.createElement("li");
               li.className = "nolinenums";
-              li.dataset.lineNo = "" + lineNo++;
-              const fragments = view.processLine(line);
+              li.dataset.lineNo = String(lineNo++);
+              const fragments = this.processLine(line);
               for (const fragment of fragments) {
                   li.appendChild(fragment);
               }
-              view.textListNode.appendChild(li);
+              this.textListNode.appendChild(li);
           }
       }
-      initializeContent(data, rememberedSelection) {
-          this.clearText();
-          this.processText(data);
-          this.show();
-      }
-      onresize() { }
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   const toolboxHTML$1 = `<div id="disassembly-toolbox">
-<form>
-  <label><input id="show-instruction-address" type="checkbox" name="instruction-address">Show addresses</label>
-  <label><input id="show-instruction-binary" type="checkbox" name="instruction-binary">Show binary literal</label>
-  <label><input id="highlight-gap-instructions" type="checkbox" name="instruction-binary">Highlight gap instructions</label>
-</form>
-</div>`;
+    <form>
+      <label><input id="show-instruction-address" type="checkbox" name="instruction-address">Show addresses</label>
+      <label><input id="show-instruction-binary" type="checkbox" name="instruction-binary">Show binary literal</label>
+      <label><input id="highlight-gap-instructions" type="checkbox" name="instruction-binary">Highlight gap instructions</label>
+    </form>
+  </div>`;
   class DisassemblyView extends TextView {
-      constructor(parentId, broker) {
-          super(parentId, broker);
-          const view = this;
-          const ADDRESS_STYLE = {
-              associateData: (text, fragment) => {
-                  const matches = text.match(/(?<address>0?x?[0-9a-fA-F]{8,16})(?<addressSpace>\s+)(?<offset>[0-9a-f]+)(?<offsetSpace>\s*)/);
-                  const offset = Number.parseInt(matches.groups["offset"], 16);
-                  const instructionKind = view.sourceResolver.instructionsPhase
-                      .getInstructionKindForPCOffset(offset);
-                  fragment.dataset.instructionKind = instructionKind;
-                  fragment.title = view.sourceResolver.instructionsPhase
-                      .instructionKindToReadableName(instructionKind);
-                  const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
-                  const blockIdElement = document.createElement("SPAN");
-                  blockIdElement.className = "block-id com linkable-text";
-                  blockIdElement.innerText = "";
-                  if (blockIds && blockIds.length > 0) {
-                      blockIds.forEach(blockId => view.addHtmlElementForBlockId(blockId, fragment));
-                      blockIdElement.innerText = `B${blockIds.join(",")}:`;
-                      blockIdElement.dataset.blockId = `${blockIds.join(",")}`;
-                  }
-                  fragment.appendChild(blockIdElement);
-                  const addressElement = document.createElement("SPAN");
-                  addressElement.className = "instruction-address";
-                  addressElement.innerText = matches.groups["address"];
-                  const offsetElement = document.createElement("SPAN");
-                  offsetElement.innerText = matches.groups["offset"];
-                  fragment.appendChild(addressElement);
-                  fragment.appendChild(document.createTextNode(matches.groups["addressSpace"]));
-                  fragment.appendChild(offsetElement);
-                  fragment.appendChild(document.createTextNode(matches.groups["offsetSpace"]));
-                  fragment.classList.add('tag');
-                  if (!Number.isNaN(offset)) {
-                      let pcOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
-                      if (pcOffset == -1)
-                          pcOffset = Number(offset);
-                      fragment.dataset.pcOffset = `${pcOffset}`;
-                      addressElement.classList.add('linkable-text');
-                      offsetElement.classList.add('linkable-text');
-                  }
-                  return true;
-              }
-          };
-          const UNCLASSIFIED_STYLE = {
-              css: 'com'
-          };
-          const NUMBER_STYLE = {
-              css: ['instruction-binary', 'lit']
-          };
-          const COMMENT_STYLE = {
-              css: 'com'
-          };
-          const OPCODE_ARGS = {
-              associateData: function (text, fragment) {
-                  fragment.innerHTML = text;
-                  const replacer = (match, hexOffset) => {
-                      const offset = Number.parseInt(hexOffset, 16);
-                      let keyOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
-                      if (keyOffset == -1)
-                          keyOffset = Number(offset);
-                      const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
-                      let block = "";
-                      let blockIdData = "";
-                      if (blockIds && blockIds.length > 0) {
-                          block = `B${blockIds.join(",")} `;
-                          blockIdData = `data-block-id="${blockIds.join(",")}"`;
-                      }
-                      return `<span class="tag linkable-text" data-pc-offset="${keyOffset}" ${blockIdData}>${block}${match}</span>`;
-                  };
-                  const html = text.replace(/<.0?x?([0-9a-fA-F]+)>/g, replacer);
-                  fragment.innerHTML = html;
-                  return true;
-              }
-          };
-          const OPCODE_STYLE = {
-              css: 'kwd'
-          };
-          const BLOCK_HEADER_STYLE = {
-              associateData: function (text, fragment) {
-                  if (view.sourceResolver.disassemblyPhase.hasBlockStartInfo())
-                      return false;
-                  const matches = /\d+/.exec(text);
-                  if (!matches)
-                      return true;
-                  const blockId = matches[0];
-                  fragment.dataset.blockId = blockId;
-                  fragment.innerHTML = text;
-                  fragment.className = "com block";
-                  return true;
-              }
-          };
-          const SOURCE_POSITION_HEADER_STYLE = {
-              css: 'com'
-          };
-          view.SOURCE_POSITION_HEADER_REGEX = /^\s*--[^<]*<.*(not inlined|inlined\((\d+)\)):(\d+)>\s*--/;
-          const patterns = [
-              [
-                  [/^0?x?[0-9a-fA-F]{8,16}\s+[0-9a-f]+\s+/, ADDRESS_STYLE, 1],
-                  [view.SOURCE_POSITION_HEADER_REGEX, SOURCE_POSITION_HEADER_STYLE, -1],
-                  [/^\s+-- B\d+ start.*/, BLOCK_HEADER_STYLE, -1],
-                  [/^.*/, UNCLASSIFIED_STYLE, -1]
-              ],
-              [
-                  [/^\s*[0-9a-f]+\s+/, NUMBER_STYLE, 2],
-                  [/^\s*[0-9a-f]+\s+[0-9a-f]+\s+/, NUMBER_STYLE, 2],
-                  [/^.*/, null, -1]
-              ],
-              [
-                  [/^REX.W \S+\s+/, OPCODE_STYLE, 3],
-                  [/^\S+\s+/, OPCODE_STYLE, 3],
-                  [/^\S+$/, OPCODE_STYLE, -1],
-                  [/^.*/, null, -1]
-              ],
-              [
-                  [/^\s+/, null],
-                  [/^[^;]+$/, OPCODE_ARGS, -1],
-                  [/^[^;]+/, OPCODE_ARGS, 4],
-                  [/^;/, COMMENT_STYLE, 5]
-              ],
-              [
-                  [/^.+$/, COMMENT_STYLE, -1]
-              ]
-          ];
-          view.setPatterns(patterns);
-          const linkHandler = (e) => {
-              if (!(e.target instanceof HTMLElement))
-                  return;
-              const offsetAsString = typeof e.target.dataset.pcOffset != "undefined" ? e.target.dataset.pcOffset : e.target.parentElement.dataset.pcOffset;
-              const offset = Number.parseInt(offsetAsString, 10);
-              if ((typeof offsetAsString) != "undefined" && !Number.isNaN(offset)) {
-                  view.offsetSelection.select([offset], true);
-                  const nodes = view.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
-                  if (nodes.length > 0) {
-                      e.stopPropagation();
-                      if (!e.shiftKey) {
-                          view.selectionHandler.clear();
-                      }
-                      view.selectionHandler.select(nodes, true);
-                  }
-                  else {
-                      view.updateSelection();
-                  }
-              }
-              return undefined;
-          };
-          view.divNode.addEventListener('click', linkHandler);
-          const linkHandlerBlock = e => {
-              const blockId = e.target.dataset.blockId;
-              if (typeof blockId != "undefined") {
-                  const blockIds = blockId.split(",");
-                  if (!e.shiftKey) {
-                      view.selectionHandler.clear();
-                  }
-                  view.blockSelectionHandler.select(blockIds, true);
-              }
-          };
-          view.divNode.addEventListener('click', linkHandlerBlock);
-          this.offsetSelection = new SelectionMap(anyToString);
-          const instructionSelectionHandler = {
-              clear: function () {
-                  view.offsetSelection.clear();
-                  view.updateSelection();
-                  broker.broadcastClear(instructionSelectionHandler);
-              },
-              select: function (instructionIds, selected) {
-                  view.offsetSelection.select(instructionIds, selected);
-                  view.updateSelection();
-                  broker.broadcastBlockSelect(instructionSelectionHandler, instructionIds, selected);
-              },
-              brokeredInstructionSelect: function (instructionIds, selected) {
-                  const firstSelect = view.offsetSelection.isEmpty();
-                  const keyPcOffsets = view.sourceResolver.instructionsPhase
-                      .instructionsToKeyPcOffsets(instructionIds);
-                  view.offsetSelection.select(keyPcOffsets, selected);
-                  view.updateSelection(firstSelect);
-              },
-              brokeredClear: function () {
-                  view.offsetSelection.clear();
-                  view.updateSelection();
-              }
-          };
-          this.instructionSelectionHandler = instructionSelectionHandler;
-          broker.addInstructionHandler(instructionSelectionHandler);
-          const toolbox = document.createElement("div");
-          toolbox.id = "toolbox-anchor";
-          toolbox.innerHTML = toolboxHTML$1;
-          view.divNode.insertBefore(toolbox, view.divNode.firstChild);
-          const instructionAddressInput = view.divNode.querySelector("#show-instruction-address");
-          const lastShowInstructionAddress = window.sessionStorage.getItem("show-instruction-address");
-          instructionAddressInput.checked = lastShowInstructionAddress == 'true';
-          const showInstructionAddressHandler = () => {
-              window.sessionStorage.setItem("show-instruction-address", `${instructionAddressInput.checked}`);
-              for (const el of view.divNode.querySelectorAll(".instruction-address")) {
-                  el.classList.toggle("invisible", !instructionAddressInput.checked);
-              }
-          };
-          instructionAddressInput.addEventListener("change", showInstructionAddressHandler);
-          this.showInstructionAddressHandler = showInstructionAddressHandler;
-          const instructionBinaryInput = view.divNode.querySelector("#show-instruction-binary");
-          const lastShowInstructionBinary = window.sessionStorage.getItem("show-instruction-binary");
-          instructionBinaryInput.checked = lastShowInstructionBinary == 'true';
-          const showInstructionBinaryHandler = () => {
-              window.sessionStorage.setItem("show-instruction-binary", `${instructionBinaryInput.checked}`);
-              for (const el of view.divNode.querySelectorAll(".instruction-binary")) {
-                  el.classList.toggle("invisible", !instructionBinaryInput.checked);
-              }
-          };
-          instructionBinaryInput.addEventListener("change", showInstructionBinaryHandler);
-          this.showInstructionBinaryHandler = showInstructionBinaryHandler;
-          const highlightGapInstructionsInput = view.divNode.querySelector("#highlight-gap-instructions");
-          const lastHighlightGapInstructions = window.sessionStorage.getItem("highlight-gap-instructions");
-          highlightGapInstructionsInput.checked = lastHighlightGapInstructions == 'true';
-          const highlightGapInstructionsHandler = () => {
-              window.sessionStorage.setItem("highlight-gap-instructions", `${highlightGapInstructionsInput.checked}`);
-              view.divNode.classList.toggle("highlight-gap-instructions", highlightGapInstructionsInput.checked);
-          };
-          highlightGapInstructionsInput.addEventListener("change", highlightGapInstructionsHandler);
-          this.highlightGapInstructionsHandler = highlightGapInstructionsHandler;
+      constructor(parent, broker) {
+          super(parent, broker);
+          this.patterns = this.initializePatterns();
+          this.divNode.addEventListener("click", e => this.linkClickHandler(e));
+          this.divNode.addEventListener("click", e => this.linkBlockClickHandler(e));
+          this.offsetSelection = new SelectionMap(offset => String(offset));
+          this.instructionSelectionHandler = this.initializeInstructionSelectionHandler();
+          this.broker.addInstructionHandler(this.instructionSelectionHandler);
+          this.addDisassemblyToolbox();
       }
       createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "disassembly");
+          const pane = document.createElement("div");
+          pane.setAttribute("id", DISASSEMBLY_PANE_ID);
           pane.innerHTML =
-              `<pre id='disassembly-text-pre' class='prettyprint prettyprinted'>
-       <ul class='disassembly-list nolinenums noindent'>
-       </ul>
-     </pre>`;
+              `<pre id="disassembly-text-pre" class="prettyprint prettyprinted">
+         <ul class="disassembly-list nolinenums noindent"></ul>
+       </pre>`;
           return pane;
       }
       updateSelection(scrollIntoView = false) {
@@ -2204,7 +1992,7 @@
           ];
           if (this.offsetSelection) {
               for (const key of this.offsetSelection.selectedKeys()) {
-                  keyPcOffsets.push(Number(key));
+                  keyPcOffsets.push(key);
               }
           }
           for (const keyPcOffset of keyPcOffsets) {
@@ -2214,75 +2002,20 @@
               }
           }
       }
-      initializeCode(sourceText, sourcePosition = 0) {
-          const view = this;
-          view.addrEventCounts = null;
-          view.totalEventCounts = null;
-          view.maxEventCounts = null;
-          view.posLines = new Array();
-          // Comment lines for line 0 include sourcePosition already, only need to
-          // add sourcePosition for lines > 0.
-          view.posLines[0] = sourcePosition;
-          if (sourceText && sourceText != "") {
-              const base = sourcePosition;
-              let current = 0;
-              const sourceLines = sourceText.split("\n");
-              for (let i = 1; i < sourceLines.length; i++) {
-                  // Add 1 for newline character that is split off.
-                  current += sourceLines[i - 1].length + 1;
-                  view.posLines[i] = base + current;
-              }
-          }
-      }
-      initializePerfProfile(eventCounts) {
-          const view = this;
-          if (eventCounts !== undefined) {
-              view.addrEventCounts = eventCounts;
-              view.totalEventCounts = {};
-              view.maxEventCounts = {};
-              for (const evName in view.addrEventCounts) {
-                  if (view.addrEventCounts.hasOwnProperty(evName)) {
-                      const keys = Object.keys(view.addrEventCounts[evName]);
-                      const values = keys.map(key => view.addrEventCounts[evName][key]);
-                      view.totalEventCounts[evName] = values.reduce((a, b) => a + b);
-                      view.maxEventCounts[evName] = values.reduce((a, b) => Math.max(a, b));
-                  }
-              }
-          }
-          else {
-              view.addrEventCounts = null;
-              view.totalEventCounts = null;
-              view.maxEventCounts = null;
-          }
-      }
-      showContent(data) {
-          console.time("disassembly-view");
-          super.initializeContent(data, null);
-          this.showInstructionAddressHandler();
-          this.showInstructionBinaryHandler();
-          this.highlightGapInstructionsHandler();
-          console.timeEnd("disassembly-view");
-      }
-      // Shorten decimals and remove trailing zeroes for readability.
-      humanize(num) {
-          return num.toFixed(3).replace(/\.?0+$/, "") + "%";
-      }
       processLine(line) {
-          const view = this;
           let fragments = super.processLine(line);
+          const cssCls = "prof";
           // Add profiling data per instruction if available.
-          if (view.totalEventCounts) {
+          if (this.totalEventCounts) {
               const matches = /^(0x[0-9a-fA-F]+)\s+\d+\s+[0-9a-fA-F]+/.exec(line);
               if (matches) {
-                  const newFragments = [];
-                  for (const event in view.addrEventCounts) {
-                      if (!view.addrEventCounts.hasOwnProperty(event))
+                  const newFragments = new Array();
+                  for (const event in this.addrEventCounts) {
+                      if (!this.addrEventCounts.hasOwnProperty(event))
                           continue;
-                      const count = view.addrEventCounts[event][matches[1]];
-                      let str = " ";
-                      const cssCls = "prof";
+                      const count = this.addrEventCounts[event][matches[1]];
                       if (count !== undefined) {
-                          const perc = count / view.totalEventCounts[event] * 100;
+                          const perc = count / this.totalEventCounts[event] * 100;
                           let col = { r: 255, g: 255, b: 255 };
                           for (let i = 0; i < PROF_COLS.length; i++) {
                               if (perc === PROF_COLS[i].perc) {
@@ -2300,14 +2033,13 @@
                                   break;
                               }
                           }
-                          str = UNICODE_BLOCK;
-                          const fragment = view.createFragment(str, cssCls);
-                          fragment.title = event + ": " + view.humanize(perc) + " (" + count + ")";
-                          fragment.style.color = "rgb(" + col.r + ", " + col.g + ", " + col.b + ")";
+                          const fragment = this.createFragment(UNICODE_BLOCK, cssCls);
+                          fragment.title = `${event}: ${this.makeReadable(perc)} (${count})`;
+                          fragment.style.color = `rgb(${col.r}, ${col.g}, ${col.b})`;
                           newFragments.push(fragment);
                       }
                       else {
-                          newFragments.push(view.createFragment(str, cssCls));
+                          newFragments.push(this.createFragment(" ", cssCls));
                       }
                   }
                   fragments = newFragments.concat(fragments);
@@ -2315,9 +2047,298 @@
           }
           return fragments;
       }
-      detachSelection() { return null; }
+      detachSelection() {
+          return null;
+      }
+      adaptSelection(selection) {
+          return selection;
+      }
       searchInputAction(searchInput, e, onlyVisible) {
           throw new Error("Method not implemented.");
+      }
+      showContent(disassemblyPhase) {
+          console.time("disassembly-view");
+          super.initializeContent(disassemblyPhase, null);
+          this.showInstructionAddressHandler();
+          this.showInstructionBinaryHandler();
+          this.highlightGapInstructionsHandler();
+          console.timeEnd("disassembly-view");
+      }
+      initializeCode(sourceText, sourcePosition = 0) {
+          this.addrEventCounts = null;
+          this.totalEventCounts = null;
+          this.maxEventCounts = null;
+          this.posLines = new Array();
+          // Comment lines for line 0 include sourcePosition already, only need to
+          // add sourcePosition for lines > 0.
+          this.posLines[0] = sourcePosition;
+          if (sourceText && sourceText !== "") {
+              const base = sourcePosition;
+              let current = 0;
+              const sourceLines = sourceText.split("\n");
+              for (let i = 1; i < sourceLines.length; i++) {
+                  // Add 1 for newline character that is split off.
+                  current += sourceLines[i - 1].length + 1;
+                  this.posLines[i] = base + current;
+              }
+          }
+      }
+      initializePerfProfile(eventCounts) {
+          if (eventCounts !== undefined) {
+              this.addrEventCounts = eventCounts;
+              this.totalEventCounts = {};
+              this.maxEventCounts = {};
+              for (const evName in this.addrEventCounts) {
+                  if (this.addrEventCounts.hasOwnProperty(evName)) {
+                      const keys = Object.keys(this.addrEventCounts[evName]);
+                      const values = keys.map(key => this.addrEventCounts[evName][key]);
+                      this.totalEventCounts[evName] = values.reduce((a, b) => a + b);
+                      this.maxEventCounts[evName] = values.reduce((a, b) => Math.max(a, b));
+                  }
+              }
+          }
+          else {
+              this.addrEventCounts = null;
+              this.totalEventCounts = null;
+              this.maxEventCounts = null;
+          }
+      }
+      initializeInstructionSelectionHandler() {
+          const view = this;
+          const broker = this.broker;
+          return {
+              select: function (instructionIds, selected) {
+                  view.offsetSelection.select(instructionIds, selected);
+                  view.updateSelection();
+                  broker.broadcastBlockSelect(this, instructionIds, selected);
+              },
+              clear: function () {
+                  view.offsetSelection.clear();
+                  view.updateSelection();
+                  broker.broadcastClear(this);
+              },
+              brokeredInstructionSelect: function (instructionIds, selected) {
+                  const firstSelect = view.offsetSelection.isEmpty();
+                  const keyPcOffsets = view.sourceResolver.instructionsPhase
+                      .instructionsToKeyPcOffsets(instructionIds);
+                  view.offsetSelection.select(keyPcOffsets, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.offsetSelection.clear();
+                  view.updateSelection();
+              }
+          };
+      }
+      linkClickHandler(e) {
+          if (!(e.target instanceof HTMLElement))
+              return;
+          const offsetAsString = e.target.dataset.pcOffset !== undefined
+              ? e.target.dataset.pcOffset
+              : e.target.parentElement.dataset.pcOffset;
+          const offset = Number.parseInt(offsetAsString, 10);
+          if (offsetAsString !== undefined && !Number.isNaN(offset)) {
+              this.offsetSelection.select([offset], true);
+              const nodes = this.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
+              if (nodes.length > 0) {
+                  e.stopPropagation();
+                  if (!e.shiftKey)
+                      this.selectionHandler.clear();
+                  this.selectionHandler.select(nodes, true);
+              }
+              else {
+                  this.updateSelection();
+              }
+          }
+          return undefined;
+      }
+      linkBlockClickHandler(e) {
+          const spanBlockElement = e.target;
+          const blockId = spanBlockElement.dataset.blockId;
+          if (blockId !== undefined) {
+              const blockIds = blockId.split(",");
+              if (!e.shiftKey)
+                  this.selectionHandler.clear();
+              this.blockSelectionHandler.select(blockIds, true);
+          }
+      }
+      addDisassemblyToolbox() {
+          const view = this;
+          const toolbox = document.createElement("div");
+          toolbox.id = "toolbox-anchor";
+          toolbox.innerHTML = toolboxHTML$1;
+          view.divNode.insertBefore(toolbox, view.divNode.firstChild);
+          const instructionAddressInput = view.divNode.querySelector("#show-instruction-address");
+          instructionAddressInput.checked = storageGetItem("show-instruction-address");
+          const showInstructionAddressHandler = () => {
+              storageSetItem("show-instruction-address", instructionAddressInput.checked);
+              for (const el of view.divNode.querySelectorAll(".instruction-address")) {
+                  el.classList.toggle("invisible", !instructionAddressInput.checked);
+              }
+          };
+          instructionAddressInput.addEventListener("change", showInstructionAddressHandler);
+          this.showInstructionAddressHandler = showInstructionAddressHandler;
+          const instructionBinaryInput = view.divNode.querySelector("#show-instruction-binary");
+          instructionBinaryInput.checked = storageGetItem("show-instruction-binary");
+          const showInstructionBinaryHandler = () => {
+              storageSetItem("show-instruction-binary", instructionBinaryInput.checked);
+              for (const el of view.divNode.querySelectorAll(".instruction-binary")) {
+                  el.classList.toggle("invisible", !instructionBinaryInput.checked);
+              }
+          };
+          instructionBinaryInput.addEventListener("change", showInstructionBinaryHandler);
+          this.showInstructionBinaryHandler = showInstructionBinaryHandler;
+          const highlightGapInstructionsInput = view.divNode.querySelector("#highlight-gap-instructions");
+          highlightGapInstructionsInput.checked = storageGetItem("highlight-gap-instructions");
+          const highlightGapInstructionsHandler = () => {
+              storageSetItem("highlight-gap-instructions", highlightGapInstructionsInput.checked);
+              view.divNode.classList.toggle("highlight-gap-instructions", highlightGapInstructionsInput.checked);
+          };
+          highlightGapInstructionsInput.addEventListener("change", highlightGapInstructionsHandler);
+          this.highlightGapInstructionsHandler = highlightGapInstructionsHandler;
+      }
+      makeReadable(num) {
+          // Shorten decimals and remove trailing zeroes for readability.
+          return `${num.toFixed(3).replace(/\.?0+$/, "")}%`;
+      }
+      initializePatterns() {
+          return [
+              [
+                  [/^0?x?[0-9a-fA-F]{8,16}\s+[0-9a-f]+\s+/, this.addressStyle, 1],
+                  [/^\s*--[^<]*<.*(not inlined|inlined\((\d+)\)):(\d+)>\s*--/, this.sourcePositionHeaderStyle, -1],
+                  [/^\s+-- B\d+ start.*/, this.blockHeaderStyle, -1],
+                  [/^.*/, this.unclassifiedStyle, -1]
+              ],
+              [
+                  [/^\s*[0-9a-f]+\s+/, this.numberStyle, 2],
+                  [/^\s*[0-9a-f]+\s+[0-9a-f]+\s+/, this.numberStyle, 2],
+                  [/^.*/, null, -1]
+              ],
+              [
+                  [/^REX.W \S+\s+/, this.opcodeStyle, 3],
+                  [/^\S+\s+/, this.opcodeStyle, 3],
+                  [/^\S+$/, this.opcodeStyle, -1],
+                  [/^.*/, null, -1]
+              ],
+              [
+                  [/^\s+/, null],
+                  [/^[^;]+$/, this.opcodeArgs, -1],
+                  [/^[^;]+/, this.opcodeArgs, 4],
+                  [/^;/, this.commentStyle, 5]
+              ],
+              [
+                  [/^.+$/, this.commentStyle, -1]
+              ]
+          ];
+      }
+      get numberStyle() {
+          return {
+              css: ['instruction-binary', 'lit']
+          };
+      }
+      get opcodeStyle() {
+          return {
+              css: 'kwd'
+          };
+      }
+      get unclassifiedStyle() {
+          return {
+              css: 'com'
+          };
+      }
+      get commentStyle() {
+          return {
+              css: 'com'
+          };
+      }
+      get sourcePositionHeaderStyle() {
+          return {
+              css: 'com'
+          };
+      }
+      get blockHeaderStyle() {
+          const view = this;
+          return {
+              associateData: (text, fragment) => {
+                  if (view.sourceResolver.disassemblyPhase.hasBlockStartInfo())
+                      return false;
+                  const matches = /\d+/.exec(text);
+                  if (!matches)
+                      return true;
+                  const blockId = matches[0];
+                  fragment.dataset.blockId = blockId;
+                  fragment.innerHTML = text;
+                  fragment.className = "com block";
+                  return true;
+              }
+          };
+      }
+      get opcodeArgs() {
+          const view = this;
+          return {
+              associateData: (text, fragment) => {
+                  fragment.innerHTML = text;
+                  const replacer = (match, hexOffset) => {
+                      const offset = Number.parseInt(hexOffset, 16);
+                      let keyOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
+                      if (keyOffset == -1)
+                          keyOffset = Number(offset);
+                      const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
+                      let block = "";
+                      let blockIdData = "";
+                      if (blockIds && blockIds.length > 0) {
+                          block = `B${blockIds.join(",")} `;
+                          blockIdData = `data-block-id="${blockIds.join(",")}"`;
+                      }
+                      return `<span class="tag linkable-text" data-pc-offset="${keyOffset}" ${blockIdData}>${block}${match}</span>`;
+                  };
+                  fragment.innerHTML = text.replace(/<.0?x?([0-9a-fA-F]+)>/g, replacer);
+                  return true;
+              }
+          };
+      }
+      get addressStyle() {
+          const view = this;
+          return {
+              associateData: (text, fragment) => {
+                  const matches = text.match(/(?<address>0?x?[0-9a-fA-F]{8,16})(?<addressSpace>\s+)(?<offset>[0-9a-f]+)(?<offsetSpace>\s*)/);
+                  const offset = Number.parseInt(matches.groups["offset"], 16);
+                  const instructionKind = view.sourceResolver.instructionsPhase
+                      .getInstructionKindForPCOffset(offset);
+                  fragment.dataset.instructionKind = instructionKind;
+                  fragment.title = view.sourceResolver.instructionsPhase
+                      .instructionKindToReadableName(instructionKind);
+                  const blockIds = view.sourceResolver.disassemblyPhase.getBlockIdsForOffset(offset);
+                  const blockIdElement = document.createElement("span");
+                  blockIdElement.className = "block-id com linkable-text";
+                  blockIdElement.innerText = "";
+                  if (blockIds && blockIds.length > 0) {
+                      blockIds.forEach(blockId => view.addHtmlElementForBlockId(blockId, fragment));
+                      blockIdElement.innerText = `B${blockIds.join(",")}:`;
+                      blockIdElement.dataset.blockId = `${blockIds.join(",")}`;
+                  }
+                  fragment.appendChild(blockIdElement);
+                  const addressElement = document.createElement("span");
+                  addressElement.className = "instruction-address";
+                  addressElement.innerText = matches.groups["address"];
+                  const offsetElement = document.createElement("span");
+                  offsetElement.innerText = matches.groups["offset"];
+                  fragment.appendChild(addressElement);
+                  fragment.appendChild(document.createTextNode(matches.groups["addressSpace"]));
+                  fragment.appendChild(offsetElement);
+                  fragment.appendChild(document.createTextNode(matches.groups["offsetSpace"]));
+                  fragment.classList.add("tag");
+                  if (!Number.isNaN(offset)) {
+                      let pcOffset = view.sourceResolver.instructionsPhase.getKeyPcOffset(offset);
+                      if (pcOffset == -1)
+                          pcOffset = Number(offset);
+                      fragment.dataset.pcOffset = String(pcOffset);
+                      addressElement.classList.add("linkable-text");
+                      offsetElement.classList.add("linkable-text");
+                  }
+                  return true;
+              }
+          };
       }
   }
 
@@ -10479,7 +10500,6 @@
       redetermineGraphBoundingBox(showTypes) {
           this.minGraphX = 0;
           this.maxGraphNodeX = 1;
-          this.maxGraphX = undefined; // see below
           this.minGraphY = 0;
           this.maxGraphY = 1;
           for (const node of this.nodes()) {
@@ -10499,6 +10519,10 @@
               [this.minGraphX - this.width / 2, this.minGraphY - this.height / 2],
               [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
           ];
+      }
+      makeNodeVisible(identifier) {
+          if (this.nodeMap[identifier])
+              this.nodeMap[identifier].visible = true;
       }
       makeEdgesVisible() {
           if (this.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
@@ -10520,13 +10544,13 @@
           this.minSlot = 0;
           this.maxSlot = 0;
       }
-      clearOutputs(source, showTypes) {
+      clearOutputs(source, extendHeight) {
           for (const edge of source.outputs) {
               if (!edge.isVisible())
                   continue;
               for (const inputEdge of edge.target.inputs) {
                   if (inputEdge.source === source) {
-                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, extendHeight);
                       this.clearPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
                   }
               }
@@ -10560,12 +10584,12 @@
               return this.slotToLeftPosition(firstSlot + slotWidth / 2) - (width / 2);
           }
       }
-      occupyInputs(item, showTypes) {
+      occupyInputs(item, extendHeight) {
           for (let i = 0; i < item.inputs.length; ++i) {
               if (item.inputs[i].isVisible()) {
                   const edge = item.inputs[i];
                   if (!edge.isBackEdge()) {
-                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, extendHeight);
                       this.trace(`Occupying input ${i} of ${item.id} at ${horizontalPos}`);
                       this.occupyPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
                   }
@@ -10972,9 +10996,6 @@
           pane.setAttribute("id", GRAPH_PANE_ID);
           return pane;
       }
-      detachSelection() {
-          return this.state.selection.detachSelection();
-      }
       onresize() {
           const trans = transform(this.svg.node());
           const ctrans = this.panZoom.constrain()(trans, this.getSvgExtent(), this.panZoom.translateExtent());
@@ -10982,15 +11003,23 @@
       }
       hide() {
           if (this.state.cacheLayout) {
-              const matrix = this.graphElement.node().transform.baseVal.consolidate().matrix;
-              this.graph.graphPhase.transform = { scale: matrix.a, x: matrix.e, y: matrix.f };
+              this.graph.graphPhase.transform = this.getTransformMatrix();
           }
           else {
               this.graph.graphPhase.transform = null;
           }
-          this.broker.deleteNodeHandler(this.nodesSelectionHandler);
+          this.broker.deleteNodeHandler(this.nodeSelectionHandler);
           super.hide();
           this.deleteContent();
+      }
+      getTransformMatrix() {
+          const matrix = this.graphElement.node().transform.baseVal.consolidate().matrix;
+          return { scale: matrix.a, x: matrix.e, y: matrix.f };
+      }
+      viewTransformMatrix(matrix) {
+          this.svg.call(this.panZoom.transform, identity
+              .translate(matrix.x, matrix.y)
+              .scale(matrix.scale));
       }
       focusOnSvg() {
           const svg = document.getElementById(GRAPH_PANE_ID).childNodes[0];
@@ -11018,10 +11047,10 @@
           const input = this.createImgToggleInput(id, title, initState, onClick);
           this.toolbox.appendChild(input);
       }
-      minScale(graphWidth, graphHeight) {
+      minScale() {
           const [clientWith, clientHeight] = this.getSvgViewDimensions();
-          const minXScale = clientWith / (2 * graphWidth);
-          const minYScale = clientHeight / (2 * graphHeight);
+          const minXScale = clientWith / (2 * this.graph.width);
+          const minYScale = clientHeight / (2 * this.graph.height);
           const minScale = Math.min(minXScale, minYScale);
           this.panZoom.scaleExtent([minScale, 40]);
           return minScale;
@@ -11073,8 +11102,8 @@
           }
           return frontier;
       }
-      connectVisibleSelectedElements() {
-          for (const element of this.state.selection) {
+      connectVisibleSelectedElements(selection) {
+          for (const element of selection) {
               element.inputs.forEach((edge) => {
                   if (edge.source.visible && edge.target.visible) {
                       edge.visible = true;
@@ -11095,6 +11124,16 @@
       viewWholeGraph() {
           this.panZoom.scaleTo(this.svg, 0);
           this.panZoom.translateTo(this.svg, this.graph.minGraphX + this.graph.width / 2, this.graph.minGraphY + this.graph.height / 2);
+      }
+      searchNodes(filterFunction, e, onlyVisible) {
+          return [...this.graph.nodes(node => {
+                  if ((e.ctrlKey || node.visible || !onlyVisible) && filterFunction(node)) {
+                      if (e.ctrlKey || !onlyVisible)
+                          node.visible = true;
+                      return true;
+                  }
+                  return false;
+              })];
       }
       deleteContent() {
           for (const item of this.toolbox.querySelectorAll(".graph-toolbox-item")) {
@@ -11153,11 +11192,26 @@
       set cacheLayout(value) {
           storageSetItem("toggle-cache-layout", value);
       }
-      get turboshaftLayoutType() {
-          return storageGetItem("turboshaft-layout-type", TurboshaftLayoutType.Inline);
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class SelectionStorage {
+      constructor(nodes, blocks) {
+          this.nodes = nodes ?? new Map();
+          this.blocks = blocks ?? new Map();
+          this.adaptedNodes = new Set();
+          this.adaptedBocks = new Set();
       }
-      set turboshaftLayoutType(layoutType) {
-          storageSetItem("turboshaft-layout-type", layoutType);
+      adaptNode(nodeKey) {
+          this.adaptedNodes.add(nodeKey);
+      }
+      adaptBlock(blockKey) {
+          this.adaptedBocks.add(blockKey);
+      }
+      isAdapted() {
+          return this.adaptedNodes.size != 0 || this.adaptedBocks.size != 0;
       }
   }
 
@@ -11166,8 +11220,8 @@
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
           this.state.selection = new SelectionMap(node => node.identifier(), node => node.nodeLabel?.origin?.identifier());
-          this.nodesSelectionHandler = this.initializeNodesSelectionHandler();
-          this.svg.on("click", () => this.nodesSelectionHandler.clear());
+          this.nodeSelectionHandler = this.initializeNodeSelectionHandler();
+          this.svg.on("click", () => this.nodeSelectionHandler.clear());
           this.visibleEdges = this.graphElement.append("g");
           this.visibleNodes = this.graphElement.append("g");
           this.drag = drag()
@@ -11177,7 +11231,6 @@
               this.updateGraphVisibility();
           });
       }
-      // TODO (danylo boiko) Extend selection type (add num, string?)
       initializeContent(data, rememberedSelection) {
           this.show();
           this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
@@ -11191,20 +11244,20 @@
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
           this.phaseName = data.name;
           const adaptedSelection = this.createGraph(data, rememberedSelection);
-          this.broker.addNodeHandler(this.nodesSelectionHandler);
-          const selectedNodes = adaptedSelection?.size > 0
-              ? this.attachSelection(adaptedSelection)
+          this.broker.addNodeHandler(this.nodeSelectionHandler);
+          const selectedNodes = adaptedSelection.isAdapted()
+              ? this.attachSelection(adaptedSelection.adaptedNodes)
               : null;
           if (selectedNodes?.length > 0) {
-              this.connectVisibleSelectedElements();
+              this.connectVisibleSelectedElements(this.state.selection);
               this.viewSelection();
           }
           else {
-              this.viewWholeGraph();
               if (this.state.cacheLayout && data.transform) {
-                  this.svg.call(this.panZoom.transform, identity
-                      .translate(data.transform.x, data.transform.y)
-                      .scale(data.transform.scale));
+                  this.viewTransformMatrix(data.transform);
+              }
+              else {
+                  this.viewWholeGraph();
               }
           }
       }
@@ -11232,9 +11285,9 @@
               .on("click", edge => {
               event.stopPropagation();
               if (!event.shiftKey) {
-                  view.nodesSelectionHandler.clear();
+                  view.nodeSelectionHandler.clear();
               }
-              view.nodesSelectionHandler.select([edge.source, edge.target], true);
+              view.nodeSelectionHandler.select([edge.source, edge.target], true);
           })
               .attr("adjacentToHover", "false")
               .classed("value", edge => edge.type === "value" || edge.type === "context")
@@ -11292,8 +11345,8 @@
           })
               .on("click", node => {
               if (!event.shiftKey)
-                  view.nodesSelectionHandler.clear();
-              view.nodesSelectionHandler.select([node], undefined);
+                  view.nodeSelectionHandler.clear();
+              view.nodeSelectionHandler.select([node], undefined);
               event.stopPropagation();
           })
               .call(view.drag);
@@ -11424,10 +11477,10 @@
           if (eventHandled)
               event.preventDefault();
       }
-      searchInputAction(searchBar, e, onlyVisible) {
+      searchInputAction(searchInput, e, onlyVisible) {
           if (e.keyCode == 13) {
-              this.nodesSelectionHandler.clear();
-              const query = searchBar.value;
+              this.nodeSelectionHandler.clear();
+              const query = searchInput.value;
               storageSetItem("lastSearch", query);
               if (query.length == 0)
                   return;
@@ -11438,24 +11491,50 @@
                       (reg.exec(node.getTitle())) ||
                       reg.exec(node.nodeLabel.opcode) !== null);
               };
-              const selection = [...this.graph.nodes(node => {
-                      if ((e.ctrlKey || node.visible || !onlyVisible) && filterFunction(node)) {
-                          if (e.ctrlKey || !onlyVisible)
-                              node.visible = true;
-                          return true;
-                      }
-                      return false;
-                  })];
-              this.nodesSelectionHandler.select(selection, true);
-              this.connectVisibleSelectedElements();
+              const selection = this.searchNodes(filterFunction, e, onlyVisible);
+              this.nodeSelectionHandler.select(selection, true);
+              this.connectVisibleSelectedElements(this.state.selection);
               this.updateGraphVisibility();
-              searchBar.blur();
+              searchInput.blur();
               this.viewSelection();
               this.focusOnSvg();
           }
           e.stopPropagation();
       }
-      initializeNodesSelectionHandler() {
+      detachSelection() {
+          return new SelectionStorage(this.state.selection.detachSelection());
+      }
+      adaptSelection(rememberedSelection) {
+          if (!this.graph.nodeMap || !(rememberedSelection instanceof SelectionStorage)) {
+              return new SelectionStorage();
+          }
+          for (const [key, node] of rememberedSelection.nodes.entries()) {
+              // Adding survived nodes (with the same id)
+              const survivedNode = this.graph.nodeMap[key];
+              if (survivedNode) {
+                  const key = this.state.selection.stringKey(survivedNode);
+                  rememberedSelection.adaptNode(key);
+                  this.graph.makeNodeVisible(key);
+              }
+              // Adding children of nodes
+              const childNodes = this.graph.originNodesMap.get(key);
+              if (childNodes?.length > 0) {
+                  for (const childNode of childNodes) {
+                      const key = this.state.selection.stringKey(childNode);
+                      rememberedSelection.adaptNode(key);
+                      this.graph.makeNodeVisible(key);
+                  }
+              }
+              // Adding ancestors of nodes
+              const originStringKey = this.state.selection.originStringKey(node);
+              if (originStringKey) {
+                  rememberedSelection.adaptNode(originStringKey);
+                  this.graph.makeNodeVisible(originStringKey);
+              }
+          }
+          return rememberedSelection;
+      }
+      initializeNodeSelectionHandler() {
           const view = this;
           return {
               select: function (selectedNodes, selected) {
@@ -11514,13 +11593,7 @@
           else {
               this.showVisible();
           }
-          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
-          if (adaptedSelection !== undefined) {
-              for (const item of adaptedSelection) {
-                  if (this.graph.nodeMap[item])
-                      this.graph.nodeMap[item].visible = true;
-              }
-          }
+          const adaptedSelection = this.adaptSelection(rememberedSelection);
           this.graph.makeEdgesVisible();
           this.layoutGraph();
           this.updateGraphVisibility();
@@ -11534,7 +11607,7 @@
           this.graphLayout.rebuild(this.state.showTypes);
           const extent = this.graph.redetermineGraphBoundingBox(this.state.showTypes);
           this.panZoom.translateExtent(extent);
-          this.minScale(this.graph.width, this.graph.height);
+          this.minScale();
           console.timeEnd(layoutMessage);
       }
       appendInputAndOutputBubbles(svg, node) {
@@ -11616,40 +11689,15 @@
               }
           });
       }
-      adaptSelectionToCurrentPhase(data, selection) {
-          const updatedSelection = new Set();
-          if (!data || !(selection instanceof Map))
-              return updatedSelection;
-          for (const [key, node] of selection.entries()) {
-              // Adding survived nodes (with the same id)
-              const survivedNode = this.graph.nodeMap[key];
-              if (survivedNode) {
-                  updatedSelection.add(this.state.selection.stringKey(survivedNode));
-              }
-              // Adding children of nodes
-              const childNodes = this.graph.originNodesMap.get(key);
-              if (childNodes?.length > 0) {
-                  for (const childNode of childNodes) {
-                      updatedSelection.add(this.state.selection.stringKey(childNode));
-                  }
-              }
-              // Adding ancestors of nodes
-              const originStringKey = this.state.selection.originStringKey(node);
-              if (originStringKey) {
-                  updatedSelection.add(originStringKey);
-              }
-          }
-          return updatedSelection;
-      }
       attachSelection(selection) {
           if (!(selection instanceof Set))
               return new Array();
-          this.nodesSelectionHandler.clear();
+          this.nodeSelectionHandler.clear();
           const selected = [
               ...this.graph.nodes(node => selection.has(this.state.selection.stringKey(node))
                   && (!this.state.hideDead || node.isLive()))
           ];
-          this.nodesSelectionHandler.select(selected, true);
+          this.nodeSelectionHandler.select(selected, true);
           return selected;
       }
       viewSelection() {
@@ -11716,7 +11764,7 @@
                   node.visible = false;
               }
           }
-          view.nodesSelectionHandler.clear();
+          view.nodeSelectionHandler.clear();
           view.focusOnSvg();
       }
       zoomSelectionAction(view) {
@@ -11797,8 +11845,8 @@
               this.showPhaseByName(phase, selection);
           }
           else if (origins.length > 0) {
-              this.nodesSelectionHandler.clear();
-              this.nodesSelectionHandler.select(origins, true);
+              this.nodeSelectionHandler.clear();
+              this.nodeSelectionHandler.select(origins, true);
           }
       }
   }
@@ -11816,27 +11864,33 @@
           pane.setAttribute("tabindex", "0");
           return pane;
       }
-      attachSelection(s) {
-          const view = this;
-          if (!(s instanceof Set))
+      attachSelection(adaptedSelection) {
+          if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          view.selectionHandler.clear();
-          view.blockSelectionHandler.clear();
-          const selected = new Array();
-          for (const key of s)
-              selected.push(key);
-          view.selectionHandler.select(selected, true);
+          this.selectionHandler.clear();
+          this.blockSelectionHandler.clear();
+          this.selectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
       }
       detachSelection() {
-          this.blockSelection.clear();
-          return this.selection.detachSelection();
+          return new SelectionStorage(this.selection.detachSelection(), this.blockSelection.detachSelection());
       }
-      initializeContent(data, rememberedSelection) {
-          this.divNode.innerHTML = '';
-          this.schedule = data.schedule;
-          this.addBlocks(data.schedule.blocks);
-          this.attachSelection(rememberedSelection);
+      adaptSelection(selection) {
+          for (const key of selection.nodes.keys())
+              selection.adaptedNodes.add(key);
+          for (const key of selection.blocks.keys())
+              selection.adaptedBocks.add(key);
+          return selection;
+      }
+      initializeContent(schedule, rememberedSelection) {
+          this.divNode.innerHTML = "";
+          this.schedule = schedule;
+          this.addBlocks(schedule.schedule.blocks);
           this.show();
+          if (rememberedSelection) {
+              const adaptedSelection = this.adaptSelection(rememberedSelection);
+              this.attachSelection(adaptedSelection);
+          }
       }
       createElementFromString(htmlString) {
           const div = document.createElement('div');
@@ -12836,20 +12890,23 @@
           pane.setAttribute("tabindex", "0");
           return pane;
       }
-      attachSelection(s) {
-          const view = this;
-          if (!(s instanceof Set))
+      attachSelection(adaptedSelection) {
+          if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          view.selectionHandler.clear();
-          view.blockSelectionHandler.clear();
-          const selected = new Array();
-          for (const key of s)
-              selected.push(key);
-          view.selectionHandler.select(selected, true);
+          this.selectionHandler.clear();
+          this.blockSelectionHandler.clear();
+          this.selectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
       }
       detachSelection() {
-          this.blockSelection.clear();
-          return this.selection.detachSelection();
+          return new SelectionStorage(this.selection.detachSelection(), this.blockSelection.detachSelection());
+      }
+      adaptSelection(selection) {
+          for (const key of selection.nodes.keys())
+              selection.adaptedNodes.add(key);
+          for (const key of selection.blocks.keys())
+              selection.adaptedBocks.add(key);
+          return selection;
       }
       show() {
           this.currentPhaseIndex = this.phaseSelect.selectedIndex;
@@ -12899,8 +12956,11 @@
           const lastBlock = this.sequence.blocks[this.sequence.blocks.length - 1];
           this.numInstructions = lastBlock.instructions[lastBlock.instructions.length - 1].id + 1;
           this.addRangeView();
-          this.attachSelection(rememberedSelection);
           this.show();
+          if (rememberedSelection) {
+              const adaptedSelection = this.adaptSelection(rememberedSelection);
+              this.attachSelection(adaptedSelection);
+          }
       }
       elementForBlock(block) {
           const view = this;
@@ -13212,6 +13272,13 @@
               [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
           ];
       }
+      getRanksMaxBlockHeight(showProperties) {
+          const ranksMaxBlockHeight = new Array();
+          for (const block of this.blocks()) {
+              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.getHeight(showProperties));
+          }
+          return ranksMaxBlockHeight;
+      }
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
@@ -13220,7 +13287,6 @@
           this.graph = graph;
           this.layoutOccupation = new LayoutOccupation(graph);
           this.maxRank = 0;
-          this.visitOrderWithinRank = 0;
       }
       rebuild(showProperties) {
           switch (this.graph.graphPhase.stateType) {
@@ -13258,6 +13324,7 @@
           // basis for top-down DFS to determine rank and block placement.
           const blocksHasNoInputs = new Array();
           for (const block of this.graph.blocks()) {
+              block.collapsed = false;
               blocksHasNoInputs[block.id] = true;
           }
           for (const edge of this.graph.blocksEdges()) {
@@ -13334,7 +13401,7 @@
               }
               isFirstInput = false;
           }
-          if (block.hasBackEdges()) {
+          if (block.type != TurboshaftGraphBlockType.Merge) {
               block.rank = newRank;
           }
       }
@@ -13428,16 +13495,19 @@
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
           this.state.selection = new SelectionMap(node => node.identifier());
-          this.state.blocksSelection = new SelectionMap(blockId => String(blockId));
-          this.nodesSelectionHandler = this.initializeNodesSelectionHandler();
-          this.blocksSelectionHandler = this.initializeBlocksSelectionHandler();
+          this.state.blocksSelection = new SelectionMap(block => {
+              if (block instanceof TurboshaftGraphBlock)
+                  return block.identifier();
+              return String(block);
+          });
+          this.nodeSelectionHandler = this.initializeNodeSelectionHandler();
+          this.blockSelectionHandler = this.initializeBlockSelectionHandler();
           this.svg.on("click", () => {
-              this.nodesSelectionHandler.clear();
-              this.blocksSelectionHandler.clear();
+              this.nodeSelectionHandler.clear();
+              this.blockSelectionHandler.clear();
           });
           this.visibleEdges = this.graphElement.append("g");
           this.visibleBlocks = this.graphElement.append("g");
-          this.visibleNodes = this.graphElement.append("g");
           this.blockDrag = drag()
               .on("drag", (block) => {
               block.x += event.dx;
@@ -13449,18 +13519,24 @@
           this.show();
           this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
           this.addImgInput("show-all", "show all blocks", partial(this.showAllBlocksAction, this));
+          this.addImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this));
           this.addToggleImgInput("toggle-properties", "toggle properties", this.state.showProperties, partial(this.togglePropertiesAction, this));
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
-          this.addLayoutTypeSelect();
           this.phaseName = data.name;
-          this.createGraph(data, rememberedSelection);
-          this.broker.addNodeHandler(this.nodesSelectionHandler);
-          this.broker.addBlockHandler(this.blocksSelectionHandler);
-          this.viewWholeGraph();
-          if (this.state.cacheLayout && data.transform) {
-              this.svg.call(this.panZoom.transform, identity
-                  .translate(data.transform.x, data.transform.y)
-                  .scale(data.transform.scale));
+          const adaptedSelection = this.createGraph(data, rememberedSelection);
+          this.broker.addNodeHandler(this.nodeSelectionHandler);
+          this.broker.addBlockHandler(this.blockSelectionHandler);
+          if (adaptedSelection.isAdapted()) {
+              this.attachSelection(adaptedSelection);
+              this.viewSelection();
+          }
+          else {
+              if (this.state.cacheLayout && data.transform) {
+                  this.viewTransformMatrix(data.transform);
+              }
+              else {
+                  this.viewWholeGraph();
+              }
           }
       }
       updateGraphVisibility() {
@@ -13469,18 +13545,69 @@
           this.updateVisibleBlocksAndEdges();
           this.visibleNodes = this.visibleBlocks.selectAll(".turboshaft-node");
           this.visibleBubbles = selectAll("circle");
-          this.updateInlineNodes();
           this.updateInputAndOutputBubbles();
+          this.updateInlineNodes();
       }
       svgKeyDown() {
+          event.preventDefault();
       }
       searchInputAction(searchInput, e, onlyVisible) {
+          if (e.keyCode == 13) {
+              this.nodeSelectionHandler.clear();
+              const query = searchInput.value;
+              storageSetItem("lastSearch", query);
+              if (query.length == 0)
+                  return;
+              const reg = new RegExp(query);
+              const filterFunction = (node) => {
+                  return reg.exec(node.displayLabel) !== null ||
+                      (this.state.showProperties && reg.exec(node.properties)) ||
+                      reg.exec(node.getTitle());
+              };
+              const selection = this.searchNodes(filterFunction, e, onlyVisible);
+              this.nodeSelectionHandler.select(selection, true);
+              this.updateGraphVisibility();
+              searchInput.blur();
+              this.viewSelection();
+              this.focusOnSvg();
+          }
+          e.stopPropagation();
       }
       hide() {
-          this.broker.deleteBlockHandler(this.blocksSelectionHandler);
+          this.broker.deleteBlockHandler(this.blockSelectionHandler);
           super.hide();
       }
-      initializeNodesSelectionHandler() {
+      detachSelection() {
+          return new SelectionStorage(this.state.selection.detachSelection(), this.state.blocksSelection.detachSelection());
+      }
+      adaptSelection(rememberedSelection) {
+          if (!this.graph.nodeMap && !this.graph.blockMap ||
+              !(rememberedSelection instanceof SelectionStorage)) {
+              return new SelectionStorage();
+          }
+          for (const key of rememberedSelection.nodes.keys()) {
+              if (this.graph.nodeMap[key]) {
+                  rememberedSelection.adaptNode(key);
+              }
+          }
+          for (const key of rememberedSelection.blocks.keys()) {
+              if (this.graph.blockMap[key]) {
+                  rememberedSelection.adaptBlock(key);
+              }
+          }
+          return rememberedSelection;
+      }
+      adaptiveUpdateGraphVisibility() {
+          const graphElement = this.graphElement.node();
+          const originalHeight = graphElement.getBBox().height;
+          this.updateGraphVisibility();
+          this.focusOnSvg();
+          const newHeight = graphElement.getBBox().height;
+          const transformMatrix = this.getTransformMatrix();
+          transformMatrix.y *= (newHeight / originalHeight);
+          this.viewTransformMatrix(transformMatrix);
+      }
+      initializeNodeSelectionHandler() {
           const view = this;
           return {
               select: function (selectedNodes, selected) {
@@ -13503,12 +13630,16 @@
               }
           };
       }
-      initializeBlocksSelectionHandler() {
+      initializeBlockSelectionHandler() {
           const view = this;
           return {
               select: function (selectedBlocks, selected) {
                   view.state.blocksSelection.select(selectedBlocks, selected);
-                  view.broker.broadcastBlockSelect(this, selectedBlocks, selected);
+                  const selectedBlocksKeys = new Array();
+                  for (const selectedBlock of selectedBlocks) {
+                      selectedBlocksKeys.push(view.state.blocksSelection.stringKey(selectedBlock));
+                  }
+                  view.broker.broadcastBlockSelect(this, selectedBlocksKeys, selected);
                   view.updateGraphVisibility();
               },
               clear: function () {
@@ -13526,25 +13657,7 @@
               },
           };
       }
-      addLayoutTypeSelect() {
-          const view = this;
-          const select = document.createElement("select");
-          select.id = "layout-type-select";
-          select.className = "graph-toolbox-item";
-          const keys = Object.keys(TurboshaftLayoutType).filter(t => isNaN(Number(t)));
-          for (const key of keys) {
-              const option = document.createElement("option");
-              option.text = key;
-              select.add(option);
-          }
-          select.selectedIndex = this.state.turboshaftLayoutType;
-          select.onchange = function () {
-              view.state.turboshaftLayoutType = this.selectedIndex;
-              view.layoutAction(view);
-          };
-          this.toolbox.appendChild(select);
-      }
-      createGraph(data, selection) {
+      createGraph(data, rememberedSelection) {
           this.graph = new TurboshaftGraph(data);
           this.graphLayout = new TurboshaftGraphLayout(this.graph);
           if (!this.state.cacheLayout ||
@@ -13555,19 +13668,20 @@
           else {
               this.showVisible();
           }
+          const adaptedSelection = this.adaptSelection(rememberedSelection);
           this.layoutGraph();
           this.updateGraphVisibility();
+          return adaptedSelection;
       }
       layoutGraph() {
           const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
               ? "Layout turboshaft graph from cache"
               : "Layout turboshaft graph";
           console.time(layoutMessage);
-          this.graph.graphPhase.layoutType = this.state.turboshaftLayoutType;
           this.graphLayout.rebuild(this.state.showProperties);
           const extent = this.graph.redetermineGraphBoundingBox(this.state.showProperties);
           this.panZoom.translateExtent(extent);
-          this.minScale(this.graph.width, this.graph.height);
+          this.minScale();
           console.timeEnd(layoutMessage);
       }
       updateBlockLocation(block) {
@@ -13582,6 +13696,7 @@
       }
       updateVisibleBlocksAndEdges() {
           const view = this;
+          const iconsPath = "img/turboshaft/";
           // select existing edges
           const filteredEdges = [
               ...this.graph.blocksEdges(edge => this.graph.isRendered()
@@ -13601,9 +13716,9 @@
               .on("click", edge => {
               event.stopPropagation();
               if (!event.shiftKey) {
-                  view.blocksSelectionHandler.clear();
+                  view.blockSelectionHandler.clear();
               }
-              view.blocksSelectionHandler.select([edge.source.identifier(), edge.target.identifier()], true);
+              view.blockSelectionHandler.select([edge.source, edge.target], true);
           })
               .attr("adjacentToHover", "false");
           const newAndOldEdges = newEdges.merge(selEdges);
@@ -13644,8 +13759,8 @@
           })
               .on("click", (block) => {
               if (!event.shiftKey)
-                  view.blocksSelectionHandler.clear();
-              view.blocksSelectionHandler.select([block.identifier()], undefined);
+                  view.blockSelectionHandler.clear();
+              view.blockSelectionHandler.select([block], undefined);
               event.stopPropagation();
           })
               .call(view.blockDrag);
@@ -13659,26 +13774,50 @@
               const svg = select(this);
               svg
                   .append("text")
+                  .classed("block-label", true)
                   .attr("text-anchor", "middle")
                   .attr("x", block.getWidth() / 2)
-                  .classed("block-label", true)
                   .append("tspan")
                   .text(block.displayLabel);
-              view.appendInlineNodes(svg, block);
+              svg
+                  .append("text")
+                  .classed("block-collapsed-label", true)
+                  .attr("text-anchor", "middle")
+                  .attr("x", block.getWidth() / 2)
+                  .attr("dy", block.labelBox.height)
+                  .attr("visibility", block.collapsed ? "visible" : "hidden")
+                  .append("tspan")
+                  .text(block.collapsedLabel);
+              svg
+                  .append("image")
+                  .attr("xlink:href", `${iconsPath}collapse_${block.collapsed ? "down" : "up"}.svg`)
+                  .attr("height", block.labelBox.height)
+                  .attr("x", block.getWidth() - block.labelBox.height)
+                  .on("click", () => {
+                  event.stopPropagation();
+                  block.collapsed = !block.collapsed;
+                  view.nodeSelectionHandler.select(block.nodes, false);
+              });
               view.appendInputAndOutputBubbles(svg, block);
+              view.appendInlineNodes(svg, block);
           });
-          newBlocks.merge(selBlocks)
-              .classed("selected", block => view.state.blocksSelection.isSelected(block.identifier()))
+          const newAndOldBlocks = newBlocks.merge(selBlocks);
+          newAndOldBlocks
+              .classed("selected", block => view.state.blocksSelection.isSelected(block))
               .attr("transform", block => `translate(${block.x},${block.y})`)
               .select("rect")
               .attr("height", block => block.getHeight(view.state.showProperties));
+          newAndOldBlocks.select("image")
+              .attr("xlink:href", block => `${iconsPath}collapse_${block.collapsed ? "down" : "up"}.svg`);
+          newAndOldBlocks.select(".block-collapsed-label")
+              .attr("visibility", block => block.collapsed ? "visible" : "hidden");
           newAndOldEdges.attr("d", edge => edge.generatePath(this.graph, view.state.showProperties));
       }
       appendInlineNodes(svg, block) {
           const state = this.state;
           const graph = this.graph;
-          const filteredNodes = [...block.nodes.filter(node => graph.isRendered() && node.visible)];
-          const allNodes = svg.selectAll(".turboshaft-inline-node");
+          const filteredNodes = [...block.nodes.filter(_ => graph.isRendered())];
+          const allNodes = svg.selectAll(".inline-node");
           const selNodes = allNodes.data(filteredNodes, node => node.toString());
           // remove old nodes
           selNodes.exit().remove();
@@ -13719,8 +13858,8 @@
               })
                   .on("click", (node) => {
                   if (!event.shiftKey)
-                      view.nodesSelectionHandler.clear();
-                  view.nodesSelectionHandler.select([node], undefined);
+                      view.nodeSelectionHandler.clear();
+                  view.nodeSelectionHandler.select([node], undefined);
                   event.stopPropagation();
               });
               nodeY += node.labelBox.height;
@@ -13742,66 +13881,6 @@
               .select("rect")
               .attr("height", node => node.getHeight(state.showProperties));
       }
-      updateInputAndOutputBubbles() {
-          const view = this;
-          const graph = this.graph;
-          this.visibleBubbles.classed("filledBubbleStyle", function () {
-              const components = this.id.split(",");
-              if (components[0] === "ib") {
-                  return graph.blockMap[components[3]].inputs[components[2]].isVisible();
-              }
-              return graph.blockMap[components[1]].areAnyOutputsVisible()
-                  == OutputVisibilityType.AllNodesVisible;
-          }).classed("halfFilledBubbleStyle", function () {
-              const components = this.id.split(",");
-              if (components[0] === "ib")
-                  return false;
-              return graph.blockMap[components[1]].areAnyOutputsVisible()
-                  == OutputVisibilityType.SomeNodesVisible;
-          }).classed("bubbleStyle", function () {
-              const components = this.id.split(",");
-              if (components[0] === "ib") {
-                  return !graph.blockMap[components[3]].inputs[components[2]].isVisible();
-              }
-              return graph.blockMap[components[1]].areAnyOutputsVisible()
-                  == OutputVisibilityType.NoVisibleNodes;
-          });
-          this.visibleBubbles.each(function () {
-              const components = this.id.split(",");
-              if (components[0] === "ob") {
-                  const from = graph.blockMap[components[1]];
-                  const x = from.getOutputX();
-                  const y = from.getHeight(view.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
-                  this.setAttribute("transform", `translate(${x},${y})`);
-              }
-          });
-      }
-      appendInputAndOutputBubbles(svg, block) {
-          for (let i = 0; i < block.inputs.length; i++) {
-              const x = block.getInputX(i);
-              const y = -DEFAULT_NODE_BUBBLE_RADIUS;
-              svg.append("circle")
-                  .classed("filledBubbleStyle", block.inputs[i].isVisible())
-                  .classed("bubbleStyle", !block.inputs[i].isVisible())
-                  .attr("id", `ib,${block.inputs[i].toString()}`)
-                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
-                  .attr("transform", `translate(${x},${y})`);
-          }
-          if (block.outputs.length > 0) {
-              const x = block.getOutputX();
-              const y = block.getHeight(this.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
-              svg.append("circle")
-                  .classed("filledBubbleStyle", block.areAnyOutputsVisible()
-                  == OutputVisibilityType.AllNodesVisible)
-                  .classed("halFilledBubbleStyle", block.areAnyOutputsVisible()
-                  == OutputVisibilityType.SomeNodesVisible)
-                  .classed("bubbleStyle", block.areAnyOutputsVisible()
-                  == OutputVisibilityType.NoVisibleNodes)
-                  .attr("id", `ob,${block.id}`)
-                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
-                  .attr("transform", `translate(${x},${y})`);
-          }
-      }
       updateInlineNodes() {
           const state = this.state;
           let totalHeight = 0;
@@ -13819,11 +13898,89 @@
               nodeSvg
                   .select(".inline-node-label")
                   .classed("selected", node => state.selection.isSelected(node))
-                  .attr("dy", nodeY);
+                  .attr("dy", nodeY)
+                  .attr("visibility", !node.block.collapsed ? "visible" : "hidden");
               nodeSvg
                   .select(".inline-node-properties")
-                  .attr("visibility", state.showProperties ? "visible" : "hidden");
+                  .attr("visibility", !node.block.collapsed && state.showProperties ? "visible" : "hidden");
           });
+      }
+      appendInputAndOutputBubbles(svg, block) {
+          for (let i = 0; i < block.inputs.length; i++) {
+              const x = block.getInputX(i);
+              const y = -DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", true)
+                  .attr("id", `ib,${block.inputs[i].toString()}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`);
+          }
+          if (block.outputs.length > 0) {
+              const x = block.getOutputX();
+              const y = block.getHeight(this.state.showProperties)
+                  + DEFAULT_NODE_BUBBLE_RADIUS;
+              svg.append("circle")
+                  .classed("filledBubbleStyle", true)
+                  .attr("id", `ob,${block.id}`)
+                  .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                  .attr("transform", `translate(${x},${y})`);
+          }
+      }
+      updateInputAndOutputBubbles() {
+          const view = this;
+          this.visibleBubbles.each(function () {
+              const components = this.id.split(",");
+              if (components[0] === "ob") {
+                  const from = view.graph.blockMap[components[1]];
+                  const x = from.getOutputX();
+                  const y = from.getHeight(view.state.showProperties)
+                      + DEFAULT_NODE_BUBBLE_RADIUS;
+                  this.setAttribute("transform", `translate(${x},${y})`);
+              }
+          });
+      }
+      viewSelection() {
+          let minX;
+          let maxX;
+          let minY;
+          let maxY;
+          let hasSelection = false;
+          this.visibleBlocks.selectAll(".turboshaft-block")
+              .each((block) => {
+              let blockHasSelection = false;
+              for (const node of block.nodes) {
+                  if (this.state.selection.isSelected(node) || this.state.blocksSelection.isSelected(block)) {
+                      blockHasSelection = true;
+                      minX = minX ? Math.min(minX, block.x) : block.x;
+                      maxX = maxX ? Math.max(maxX, block.x + block.getWidth()) : block.x + block.getWidth();
+                      minY = minY ? Math.min(minY, block.y) : block.y;
+                      maxY = maxY
+                          ? Math.max(maxY, block.y + block.getHeight(this.state.showProperties))
+                          : block.y + block.getHeight(this.state.showProperties);
+                  }
+                  if (blockHasSelection) {
+                      hasSelection = true;
+                      break;
+                  }
+              }
+          });
+          if (hasSelection) {
+              this.viewGraphRegion(minX - NODE_INPUT_WIDTH, minY - 60, maxX + NODE_INPUT_WIDTH, maxY + 60);
+          }
+      }
+      attachSelection(selection) {
+          if (!(selection instanceof SelectionStorage))
+              return;
+          this.nodeSelectionHandler.clear();
+          this.blockSelectionHandler.clear();
+          const selectedNodes = [
+              ...this.graph.nodes(node => selection.adaptedNodes.has(this.state.selection.stringKey(node)))
+          ];
+          this.nodeSelectionHandler.select(selectedNodes, true);
+          const selectedBlocks = [
+              ...this.graph.blocks(block => selection.adaptedBocks.has(this.state.blocksSelection.stringKey(block)))
+          ];
+          this.blockSelectionHandler.select(selectedBlocks, true);
       }
       // Actions (handlers of toolbox menu and hotkeys events)
       layoutAction(view) {
@@ -13833,6 +13990,7 @@
           view.viewWholeGraph();
           view.focusOnSvg();
       }
+      // TODO (danylo boiko) Uncollapse all blocks
       showAllBlocksAction(view) {
           for (const node of view.graph.blocks()) {
               node.visible = true;
@@ -13842,12 +14000,21 @@
           }
           view.showVisible();
       }
+      zoomSelectionAction(view) {
+          view.viewSelection();
+          view.focusOnSvg();
+      }
       togglePropertiesAction(view) {
           view.state.showProperties = !view.state.showProperties;
+          const ranksMaxBlockHeight = view.graph.getRanksMaxBlockHeight(view.state.showProperties);
+          for (const block of view.graph.blocks()) {
+              block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
+                  return accumulator + current;
+              }, block.getRankIndent());
+          }
           const element = document.getElementById("toggle-properties");
           element.classList.toggle("button-input-toggled", view.state.showProperties);
-          view.updateGraphVisibility();
-          view.focusOnSvg();
+          view.adaptiveUpdateGraphVisibility();
       }
       toggleLayoutCachingAction(view) {
           view.state.cacheLayout = !view.state.cacheLayout;
@@ -14006,27 +14173,126 @@
   // Copyright 2015 the V8 project authors. All rights reserved.
   var CodeMode;
   (function (CodeMode) {
-      CodeMode["MAIN_SOURCE"] = "main function";
-      CodeMode["INLINED_SOURCE"] = "inlined function";
+      CodeMode["MainSource"] = "main function";
+      CodeMode["InlinedSource"] = "inlined function";
   })(CodeMode || (CodeMode = {}));
   class CodeView extends View {
-      constructor(parent, broker, sourceResolver, sourceFunction, codeMode) {
+      constructor(parent, broker, sourceFunction, sourceResolver, codeMode) {
           super(parent);
-          const view = this;
-          view.broker = broker;
-          view.sourceResolver = sourceResolver;
-          view.source = sourceFunction;
-          view.codeMode = codeMode;
+          this.broker = broker;
+          this.source = sourceFunction;
+          this.sourceResolver = sourceResolver;
+          this.codeMode = codeMode;
           this.sourcePositionToHtmlElements = new Map();
           this.showAdditionalInliningPosition = false;
-          const selectionHandler = {
-              clear: function () {
-                  view.selection.clear();
-                  view.updateSelection();
-                  broker.broadcastClear(this);
-              },
+          this.selection = new SelectionMap((gp) => gp.toString());
+          this.selectionHandler = this.initializeSourcePositionHandler();
+          broker.addSourcePositionHandler(this.selectionHandler);
+          this.initializeCode();
+      }
+      createViewElement() {
+          const sourceContainer = document.createElement("div");
+          sourceContainer.classList.add("source-container");
+          return sourceContainer;
+      }
+      initializeCode() {
+          const view = this;
+          const source = this.source;
+          const sourceText = source.sourceText;
+          if (!sourceText)
+              return;
+          const sourceContainer = view.divNode;
+          if (this.codeMode == CodeMode.MainSource) {
+              sourceContainer.classList.add("main-source");
+          }
+          else {
+              sourceContainer.classList.add("inlined-source");
+          }
+          const codeHeader = document.createElement("div");
+          codeHeader.setAttribute("id", this.getCodeHeaderHtmlElementName());
+          codeHeader.classList.add("code-header");
+          const codeFileFunction = document.createElement("div");
+          codeFileFunction.classList.add("code-file-function");
+          codeFileFunction.innerHTML = `${source.sourceName}:${source.functionName}`;
+          codeHeader.appendChild(codeFileFunction);
+          const codeModeDiv = document.createElement("div");
+          codeModeDiv.classList.add("code-mode");
+          codeModeDiv.innerHTML = this.codeMode;
+          codeHeader.appendChild(codeModeDiv);
+          const clearDiv = document.createElement("div");
+          clearDiv.style.clear = "both";
+          codeHeader.appendChild(clearDiv);
+          sourceContainer.appendChild(codeHeader);
+          const codePre = document.createElement("pre");
+          codePre.setAttribute("id", this.getCodeHtmlElementName());
+          codePre.classList.add("prettyprint");
+          sourceContainer.appendChild(codePre);
+          codeHeader.onclick = function myFunction() {
+              if (codePre.style.display === "none") {
+                  codePre.style.display = "block";
+              }
+              else {
+                  codePre.style.display = "none";
+              }
+          };
+          if (sourceText !== "") {
+              codePre.classList.add("linenums");
+              codePre.textContent = sourceText;
+              try {
+                  // Wrap in try to work when offline.
+                  PR.prettyPrint(undefined, sourceContainer);
+              }
+              catch (e) {
+                  console.log(e);
+              }
+              view.divNode.onclick = function (e) {
+                  if (e.target instanceof Element && e.target.tagName === "DIV") {
+                      const targetDiv = e.target;
+                      if (targetDiv.classList.contains("line-number")) {
+                          e.stopPropagation();
+                          view.onSelectLine(Number(targetDiv.dataset.lineNumber), !e.shiftKey);
+                      }
+                  }
+                  else {
+                      view.selectionHandler.clear();
+                  }
+              };
+              const base = source.startPosition;
+              let current = 0;
+              const lineListDiv = this.getHtmlCodeLines();
+              let newlineAdjust = 0;
+              for (let i = 0; i < lineListDiv.length; i++) {
+                  // Line numbers are not zero-based.
+                  const lineNumber = i + 1;
+                  const currentLineElement = lineListDiv[i];
+                  currentLineElement.id = `li${i}`;
+                  currentLineElement.dataset.lineNumber = String(lineNumber);
+                  const spans = currentLineElement.childNodes;
+                  for (const currentSpan of spans) {
+                      if (currentSpan instanceof HTMLSpanElement) {
+                          const pos = base + current;
+                          const end = pos + currentSpan.textContent.length;
+                          current += currentSpan.textContent.length;
+                          this.insertSourcePositions(currentSpan, lineNumber, pos, end, newlineAdjust);
+                          newlineAdjust = 0;
+                      }
+                  }
+                  this.insertLineNumber(currentLineElement, lineNumber);
+                  while ((current < sourceText.length) &&
+                      (sourceText[current] === "\n" || sourceText[current] === "\r")) {
+                      ++current;
+                      ++newlineAdjust;
+                  }
+              }
+          }
+      }
+      initializeSourcePositionHandler() {
+          const view = this;
+          const broker = this.broker;
+          const sourceResolver = this.sourceResolver;
+          return {
               select: function (sourcePositions, selected) {
-                  const locations = [];
+                  const locations = new Array();
                   for (const sourcePosition of sourcePositions) {
                       locations.push(sourcePosition);
                       sourceResolver.addInliningPositions(sourcePosition, locations);
@@ -14036,6 +14302,11 @@
                   view.selection.select(locations, selected);
                   view.updateSelection();
                   broker.broadcastSourcePositionSelect(this, locations, selected);
+              },
+              clear: function () {
+                  view.selection.clear();
+                  view.updateSelection();
+                  broker.broadcastClear(this);
               },
               brokeredSourcePositionSelect: function (locations, selected) {
                   const firstSelect = view.selection.isEmpty();
@@ -14052,25 +14323,13 @@
                   view.updateSelection();
               },
           };
-          view.selection = new SelectionMap((gp) => gp.toString());
-          broker.addSourcePositionHandler(selectionHandler);
-          this.selectionHandler = selectionHandler;
-          this.initializeCode();
-      }
-      createViewElement() {
-          const sourceContainer = document.createElement("div");
-          sourceContainer.classList.add("source-container");
-          return sourceContainer;
       }
       addHtmlElementToSourcePosition(sourcePosition, element) {
           const key = sourcePosition.toString();
           if (!this.sourcePositionToHtmlElements.has(key)) {
-              this.sourcePositionToHtmlElements.set(key, []);
+              this.sourcePositionToHtmlElements.set(key, new Array());
           }
           this.sourcePositionToHtmlElements.get(key).push(element);
-      }
-      getHtmlElementForSourcePosition(sourcePosition) {
-          return this.sourcePositionToHtmlElements.get(sourcePosition.toString());
       }
       updateSelection(scrollIntoView = false) {
           const mkVisible = new ViewElements(this.divNode.parentNode);
@@ -14108,97 +14367,6 @@
           }
           this.selectionHandler.select([sourcePosition], undefined);
       }
-      initializeCode() {
-          const view = this;
-          const source = this.source;
-          const sourceText = source.sourceText;
-          if (!sourceText)
-              return;
-          const sourceContainer = view.divNode;
-          if (this.codeMode == CodeMode.MAIN_SOURCE) {
-              sourceContainer.classList.add("main-source");
-          }
-          else {
-              sourceContainer.classList.add("inlined-source");
-          }
-          const codeHeader = document.createElement("div");
-          codeHeader.setAttribute("id", this.getCodeHeaderHtmlElementName());
-          codeHeader.classList.add("code-header");
-          const codeFileFunction = document.createElement("div");
-          codeFileFunction.classList.add("code-file-function");
-          codeFileFunction.innerHTML = `${source.sourceName}:${source.functionName}`;
-          codeHeader.appendChild(codeFileFunction);
-          const codeModeDiv = document.createElement("div");
-          codeModeDiv.classList.add("code-mode");
-          codeModeDiv.innerHTML = `${this.codeMode}`;
-          codeHeader.appendChild(codeModeDiv);
-          const clearDiv = document.createElement("div");
-          clearDiv.style.clear = "both";
-          codeHeader.appendChild(clearDiv);
-          sourceContainer.appendChild(codeHeader);
-          const codePre = document.createElement("pre");
-          codePre.setAttribute("id", this.getCodeHtmlElementName());
-          codePre.classList.add("prettyprint");
-          sourceContainer.appendChild(codePre);
-          codeHeader.onclick = function myFunction() {
-              if (codePre.style.display === "none") {
-                  codePre.style.display = "block";
-              }
-              else {
-                  codePre.style.display = "none";
-              }
-          };
-          if (sourceText != "") {
-              codePre.classList.add("linenums");
-              codePre.textContent = sourceText;
-              try {
-                  // Wrap in try to work when offline.
-                  PR.prettyPrint(undefined, sourceContainer);
-              }
-              catch (e) {
-                  console.log(e);
-              }
-              view.divNode.onclick = function (e) {
-                  if (e.target instanceof Element && e.target.tagName == "DIV") {
-                      const targetDiv = e.target;
-                      if (targetDiv.classList.contains("line-number")) {
-                          e.stopPropagation();
-                          view.onSelectLine(Number(targetDiv.dataset.lineNumber), !e.shiftKey);
-                      }
-                  }
-                  else {
-                      view.selectionHandler.clear();
-                  }
-              };
-              const base = source.startPosition;
-              let current = 0;
-              const lineListDiv = this.getHtmlCodeLines();
-              let newlineAdjust = 0;
-              for (let i = 0; i < lineListDiv.length; i++) {
-                  // Line numbers are not zero-based.
-                  const lineNumber = i + 1;
-                  const currentLineElement = lineListDiv[i];
-                  currentLineElement.id = "li" + i;
-                  currentLineElement.dataset.lineNumber = "" + lineNumber;
-                  const spans = currentLineElement.childNodes;
-                  for (const currentSpan of spans) {
-                      if (currentSpan instanceof HTMLSpanElement) {
-                          const pos = base + current;
-                          const end = pos + currentSpan.textContent.length;
-                          current += currentSpan.textContent.length;
-                          this.insertSourcePositions(currentSpan, lineNumber, pos, end, newlineAdjust);
-                          newlineAdjust = 0;
-                      }
-                  }
-                  this.insertLineNumber(currentLineElement, lineNumber);
-                  while ((current < sourceText.length) &&
-                      (sourceText[current] == '\n' || sourceText[current] == '\r')) {
-                      ++current;
-                      ++newlineAdjust;
-                  }
-              }
-          }
-      }
       insertSourcePositions(currentSpan, lineNumber, pos, end, adjust) {
           const view = this;
           const sps = this.sourceResolver.sourcePositionsInRange(this.source.sourceId, pos - adjust, end);
@@ -14207,22 +14375,22 @@
               // Internally, line numbers are 0-based so we have to substract 1 from the line number. This
               // path in only taken by non-Wasm code. Wasm code relies on setSourceLineToBytecodePosition.
               this.sourceResolver.addAnyPositionToLine(lineNumber - 1, sourcePosition);
-              const textnode = currentSpan.tagName == 'SPAN' ? currentSpan.lastChild : currentSpan;
-              if (!(textnode instanceof Text))
+              const textNode = currentSpan.tagName === "SPAN" ? currentSpan.lastChild : currentSpan;
+              if (!(textNode instanceof Text))
                   continue;
               const splitLength = Math.max(0, sourcePosition.scriptOffset - pos - offset);
               offset += splitLength;
-              const replacementNode = textnode.splitText(splitLength);
-              const span = document.createElement('span');
+              const replacementNode = textNode.splitText(splitLength);
+              const span = document.createElement("span");
               span.setAttribute("scriptOffset", sourcePosition.scriptOffset.toString());
               span.classList.add("source-position");
-              const marker = document.createElement('span');
+              const marker = document.createElement("span");
               marker.classList.add("marker");
               span.appendChild(marker);
               const inlining = this.sourceResolver.getInliningForPosition(sourcePosition);
-              if (inlining != undefined && view.showAdditionalInliningPosition) {
+              if (inlining && view.showAdditionalInliningPosition) {
                   const sourceName = this.sourceResolver.getSourceName(inlining.sourceId);
-                  const inliningMarker = document.createElement('span');
+                  const inliningMarker = document.createElement("span");
                   inliningMarker.classList.add("inlining-marker");
                   inliningMarker.setAttribute("data-descr", `${sourceName} was inlined here`);
                   span.appendChild(inliningMarker);
@@ -14232,18 +14400,17 @@
                   view.onSelectSourcePosition(sourcePosition, !e.shiftKey);
               };
               view.addHtmlElementToSourcePosition(sourcePosition, span);
-              textnode.parentNode.insertBefore(span, replacementNode);
+              textNode.parentNode.insertBefore(span, replacementNode);
           }
       }
       insertLineNumber(lineElement, lineNumber) {
-          const view = this;
           const lineNumberElement = document.createElement("div");
           lineNumberElement.classList.add("line-number");
-          lineNumberElement.dataset.lineNumber = `${lineNumber}`;
-          lineNumberElement.innerText = `${lineNumber}`;
+          lineNumberElement.dataset.lineNumber = String(lineNumber);
+          lineNumberElement.innerText = String(lineNumber);
           lineElement.insertBefore(lineNumberElement, lineElement.firstChild);
           for (const sourcePosition of this.sourceResolver.lineToSourcePositions(lineNumber - 1)) {
-              view.addHtmlElementToSourcePosition(sourcePosition, lineElement);
+              this.addHtmlElementToSourcePosition(sourcePosition, lineElement);
           }
       }
   }
@@ -14361,17 +14528,17 @@
           this.sourceCollapse = document.getElementById(SOURCE_COLLAPSE_ID);
           this.disassemblyExpand = document.getElementById(DISASSEMBLY_EXPAND_ID);
           this.disassemblyCollapse = document.getElementById(DISASSEMBLY_COLLAPSE_ID);
-          this.rangesShowHide = document.getElementById("show-hide-ranges");
+          this.rangesShowHide = document.getElementById(SHOW_HIDE_RANGES_ID);
           this.rangesExpandVert = document.getElementById(RANGES_EXPAND_VERT_ID);
           this.rangesCollapseVert = document.getElementById(RANGES_COLLAPSE_VERT_ID);
           this.rangesExpandHor = document.getElementById(RANGES_EXPAND_HOR_ID);
           this.rangesCollapseHor = document.getElementById(RANGES_COLLAPSE_HOR_ID);
-          document.getElementById("show-hide-source").addEventListener("click", () => {
+          document.getElementById(SHOW_HIDE_SOURCE_ID).addEventListener("click", () => {
               this.resizer.resizerLeft.classed("snapped", !this.resizer.resizerLeft.classed("snapped"));
               this.setSourceExpanded(!this.sourceExpand.classList.contains("invisible"));
               this.resizer.updatePanes();
           });
-          document.getElementById("show-hide-disassembly").addEventListener("click", () => {
+          document.getElementById(SHOW_HIDE_DISASSEMBLY_ID).addEventListener("click", () => {
               this.resizer.resizerRight.classed("snapped", !this.resizer.resizerRight.classed("snapped"));
               this.setDisassemblyExpanded(!this.disassemblyExpand.classList.contains("invisible"));
               this.resizer.updatePanes();
@@ -14379,37 +14546,21 @@
           this.rangesShowHide.dataset.expanded = "1";
           this.rangesShowHide.addEventListener("click", () => {
               this.resizer.resizerRanges.classed("snapped", !this.resizer.resizerRanges.classed("snapped"));
-              this.setRangesExpanded(this.rangesShowHide.dataset.expanded != "1");
+              this.setRangesExpanded(this.rangesShowHide.dataset.expanded !== "1");
               this.resizer.updatePanes();
           });
       }
       restoreExpandedState() {
-          this.resizer.resizerLeft.classed("snapped", window.sessionStorage.getItem("expandedState-source") == "false");
-          this.resizer.resizerRight.classed("snapped", window.sessionStorage.getItem("expandedState-disassembly") == "false");
-          this.resizer.resizerRanges.classed("snapped", window.sessionStorage.getItem("expandedState-ranges") == "false");
+          this.resizer.resizerLeft.classed("snapped", !storageGetItem("expandedState-source", true));
+          this.resizer.resizerRight.classed("snapped", !storageGetItem("expandedState-disassembly", true));
+          this.resizer.resizerRanges.classed("snapped", !storageGetItem("expandedState-ranges", true));
           this.setSourceExpanded(this.getLastExpandedState("source", true));
           this.setDisassemblyExpanded(this.getLastExpandedState("disassembly", true));
           this.setRangesExpanded(this.getLastExpandedState("ranges", true));
       }
-      getLastExpandedState(type, defaultState) {
-          const state = window.sessionStorage.getItem("expandedState-" + type);
-          if (state === null)
-              return defaultState;
-          return state === 'true';
-      }
-      sourceUpdate(isSourceExpanded) {
-          window.sessionStorage.setItem("expandedState-source", `${isSourceExpanded}`);
-          this.sourceExpand.classList.toggle("invisible", isSourceExpanded);
-          this.sourceCollapse.classList.toggle("invisible", !isSourceExpanded);
-      }
       setSourceExpanded(isSourceExpanded) {
           this.sourceUpdate(isSourceExpanded);
           this.resizer.updateLeftWidth();
-      }
-      disassemblyUpdate(isDisassemblyExpanded) {
-          window.sessionStorage.setItem("expandedState-disassembly", `${isDisassemblyExpanded}`);
-          this.disassemblyExpand.classList.toggle("invisible", isDisassemblyExpanded);
-          this.disassemblyCollapse.classList.toggle("invisible", !isDisassemblyExpanded);
       }
       setDisassemblyExpanded(isDisassemblyExpanded) {
           this.disassemblyUpdate(isDisassemblyExpanded);
@@ -14417,7 +14568,7 @@
           this.resizer.updateRanges();
       }
       rangesUpdate(isRangesExpanded) {
-          window.sessionStorage.setItem("expandedState-ranges", `${isRangesExpanded}`);
+          storageSetItem("expandedState-ranges", isRangesExpanded);
           this.rangesShowHide.dataset.expanded = isRangesExpanded ? "1" : "0";
           const landscapeMode = this.resizer.isRangesInLandscapeMode();
           this.rangesExpandVert.classList.toggle("invisible", !landscapeMode || isRangesExpanded);
@@ -14429,33 +14580,42 @@
               left = this.resizer.sepLeft + this.resizer.RESIZER_SIZE;
           }
           else {
-              left = isRangesExpanded ? this.resizer.sepRangesX + this.resizer.RESIZER_SIZE
+              left = isRangesExpanded
+                  ? this.resizer.sepRangesX + this.resizer.RESIZER_SIZE
                   : (this.resizer.sepRangesX - this.rangesShowHide.clientWidth
                       - (2 * this.resizer.RESIZER_SIZE));
           }
           const marginLeft = parseInt(window.getComputedStyle(this.rangesShowHide, null)
-              .getPropertyValue('margin-left').slice(0, -2), 10);
+              .getPropertyValue("margin-left").slice(0, -2), 10);
           const marginRight = parseInt(window.getComputedStyle(this.rangesShowHide, null)
-              .getPropertyValue('margin-right').slice(0, -2), 10);
+              .getPropertyValue("margin-right").slice(0, -2), 10);
           const width = this.rangesShowHide.clientWidth + marginLeft + marginRight;
           // The left value is bounded on both sides by another show/hide button of the same width. The
           // max value must also account for its own width. marginRight is subtracted from both sides to
           // reduce the separation between buttons.
           const maxLeft = document.body.getBoundingClientRect().width - (2 * width) + marginRight;
-          this.rangesShowHide.style.left = Math.max(width - marginRight, Math.min(left, maxLeft)) + "px";
+          this.rangesShowHide.style.left = `${Math.max(width - marginRight, Math.min(left, maxLeft))}px`;
       }
       setRangesExpanded(isRangesExpanded) {
           this.rangesUpdate(isRangesExpanded);
           this.resizer.updateRanges();
       }
+      getLastExpandedState(type, defaultState) {
+          return storageGetItem(`expandedState-${type}`, defaultState);
+      }
+      sourceUpdate(isSourceExpanded) {
+          storageSetItem("expandedState-source", isSourceExpanded);
+          this.sourceExpand.classList.toggle("invisible", isSourceExpanded);
+          this.sourceCollapse.classList.toggle("invisible", !isSourceExpanded);
+      }
+      disassemblyUpdate(isDisassemblyExpanded) {
+          storageSetItem("expandedState-disassembly", isDisassemblyExpanded);
+          this.disassemblyExpand.classList.toggle("invisible", isDisassemblyExpanded);
+          this.disassemblyCollapse.classList.toggle("invisible", !isDisassemblyExpanded);
+      }
   }
   class Resizer {
       constructor(panesUpdatedCallback, deadWidth, deadHeight) {
-          this.SOURCE_PANE_DEFAULT_PERCENT = 1 / 4;
-          this.DISASSEMBLY_PANE_DEFAULT_PERCENT = 3 / 4;
-          this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
-          this.RANGES_PANE_WIDTH_DEFAULT_PERCENT = 1 / 2;
-          this.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
           this.RESIZER_SIZE = document.getElementById("resizer-ranges").offsetHeight;
           const resizer = this;
           resizer.panesUpdatedCallback = panesUpdatedCallback;
@@ -14464,105 +14624,99 @@
           resizer.left = document.getElementById(SOURCE_PANE_ID);
           resizer.right = document.getElementById(GENERATED_PANE_ID);
           resizer.ranges = document.getElementById(RANGES_PANE_ID);
-          resizer.middle = document.getElementById("middle");
-          resizer.resizerLeft = select('#resizer-left');
-          resizer.resizerRight = select('#resizer-right');
-          resizer.resizerRanges = select('#resizer-ranges');
+          resizer.middle = document.getElementById(INTERMEDIATE_PANE_ID);
+          resizer.resizerLeft = select("#resizer-left");
+          resizer.resizerRight = select("#resizer-right");
+          resizer.resizerRanges = select("#resizer-ranges");
           // Set default sizes, if they weren't set.
-          if (window.sessionStorage.getItem("source-pane-percent") === null) {
-              window.sessionStorage.setItem("source-pane-percent", `${this.SOURCE_PANE_DEFAULT_PERCENT}`);
-          }
-          if (window.sessionStorage.getItem("disassembly-pane-percent") === null) {
-              window.sessionStorage.setItem("disassembly-pane-percent", `${this.DISASSEMBLY_PANE_DEFAULT_PERCENT}`);
-          }
-          if (window.sessionStorage.getItem("ranges-pane-height-percent") === null) {
-              window.sessionStorage.setItem("ranges-pane-height-percent", `${this.RANGES_PANE_HEIGHT_DEFAULT_PERCENT}`);
-          }
-          if (window.sessionStorage.getItem("ranges-pane-width-percent") === null) {
-              window.sessionStorage.setItem("ranges-pane-width-percent", `${this.RANGES_PANE_WIDTH_DEFAULT_PERCENT}`);
-          }
+          storageSetIfIsNotExist("source-pane-percent", SOURCE_PANE_DEFAULT_PERCENT);
+          storageSetIfIsNotExist("disassembly-pane-percent", DISASSEMBLY_PANE_DEFAULT_PERCENT);
+          storageSetIfIsNotExist("ranges-pane-height-percent", RANGES_PANE_HEIGHT_DEFAULT_PERCENT);
+          storageSetIfIsNotExist("ranges-pane-width-percent", RANGES_PANE_WIDTH_DEFAULT_PERCENT);
           this.updateSizes();
           const dragResizeLeft = drag()
-              .on('drag', function () {
-              const x = mouse(document.body)[0];
+              .on("drag", () => {
+              const [x, _] = mouse(document.body);
               resizer.sepLeft = Math.min(Math.max(0, x), resizer.sepRight);
               if (resizer.sepLeft > resizer.sepRangesX) {
                   resizer.sepRangesX = resizer.sepLeft;
               }
               resizer.updatePanes();
           })
-              .on('start', function () {
+              .on("start", () => {
               resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerLeft.classed("dragged", true);
           })
-              .on('end', function () {
-              // If the panel is close enough to the left, treat it as if it was pulled all the way to the left.
-              const coords = mouse(document.body);
-              if (coords[0] <= deadWidth) {
+              .on("end", () => {
+              // If the panel is close enough to the left, treat it as if it was pulled
+              // all the way to the left.
+              const [x, y] = mouse(document.body);
+              if (x <= deadWidth) {
                   resizer.sepLeft = 0;
                   resizer.updatePanes();
               }
               // Snap if dragged all the way to the left.
               resizer.resizerLeft.classed("snapped", resizer.sepLeft === 0);
               if (!resizer.isLeftSnapped()) {
-                  window.sessionStorage.setItem("source-pane-percent", `${resizer.sepLeft / document.body.getBoundingClientRect().width}`);
+                  storageSetItem("source-pane-percent", resizer.sepLeft / document.body.getBoundingClientRect().width);
               }
               resizer.snapper.setSourceExpanded(!resizer.isLeftSnapped());
               resizer.resizerLeft.classed("dragged", false);
               if (!resizer.rangesInLandscapeMode) {
-                  resizer.dragRangesEnd(coords, resizer.sepRangesX >= resizer.sepRight - deadWidth);
+                  resizer.dragRangesEnd(y, resizer.sepRangesX >= resizer.sepRight - deadWidth);
               }
           });
           resizer.resizerLeft.call(dragResizeLeft);
           const dragResizeRight = drag()
-              .on('drag', function () {
-              const x = mouse(document.body)[0];
+              .on("drag", () => {
+              const [x, _] = mouse(document.body);
               resizer.sepRight = Math.max(resizer.sepLeft, Math.min(x, document.body.getBoundingClientRect().width));
               if (resizer.sepRight < resizer.sepRangesX || resizer.isRangesSnapped()) {
                   resizer.sepRangesX = resizer.sepRight;
               }
               resizer.updatePanes();
           })
-              .on('start', function () {
+              .on("start", () => {
               resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerRight.classed("dragged", true);
           })
-              .on('end', function () {
-              // If the panel is close enough to the right, treat it as if it was pulled all the way to the right.
-              const coords = mouse(document.body);
+              .on("end", () => {
+              // If the panel is close enough to the right, treat it as if
+              // it was pulled all the way to the right.
+              const [x, y] = mouse(document.body);
               const clientWidth = document.body.getBoundingClientRect().width;
-              if (coords[0] >= (clientWidth - deadWidth)) {
+              if (x >= (clientWidth - deadWidth)) {
                   resizer.sepRight = clientWidth - 1;
                   resizer.updatePanes();
               }
               // Snap if dragged all the way to the right.
               resizer.resizerRight.classed("snapped", resizer.sepRight >= clientWidth - 1);
               if (!resizer.isRightSnapped()) {
-                  window.sessionStorage.setItem("disassembly-pane-percent", `${resizer.sepRight / clientWidth}`);
+                  storageSetItem("disassembly-pane-percent", resizer.sepRight / clientWidth);
               }
               resizer.snapper.setDisassemblyExpanded(!resizer.isRightSnapped());
               resizer.resizerRight.classed("dragged", false);
               if (!resizer.rangesInLandscapeMode) {
-                  resizer.dragRangesEnd(coords, resizer.sepRangesX >= resizer.sepRight - deadWidth);
+                  resizer.dragRangesEnd(y, resizer.sepRangesX >= resizer.sepRight - deadWidth);
               }
           });
           resizer.resizerRight.call(dragResizeRight);
           const dragResizeRanges = drag()
-              .on('drag', function () {
-              const coords = mouse(document.body);
-              resizer.sepRangesX = Math.max(resizer.sepLeft, Math.min(coords[0], resizer.sepRight));
-              resizer.sepRangesHeight = Math.max(100, Math.min(coords[1], window.innerHeight)
-                  - resizer.RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE);
+              .on("drag", () => {
+              const [x, y] = mouse(document.body);
+              resizer.sepRangesX = Math.max(resizer.sepLeft, Math.min(x, resizer.sepRight));
+              resizer.sepRangesHeight = Math.max(100, Math.min(y, window.innerHeight)
+                  - RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE);
               resizer.updatePanes();
           })
-              .on('start', function () {
+              .on("start", () => {
               resizer.rangesInLandscapeMode = resizer.isRangesInLandscapeMode();
               resizer.resizerRanges.classed("dragged", true);
           })
-              .on('end', function () {
-              const coords = mouse(document.body);
-              const isSnappedX = !resizer.rangesInLandscapeMode && (coords[0] >= (resizer.sepRight - deadWidth));
-              resizer.dragRangesEnd(coords, isSnappedX);
+              .on("end", () => {
+              const [x, y] = mouse(document.body);
+              const isSnappedX = !resizer.rangesInLandscapeMode && (x >= (resizer.sepRight - deadWidth));
+              resizer.dragRangesEnd(y, isSnappedX);
           });
           resizer.resizerRanges.call(dragResizeRanges);
           window.onresize = function () {
@@ -14571,6 +14725,52 @@
           };
           resizer.snapper = new Snapper(resizer);
           resizer.snapper.restoreExpandedState();
+      }
+      isRangesInLandscapeMode() {
+          return this.ranges.dataset.landscapeMode === "true";
+      }
+      updatePanes() {
+          this.left.style.width = `${this.sepLeft}px`;
+          this.resizerLeft.style("left", `${this.sepLeft}px`);
+          this.right.style.width = `${(document.body.getBoundingClientRect().width - this.sepRight)}px`;
+          this.resizerRight.style("right", `${(document.body.getBoundingClientRect().width - this.sepRight - 1)}px`);
+          this.updateRangesPane();
+          this.panesUpdatedCallback();
+      }
+      updateRanges() {
+          if (this.isRangesSnapped()) {
+              this.sepRangesHeight = window.innerHeight;
+              this.sepRangesX = this.sepRight;
+          }
+          else {
+              const sepRangesHeight = storageGetItem("ranges-pane-height-percent");
+              this.sepRangesHeight = window.innerHeight * sepRangesHeight;
+              const sepRangesWidth = storageGetItem("ranges-pane-width-percent");
+              this.sepRangesX = this.sepLeft + ((this.sepRight - this.sepLeft) * sepRangesWidth);
+          }
+      }
+      updateLeftWidth() {
+          if (this.isLeftSnapped()) {
+              this.sepLeft = 0;
+          }
+          else {
+              const sepLeft = storageGetItem("source-pane-percent");
+              this.sepLeft = document.body.getBoundingClientRect().width * sepLeft;
+          }
+      }
+      updateRightWidth() {
+          if (this.isRightSnapped()) {
+              this.sepRight = document.body.getBoundingClientRect().width;
+          }
+          else {
+              const sepRight = storageGetItem("disassembly-pane-percent");
+              this.sepRight = document.body.getBoundingClientRect().width * sepRight;
+          }
+      }
+      updateSizes() {
+          this.updateLeftWidth();
+          this.updateRightWidth();
+          this.updateRanges();
       }
       isLeftSnapped() {
           return this.resizerLeft.classed("snapped");
@@ -14581,56 +14781,25 @@
       isRangesSnapped() {
           return this.resizerRanges.classed("snapped");
       }
-      isRangesInLandscapeMode() {
-          return this.ranges.dataset.landscapeMode == "true";
-      }
-      dragRangesEnd(coords, isSnappedX) {
-          // If the panel is close enough to the bottom, treat it as if it was pulled all the way to the
-          // bottom.
-          const isSnappedY = this.rangesInLandscapeMode
-              && (coords[1] >= (window.innerHeight - this.deadHeight));
-          if (isSnappedX || isSnappedY) {
-              if (isSnappedX) {
-                  this.sepRangesX = this.sepRight;
-              }
-              if (isSnappedY) {
-                  this.sepRangesHeight = window.innerHeight;
-              }
-              this.updatePanes();
-          }
-          // Snap if dragged all the way to the bottom.
-          this.resizerRanges.classed("snapped", (!this.rangesInLandscapeMode && (this.sepRangesX >= this.sepRight - 1))
-              || (this.rangesInLandscapeMode
-                  && (this.sepRangesHeight >= window.innerHeight - 1)));
-          if (!this.isRangesSnapped()) {
-              if (this.rangesInLandscapeMode) {
-                  window.sessionStorage.setItem("ranges-pane-height-percent", `${this.sepRangesHeight / window.innerHeight}`);
-              }
-              else {
-                  window.sessionStorage.setItem("ranges-pane-width-percent", `${(this.sepRangesX - this.sepLeft) / (this.sepRight - this.sepLeft)}`);
-              }
-          }
-          this.snapper.setRangesExpanded(!this.isRangesSnapped());
-          this.resizerRanges.classed("dragged", false);
-      }
       updateRangesPane() {
           const clientHeight = window.innerHeight;
-          const rangesIsHidden = this.ranges.style.visibility == "hidden";
+          const rangesIsHidden = this.ranges.style.visibility === "hidden";
           const resizerSize = rangesIsHidden ? 0 : this.RESIZER_SIZE;
           const sepRangesHeight = rangesIsHidden ? clientHeight : this.sepRangesHeight;
           const sepRangesX = rangesIsHidden ? this.sepRight : this.sepRangesX;
-          this.snapper.rangesUpdate(this.snapper.rangesShowHide.dataset.expanded == "1");
+          this.snapper.rangesUpdate(this.snapper.rangesShowHide.dataset.expanded === "1");
           const inLandscapeMode = this.isRangesInLandscapeMode();
           const rangeHeight = inLandscapeMode ? clientHeight - sepRangesHeight : clientHeight;
-          this.ranges.style.height = rangeHeight + 'px';
+          this.ranges.style.height = `${rangeHeight}px`;
           const panelWidth = this.sepRight - this.sepLeft - (2 * resizerSize);
           const rangeWidth = inLandscapeMode ? panelWidth : this.sepRight - sepRangesX;
-          this.ranges.style.width = rangeWidth + 'px';
-          const multiview = document.getElementById("multiview");
+          this.ranges.style.width = `${rangeWidth}px`;
+          const multiview = document.getElementById(MULTIVIEW_ID);
           if (multiview && multiview.style) {
-              multiview.style.height = (inLandscapeMode ? sepRangesHeight - resizerSize : clientHeight) + 'px';
+              multiview.style.height =
+                  `${(inLandscapeMode ? sepRangesHeight - resizerSize : clientHeight)}px`;
               const midWidth = inLandscapeMode ? panelWidth : sepRangesX - this.sepLeft - (3 * resizerSize);
-              multiview.style.width = midWidth + 'px';
+              multiview.style.width = `${midWidth}px`;
               if (inLandscapeMode) {
                   this.middle.classList.remove("display-inline-flex");
               }
@@ -14644,66 +14813,52 @@
               const yAxis = this.ranges.getElementsByClassName("range-y-axis")[0];
               const rangeHeader = this.ranges.getElementsByClassName("range-header")[0];
               const gridWidth = rangeWidth - yAxis.clientWidth;
-              rangeGrid.style.width = Math.floor(gridWidth - 1) + 'px';
+              rangeGrid.style.width = `${Math.floor(gridWidth - 1)}px`;
               // Take live ranges' right scrollbar into account.
-              rangeHeader.style.width = (gridWidth - rangeGrid.offsetWidth + rangeGrid.clientWidth - 1) + 'px';
-              this.resizerRanges.style('width', inLandscapeMode ? rangeWidth + 'px' : resizerSize + 'px');
-              this.resizerRanges.style('height', inLandscapeMode ? resizerSize + 'px' : clientHeight + 'px');
+              rangeHeader.style.width =
+                  `${(gridWidth - rangeGrid.offsetWidth + rangeGrid.clientWidth - 1)}px`;
+              this.resizerRanges.style("width", inLandscapeMode ? `${rangeWidth}px` : `${resizerSize}px`);
+              this.resizerRanges.style("height", inLandscapeMode ? `${resizerSize}px` : `${clientHeight}px`);
               const rangeTitle = this.ranges.getElementsByClassName("range-title-div")[0];
               const rangeHeaderLabel = this.ranges.getElementsByClassName("range-header-label-x")[0];
               const gridHeight = rangeHeight - rangeHeader.clientHeight - rangeTitle.clientHeight - rangeHeaderLabel.clientHeight;
-              rangeGrid.style.height = gridHeight + 'px';
+              rangeGrid.style.height = `${gridHeight}px`;
               // Take live ranges' bottom scrollbar into account.
-              yAxis.style.height = (gridHeight - rangeGrid.offsetHeight + rangeGrid.clientHeight) + 'px';
+              yAxis.style.height = `${(gridHeight - rangeGrid.offsetHeight + rangeGrid.clientHeight)}px`;
           }
           else {
-              this.resizerRanges.style('width', '0px');
-              this.resizerRanges.style('height', '0px');
+              this.resizerRanges.style("width", "0px");
+              this.resizerRanges.style("height", "0px");
           }
-          this.resizerRanges.style('ranges', this.ranges.style.height);
+          this.resizerRanges.style("ranges", this.ranges.style.height);
       }
-      updatePanes() {
-          this.left.style.width = this.sepLeft + 'px';
-          this.resizerLeft.style('left', this.sepLeft + 'px');
-          this.right.style.width = (document.body.getBoundingClientRect().width - this.sepRight) + 'px';
-          this.resizerRight.style('right', (document.body.getBoundingClientRect().width - this.sepRight - 1) + 'px');
-          this.updateRangesPane();
-          this.panesUpdatedCallback();
-      }
-      updateRanges() {
-          if (this.isRangesSnapped()) {
-              this.sepRangesHeight = window.innerHeight;
-              this.sepRangesX = this.sepRight;
+      dragRangesEnd(y, isSnappedX) {
+          // If the panel is close enough to the bottom, treat it as if it was pulled all the way to the
+          // bottom.
+          const isSnappedY = this.rangesInLandscapeMode
+              && (y >= (window.innerHeight - this.deadHeight));
+          if (isSnappedX || isSnappedY) {
+              if (isSnappedX) {
+                  this.sepRangesX = this.sepRight;
+              }
+              if (isSnappedY) {
+                  this.sepRangesHeight = window.innerHeight;
+              }
+              this.updatePanes();
           }
-          else {
-              const sepRangesHeight = window.sessionStorage.getItem("ranges-pane-height-percent");
-              this.sepRangesHeight = window.innerHeight * Number.parseFloat(sepRangesHeight);
-              const sepRangesWidth = window.sessionStorage.getItem("ranges-pane-width-percent");
-              this.sepRangesX = this.sepLeft + ((this.sepRight - this.sepLeft) * Number.parseFloat(sepRangesWidth));
+          // Snap if dragged all the way to the bottom.
+          this.resizerRanges.classed("snapped", (!this.rangesInLandscapeMode && (this.sepRangesX >= this.sepRight - 1)) ||
+              (this.rangesInLandscapeMode && (this.sepRangesHeight >= window.innerHeight - 1)));
+          if (!this.isRangesSnapped()) {
+              if (this.rangesInLandscapeMode) {
+                  storageSetItem("ranges-pane-height-percent", this.sepRangesHeight / window.innerHeight);
+              }
+              else {
+                  storageSetItem("ranges-pane-width-percent", (this.sepRangesX - this.sepLeft) / (this.sepRight - this.sepLeft));
+              }
           }
-      }
-      updateLeftWidth() {
-          if (this.isLeftSnapped()) {
-              this.sepLeft = 0;
-          }
-          else {
-              const sepLeft = window.sessionStorage.getItem("source-pane-percent");
-              this.sepLeft = document.body.getBoundingClientRect().width * Number.parseFloat(sepLeft);
-          }
-      }
-      updateRightWidth() {
-          if (this.isRightSnapped()) {
-              this.sepRight = document.body.getBoundingClientRect().width;
-          }
-          else {
-              const sepRight = window.sessionStorage.getItem("disassembly-pane-percent");
-              this.sepRight = document.body.getBoundingClientRect().width * Number.parseFloat(sepRight);
-          }
-      }
-      updateSizes() {
-          this.updateLeftWidth();
-          this.updateRightWidth();
-          this.updateRanges();
+          this.snapper.setRangesExpanded(!this.isRangesSnapped());
+          this.resizerRanges.classed("dragged", false);
       }
   }
 
@@ -14771,11 +14926,11 @@
               const [sourceTab, sourceContainer] = sourceTabs.addTabAndContent("Source");
               sourceContainer.classList.add("viewpane", "scrollable");
               sourceTabs.activateTab(sourceTab);
-              const sourceView = new CodeView(sourceContainer, selectionBroker, sourceResolver, mainFunction, CodeMode.MAIN_SOURCE);
+              const sourceView = new CodeView(sourceContainer, selectionBroker, mainFunction, sourceResolver, CodeMode.MainSource);
               sourceView.show();
               sourceViews.push(sourceView);
               for (const source of sourceResolver.sources) {
-                  const sourceView = new CodeView(sourceContainer, selectionBroker, sourceResolver, source, CodeMode.INLINED_SOURCE);
+                  const sourceView = new CodeView(sourceContainer, selectionBroker, source, sourceResolver, CodeMode.InlinedSource);
                   sourceView.show();
                   sourceViews.push(sourceView);
               }
@@ -14786,7 +14941,7 @@
               disassemblyView.initializeCode(mainFunction.sourceText);
               if (sourceResolver.disassemblyPhase) {
                   disassemblyView.initializePerfProfile(jsonObj.eventCounts);
-                  disassemblyView.showContent(sourceResolver.disassemblyPhase.data);
+                  disassemblyView.showContent(sourceResolver.disassemblyPhase);
                   disassemblyView.show();
               }
               multiview = new GraphMultiView(INTERMEDIATE_PANE_ID, selectionBroker, sourceResolver);

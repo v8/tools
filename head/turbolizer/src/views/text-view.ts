@@ -2,18 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import { isIterable } from "../common/util";
 import { PhaseView } from "./view";
-import { anyToString, isIterable } from "../common/util";
-import { SelectionMap } from "../selection/selection";
+import { SelectionMap } from "../selection/selection-map";
 import { SourceResolver } from "../source-resolver";
 import { SelectionBroker } from "../selection/selection-broker";
-import { NodeSelectionHandler, BlockSelectionHandler, RegisterAllocationSelectionHandler } from "../selection/selection-handler";
 import { ViewElements } from "../common/view-elements";
+import { DisassemblyPhase } from "../phases/disassembly-phase";
+import { SchedulePhase } from "../phases/schedule-phase";
+import { SequencePhase } from "../phases/sequence-phase";
+import {
+  NodeSelectionHandler,
+  BlockSelectionHandler,
+  RegisterAllocationSelectionHandler,
+  ClearableHandler
+} from "../selection/selection-handler";
 
+type GenericTextPhase = DisassemblyPhase | SchedulePhase | SequencePhase;
 export abstract class TextView extends PhaseView {
-  selectionHandler: NodeSelectionHandler;
-  blockSelectionHandler: BlockSelectionHandler;
-  registerAllocationSelectionHandler: RegisterAllocationSelectionHandler;
+  selectionHandler: NodeSelectionHandler & ClearableHandler;
+  blockSelectionHandler: BlockSelectionHandler & ClearableHandler;
+  registerAllocationSelectionHandler: RegisterAllocationSelectionHandler & ClearableHandler;
   selection: SelectionMap;
   blockSelection: SelectionMap;
   registerAllocationSelection: SelectionMap;
@@ -23,158 +32,59 @@ export abstract class TextView extends PhaseView {
   blockIdToHtmlElementsMap: Map<string, Array<HTMLElement>>;
   blockIdToNodeIds: Map<string, Array<string>>;
   nodeIdToBlockId: Array<string>;
-  patterns: any;
+  patterns: Array<Array<any>>;
   sourceResolver: SourceResolver;
   broker: SelectionBroker;
 
-  constructor(id, broker) {
-    super(id);
-    const view = this;
-    view.textListNode = view.divNode.getElementsByTagName('ul')[0];
-    view.patterns = null;
-    view.instructionIdToHtmlElementsMap = new Map();
-    view.nodeIdToHtmlElementsMap = new Map();
-    view.blockIdToHtmlElementsMap = new Map();
-    view.blockIdToNodeIds = new Map();
-    view.nodeIdToBlockId = [];
-    view.selection = new SelectionMap(anyToString);
-    view.blockSelection = new SelectionMap(anyToString);
-    view.broker = broker;
-    view.sourceResolver = broker.sourceResolver;
-    const selectionHandler = {
-      clear: function () {
-        view.selection.clear();
-        view.updateSelection();
-        broker.broadcastClear(selectionHandler);
-      },
-      select: function (nodeIds, selected) {
-        view.selection.select(nodeIds, selected);
-        view.updateSelection();
-        broker.broadcastNodeSelect(selectionHandler, view.selection.selectedKeys(), selected);
-      },
-      brokeredNodeSelect: function (nodeIds, selected) {
-        const firstSelect = view.blockSelection.isEmpty();
-        view.selection.select(nodeIds, selected);
-        view.updateSelection(firstSelect);
-      },
-      brokeredClear: function () {
-        view.selection.clear();
-        view.updateSelection();
-      }
-    };
-    this.selectionHandler = selectionHandler;
-    broker.addNodeHandler(selectionHandler);
-    view.divNode.addEventListener('click', e => {
+  constructor(parent: HTMLDivElement, broker: SelectionBroker) {
+    super(parent);
+    this.broker = broker;
+    this.sourceResolver = broker.sourceResolver;
+    this.textListNode = this.divNode.getElementsByTagName("ul")[0];
+    this.instructionIdToHtmlElementsMap = new Map<string, Array<HTMLElement>>();
+    this.nodeIdToHtmlElementsMap = new Map<string, Array<HTMLElement>>();
+    this.blockIdToHtmlElementsMap = new Map<string, Array<HTMLElement>>();
+    this.blockIdToNodeIds = new Map<string, Array<string>>();
+    this.nodeIdToBlockId = new Array<string>();
+
+    this.selection = new SelectionMap(node => String(node));
+    this.blockSelection = new SelectionMap(block => String(block));
+    this.registerAllocationSelection = new SelectionMap(register => String(register));
+
+    this.selectionHandler = this.initializeNodeSelectionHandler();
+    this.blockSelectionHandler = this.initializeBlockSelectionHandler();
+    this.registerAllocationSelectionHandler = this.initializeRegisterAllocationSelectionHandler();
+
+    broker.addNodeHandler(this.selectionHandler);
+    broker.addBlockHandler(this.blockSelectionHandler);
+    broker.addRegisterAllocatorHandler(this.registerAllocationSelectionHandler);
+
+    this.divNode.addEventListener("click", e => {
       if (!e.shiftKey) {
-        view.selectionHandler.clear();
+        this.selectionHandler.clear();
       }
       e.stopPropagation();
     });
-
-    const blockSelectionHandler = {
-      clear: function () {
-        view.blockSelection.clear();
-        view.updateSelection();
-        broker.broadcastClear(blockSelectionHandler);
-      },
-      select: function (blockIds, selected) {
-        view.blockSelection.select(blockIds, selected);
-        view.updateSelection();
-        broker.broadcastBlockSelect(blockSelectionHandler, blockIds, selected);
-      },
-      brokeredBlockSelect: function (blockIds, selected) {
-        const firstSelect = view.blockSelection.isEmpty();
-        view.blockSelection.select(blockIds, selected);
-        view.updateSelection(firstSelect);
-      },
-      brokeredClear: function () {
-        view.blockSelection.clear();
-        view.updateSelection();
-      }
-    };
-    this.blockSelectionHandler = blockSelectionHandler;
-    broker.addBlockHandler(blockSelectionHandler);
-
-    view.registerAllocationSelection = new SelectionMap(anyToString);
-    const registerAllocationSelectionHandler = {
-      clear: function () {
-        view.registerAllocationSelection.clear();
-        view.updateSelection();
-        broker.broadcastClear(registerAllocationSelectionHandler);
-      },
-      select: function (instructionIds, selected) {
-        view.registerAllocationSelection.select(instructionIds, selected);
-        view.updateSelection();
-        broker.broadcastInstructionSelect(null, [instructionIds], selected);
-      },
-      brokeredRegisterAllocationSelect: function (instructionIds, selected) {
-        const firstSelect = view.blockSelection.isEmpty();
-        view.registerAllocationSelection.select(instructionIds, selected);
-        view.updateSelection(firstSelect);
-      },
-      brokeredClear: function () {
-        view.registerAllocationSelection.clear();
-        view.updateSelection();
-      }
-    };
-    broker.addRegisterAllocatorHandler(registerAllocationSelectionHandler);
-    view.registerAllocationSelectionHandler = registerAllocationSelectionHandler;
   }
 
-  // instruction-id are the divs for the register allocator phase
-  addHtmlElementForInstructionId(anyInstructionId: any, htmlElement: HTMLElement) {
-    const instructionId = anyToString(anyInstructionId);
-    if (!this.instructionIdToHtmlElementsMap.has(instructionId)) {
-      this.instructionIdToHtmlElementsMap.set(instructionId, []);
+  public initializeContent(genericPhase: GenericTextPhase, _): void {
+    this.clearText();
+    if (!(genericPhase instanceof SequencePhase)) {
+      this.processText(genericPhase.data);
     }
-    this.instructionIdToHtmlElementsMap.get(instructionId).push(htmlElement);
+    this.show();
   }
 
-  addHtmlElementForNodeId(anyNodeId: any, htmlElement: HTMLElement) {
-    const nodeId = anyToString(anyNodeId);
-    if (!this.nodeIdToHtmlElementsMap.has(nodeId)) {
-      this.nodeIdToHtmlElementsMap.set(nodeId, []);
-    }
-    this.nodeIdToHtmlElementsMap.get(nodeId).push(htmlElement);
-  }
-
-  addHtmlElementForBlockId(anyBlockId, htmlElement) {
-    const blockId = anyToString(anyBlockId);
-    if (!this.blockIdToHtmlElementsMap.has(blockId)) {
-      this.blockIdToHtmlElementsMap.set(blockId, []);
-    }
-    this.blockIdToHtmlElementsMap.get(blockId).push(htmlElement);
-  }
-
-  addNodeIdToBlockId(anyNodeId, anyBlockId) {
-    const blockId = anyToString(anyBlockId);
-    if (!this.blockIdToNodeIds.has(blockId)) {
-      this.blockIdToNodeIds.set(blockId, []);
-    }
-    this.blockIdToNodeIds.get(blockId).push(anyToString(anyNodeId));
-    this.nodeIdToBlockId[anyNodeId] = blockId;
-  }
-
-  blockIdsForNodeIds(nodeIds) {
-    const blockIds = [];
-    for (const nodeId of nodeIds) {
-      const blockId = this.nodeIdToBlockId[nodeId];
-      if (blockId == undefined) continue;
-      blockIds.push(blockId);
-    }
-    return blockIds;
-  }
-
-  updateSelection(scrollIntoView: boolean = false) {
+  public updateSelection(scrollIntoView: boolean = false): void {
     if (this.divNode.parentNode == null) return;
     const mkVisible = new ViewElements(this.divNode.parentNode as HTMLElement);
-    const view = this;
-    const elementsToSelect = view.divNode.querySelectorAll(`[data-pc-offset]`);
+    const elementsToSelect = this.divNode.querySelectorAll(`[data-pc-offset]`);
+
     for (const el of elementsToSelect) {
       el.classList.toggle("selected", false);
     }
     for (const [blockId, elements] of this.blockIdToHtmlElementsMap.entries()) {
-      const isSelected = view.blockSelection.isSelected(blockId);
+      const isSelected = this.blockSelection.isSelected(blockId);
       for (const element of elements) {
         mkVisible.consider(element, isSelected);
         element.classList.toggle("selected", isSelected);
@@ -186,7 +96,7 @@ export abstract class TextView extends PhaseView {
         element.classList.toggle("selected", false);
       }
     }
-    for (const instrId of view.registerAllocationSelection.selectedKeys()) {
+    for (const instrId of this.registerAllocationSelection.selectedKeys()) {
       const elements = this.instructionIdToHtmlElementsMap.get(instrId);
       if (!elements) continue;
       for (const element of elements) {
@@ -200,7 +110,7 @@ export abstract class TextView extends PhaseView {
         element.classList.toggle("selected", false);
       }
     }
-    for (const nodeId of view.selection.selectedKeys()) {
+    for (const nodeId of this.selection.selectedKeys()) {
       const elements = this.nodeIdToHtmlElementsMap.get(nodeId);
       if (!elements) continue;
       for (const element of elements) {
@@ -208,28 +118,81 @@ export abstract class TextView extends PhaseView {
         element.classList.toggle("selected", true);
       }
     }
+
     mkVisible.apply(scrollIntoView);
   }
 
-  setPatterns(patterns) {
-    this.patterns = patterns;
-  }
-
-  clearText() {
-    while (this.textListNode.firstChild) {
-      this.textListNode.removeChild(this.textListNode.firstChild);
+  public processLine(line: string): Array<HTMLSpanElement> {
+    const fragments = new Array<HTMLSpanElement>();
+    let patternSet = 0;
+    while (true) {
+      const beforeLine = line;
+      for (const pattern of this.patterns[patternSet]) {
+        const matches = line.match(pattern[0]);
+        if (matches) {
+          if (matches[0].length > 0) {
+            const style = pattern[1] != null ? pattern[1] : {};
+            const text = matches[0];
+            if (text.length > 0) {
+              const fragment = this.createFragment(matches[0], style);
+              if (fragment !== null) fragments.push(fragment);
+            }
+            line = line.substr(matches[0].length);
+          }
+          let nextPatternSet = patternSet;
+          if (pattern.length > 2) {
+            nextPatternSet = pattern[2];
+          }
+          if (line.length == 0) {
+            if (nextPatternSet != -1) {
+              throw (`illegal parsing state in text-view in patternSet: ${patternSet}`);
+            }
+            return fragments;
+          }
+          patternSet = nextPatternSet;
+          break;
+        }
+      }
+      if (beforeLine == line) {
+        throw (`input not consumed in text-view in patternSet: ${patternSet}`);
+      }
     }
   }
 
-  createFragment(text, style) {
-    const fragment = document.createElement("SPAN");
+  public onresize(): void {}
 
-    if (typeof style.associateData == 'function') {
-      if (style.associateData(text, fragment) === false) {
-         return null;
-      }
+  // instruction-id are the divs for the register allocator phase
+  protected addHtmlElementForInstructionId(anyInstructionId: any, htmlElement: HTMLElement): void {
+    const instructionId = String(anyInstructionId);
+    if (!this.instructionIdToHtmlElementsMap.has(instructionId)) {
+      this.instructionIdToHtmlElementsMap.set(instructionId, new Array<HTMLElement>());
+    }
+    this.instructionIdToHtmlElementsMap.get(instructionId).push(htmlElement);
+  }
+
+  protected addHtmlElementForNodeId(anyNodeId: any, htmlElement: HTMLElement): void {
+    const nodeId = String(anyNodeId);
+    if (!this.nodeIdToHtmlElementsMap.has(nodeId)) {
+      this.nodeIdToHtmlElementsMap.set(nodeId, new Array<HTMLElement>());
+    }
+    this.nodeIdToHtmlElementsMap.get(nodeId).push(htmlElement);
+  }
+
+  protected addHtmlElementForBlockId(anyBlockId: any, htmlElement: HTMLElement): void {
+    const blockId = String(anyBlockId);
+    if (!this.blockIdToHtmlElementsMap.has(blockId)) {
+      this.blockIdToHtmlElementsMap.set(blockId, new Array<HTMLElement>());
+    }
+    this.blockIdToHtmlElementsMap.get(blockId).push(htmlElement);
+  }
+
+  protected createFragment(text: string, style): HTMLSpanElement {
+    const fragment = document.createElement("span");
+
+    if (typeof style.associateData === "function") {
+      if (!style.associateData(text, fragment)) return null;
     } else {
-      if (style.css != undefined) {
+      if (style.css !== undefined) {
         const css = isIterable(style.css) ? style.css : [style.css];
         for (const cls of css) {
           fragment.classList.add(cls);
@@ -241,65 +204,101 @@ export abstract class TextView extends PhaseView {
     return fragment;
   }
 
-  processLine(line) {
+  private initializeNodeSelectionHandler(): NodeSelectionHandler & ClearableHandler {
     const view = this;
-    const result = [];
-    let patternSet = 0;
-    while (true) {
-      const beforeLine = line;
-      for (const pattern of view.patterns[patternSet]) {
-        const matches = line.match(pattern[0]);
-        if (matches != null) {
-          if (matches[0] != '') {
-            const style = pattern[1] != null ? pattern[1] : {};
-            const text = matches[0];
-            if (text != '') {
-              const fragment = view.createFragment(matches[0], style);
-              if (fragment !== null) result.push(fragment);
-            }
-            line = line.substr(matches[0].length);
-          }
-          let nextPatternSet = patternSet;
-          if (pattern.length > 2) {
-            nextPatternSet = pattern[2];
-          }
-          if (line == "") {
-            if (nextPatternSet != -1) {
-              throw ("illegal parsing state in text-view in patternSet" + patternSet);
-            }
-            return result;
-          }
-          patternSet = nextPatternSet;
-          break;
-        }
+    return {
+      select: function (nodeIds: Array<string>, selected: boolean) {
+        view.selection.select(nodeIds, selected);
+        view.updateSelection();
+        view.broker.broadcastNodeSelect(this, view.selection.selectedKeys(), selected);
+      },
+      clear: function () {
+        view.selection.clear();
+        view.updateSelection();
+        view.broker.broadcastClear(this);
+      },
+      brokeredNodeSelect: function (nodeIds: Set<string>, selected: boolean) {
+        const firstSelect = view.blockSelection.isEmpty();
+        view.selection.select(nodeIds, selected);
+        view.updateSelection(firstSelect);
+      },
+      brokeredClear: function () {
+        view.selection.clear();
+        view.updateSelection();
       }
-      if (beforeLine == line) {
-        throw ("input not consumed in text-view in patternSet" + patternSet);
+    };
+  }
+
+  private initializeBlockSelectionHandler(): BlockSelectionHandler & ClearableHandler {
+    const view = this;
+    return {
+      select: function (blockIds: Array<string>, selected: boolean) {
+        view.blockSelection.select(blockIds, selected);
+        view.updateSelection();
+        view.broker.broadcastBlockSelect(this, blockIds, selected);
+      },
+      clear: function () {
+        view.blockSelection.clear();
+        view.updateSelection();
+        view.broker.broadcastClear(this);
+      },
+      brokeredBlockSelect: function (blockIds: Array<string>, selected: boolean) {
+        const firstSelect = view.blockSelection.isEmpty();
+        view.blockSelection.select(blockIds, selected);
+        view.updateSelection(firstSelect);
+      },
+      brokeredClear: function () {
+        view.blockSelection.clear();
+        view.updateSelection();
       }
+    };
+  }
+
+  private initializeRegisterAllocationSelectionHandler(): RegisterAllocationSelectionHandler
+    & ClearableHandler {
+    const view = this;
+    return {
+      select: function (instructionIds: Array<number>, selected: boolean) {
+        view.registerAllocationSelection.select(instructionIds, selected);
+        view.updateSelection();
+        view.broker.broadcastInstructionSelect(null, [instructionIds], selected);
+      },
+      clear: function () {
+        view.registerAllocationSelection.clear();
+        view.updateSelection();
+        view.broker.broadcastClear(this);
+      },
+      brokeredRegisterAllocationSelect: function (instructionIds: Array<number>,
+                                                  selected: boolean) {
+        const firstSelect = view.blockSelection.isEmpty();
+        view.registerAllocationSelection.select(instructionIds, selected);
+        view.updateSelection(firstSelect);
+      },
+      brokeredClear: function () {
+        view.registerAllocationSelection.clear();
+        view.updateSelection();
+      }
+    };
+  }
+
+  private clearText(): void {
+    while (this.textListNode.firstChild) {
+      this.textListNode.removeChild(this.textListNode.firstChild);
     }
   }
 
-  processText(text) {
-    const view = this;
+  private processText(text: string): void {
     const textLines = text.split(/[\n]/);
     let lineNo = 0;
     for (const line of textLines) {
-      const li = document.createElement("LI");
+      const li = document.createElement("li");
       li.className = "nolinenums";
-      li.dataset.lineNo = "" + lineNo++;
-      const fragments = view.processLine(line);
+      li.dataset.lineNo = String(lineNo++);
+      const fragments = this.processLine(line);
       for (const fragment of fragments) {
         li.appendChild(fragment);
       }
-      view.textListNode.appendChild(li);
+      this.textListNode.appendChild(li);
     }
   }
-
-  initializeContent(data, rememberedSelection) {
-    this.clearText();
-    this.processText(data);
-    this.show();
-  }
-
-  public onresize(): void {}
 }
