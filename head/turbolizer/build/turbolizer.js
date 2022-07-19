@@ -1458,15 +1458,11 @@
       constructor(sourceResolver) {
           this.sourceResolver = sourceResolver;
           this.allHandlers = new Array();
-          this.sourcePositionHandlers = new Array();
           this.nodeHandlers = new Array();
           this.blockHandlers = new Array();
           this.instructionHandlers = new Array();
+          this.sourcePositionHandlers = new Array();
           this.registerAllocationHandlers = new Array();
-      }
-      addSourcePositionHandler(handler) {
-          this.allHandlers.push(handler);
-          this.sourcePositionHandlers.push(handler);
       }
       addNodeHandler(handler) {
           this.allHandlers.push(handler);
@@ -1488,10 +1484,15 @@
           this.allHandlers.push(handler);
           this.instructionHandlers.push(handler);
       }
+      addSourcePositionHandler(handler) {
+          this.allHandlers.push(handler);
+          this.sourcePositionHandlers.push(handler);
+      }
       addRegisterAllocatorHandler(handler) {
           this.allHandlers.push(handler);
           this.registerAllocationHandlers.push(handler);
       }
+      // TODO (danylo boiko) Add instructionOffsets type
       broadcastInstructionSelect(from, instructionOffsets, selected) {
           // Select the lines from the disassembly (right panel)
           for (const handler of this.instructionHandlers) {
@@ -1530,23 +1531,7 @@
               if (handler != from)
                   handler.brokeredNodeSelect(nodes, selected);
           }
-          for (const node of nodes) {
-              const instructionOffsets = this.sourceResolver.instructionsPhase
-                  .nodeIdToInstructionRange[node];
-              // Skip nodes which do not have an associated instruction range.
-              if (instructionOffsets == undefined)
-                  continue;
-              // Select the lines from the disassembly (right panel)
-              for (const handler of this.instructionHandlers) {
-                  if (handler != from)
-                      handler.brokeredInstructionSelect(instructionOffsets, selected);
-              }
-              // Select the lines from the middle panel for the register allocation phase.
-              for (const handler of this.registerAllocationHandlers) {
-                  if (handler != from)
-                      handler.brokeredRegisterAllocationSelect(instructionOffsets, selected);
-              }
-          }
+          this.selectInstructionsAndRegisterAllocations(from, nodes, selected);
       }
       broadcastNodeSelect(from, nodes, selected) {
           // Select the nodes (middle panel)
@@ -1560,35 +1545,40 @@
               if (handler != from)
                   handler.brokeredSourcePositionSelect(sourcePositions, selected);
           }
-          for (const node of nodes) {
-              const instructionOffsets = this.sourceResolver.instructionsPhase
-                  .nodeIdToInstructionRange[node];
-              // Skip nodes which do not have an associated instruction range.
-              if (instructionOffsets == undefined)
-                  continue;
-              // Select the lines from the disassembly (right panel)
-              for (const handler of this.instructionHandlers) {
-                  if (handler != from)
-                      handler.brokeredInstructionSelect(instructionOffsets, selected);
-              }
-              // Select the lines from the middle panel for the register allocation phase.
-              for (const handler of this.registerAllocationHandlers) {
-                  if (handler != from)
-                      handler.brokeredRegisterAllocationSelect(instructionOffsets, selected);
-              }
-          }
+          this.selectInstructionsAndRegisterAllocations(from, nodes, selected);
       }
-      broadcastBlockSelect(from, blocks, selected) {
+      broadcastBlockSelect(from, blocksIds, selected) {
           for (const handler of this.blockHandlers) {
               if (handler != from)
-                  handler.brokeredBlockSelect(blocks, selected);
+                  handler.brokeredBlockSelect(blocksIds, selected);
           }
       }
       broadcastClear(from) {
-          this.allHandlers.forEach(handler => {
+          for (const handler of this.allHandlers) {
               if (handler != from)
                   handler.brokeredClear();
-          });
+          }
+      }
+      selectInstructionsAndRegisterAllocations(from, nodes, selected) {
+          const instructionsOffsets = new Array();
+          for (const node of nodes) {
+              const instructionRange = this.sourceResolver.instructionsPhase.nodeIdToInstructionRange[node];
+              if (instructionRange)
+                  instructionsOffsets.push(instructionRange);
+          }
+          if (instructionsOffsets.length > 0) {
+              // Select the lines from the disassembly (right panel)
+              for (const handler of this.instructionHandlers) {
+                  if (handler != from)
+                      handler.brokeredInstructionSelect(instructionsOffsets, selected);
+              }
+              // Select the lines from the middle panel for the register allocation phase.
+              for (const handler of this.registerAllocationHandlers) {
+                  if (handler != from) {
+                      handler.brokeredRegisterAllocationSelect(instructionsOffsets, selected);
+                  }
+              }
+          }
       }
   }
 
@@ -1718,18 +1708,18 @@
           this.blockIdToHtmlElementsMap = new Map();
           this.blockIdToNodeIds = new Map();
           this.nodeIdToBlockId = new Array();
-          this.selection = new SelectionMap(node => String(node));
+          this.nodeSelection = new SelectionMap(node => String(node));
           this.blockSelection = new SelectionMap(block => String(block));
           this.registerAllocationSelection = new SelectionMap(register => String(register));
-          this.selectionHandler = this.initializeNodeSelectionHandler();
+          this.nodeSelectionHandler = this.initializeNodeSelectionHandler();
           this.blockSelectionHandler = this.initializeBlockSelectionHandler();
           this.registerAllocationSelectionHandler = this.initializeRegisterAllocationSelectionHandler();
-          broker.addNodeHandler(this.selectionHandler);
+          broker.addNodeHandler(this.nodeSelectionHandler);
           broker.addBlockHandler(this.blockSelectionHandler);
           broker.addRegisterAllocatorHandler(this.registerAllocationSelectionHandler);
           this.divNode.addEventListener("click", e => {
               if (!e.shiftKey) {
-                  this.selectionHandler.clear();
+                  this.nodeSelectionHandler.clear();
               }
               e.stopPropagation();
           });
@@ -1775,7 +1765,7 @@
                   element.classList.toggle("selected", false);
               }
           }
-          for (const nodeId of this.selection.selectedKeys()) {
+          for (const nodeId of this.nodeSelection.selectedKeys()) {
               const elements = this.nodeIdToHtmlElementsMap.get(nodeId);
               if (!elements)
                   continue;
@@ -1867,22 +1857,22 @@
           const view = this;
           return {
               select: function (nodeIds, selected) {
-                  view.selection.select(nodeIds, selected);
+                  view.nodeSelection.select(nodeIds, selected);
                   view.updateSelection();
-                  view.broker.broadcastNodeSelect(this, view.selection.selectedKeys(), selected);
+                  view.broker.broadcastNodeSelect(this, view.nodeSelection.selectedKeys(), selected);
               },
               clear: function () {
-                  view.selection.clear();
+                  view.nodeSelection.clear();
                   view.updateSelection();
                   view.broker.broadcastClear(this);
               },
               brokeredNodeSelect: function (nodeIds, selected) {
                   const firstSelect = view.blockSelection.isEmpty();
-                  view.selection.select(nodeIds, selected);
+                  view.nodeSelection.select(nodeIds, selected);
                   view.updateSelection(firstSelect);
               },
               brokeredClear: function () {
-                  view.selection.clear();
+                  view.nodeSelection.clear();
                   view.updateSelection();
               }
           };
@@ -1924,9 +1914,11 @@
                   view.updateSelection();
                   view.broker.broadcastClear(this);
               },
-              brokeredRegisterAllocationSelect: function (instructionIds, selected) {
+              brokeredRegisterAllocationSelect: function (instructionsOffsets, selected) {
                   const firstSelect = view.blockSelection.isEmpty();
-                  view.registerAllocationSelection.select(instructionIds, selected);
+                  for (const instructionOffset of instructionsOffsets) {
+                      view.registerAllocationSelection.select(instructionOffset, selected);
+                  }
                   view.updateSelection(firstSelect);
               },
               brokeredClear: function () {
@@ -1986,7 +1978,7 @@
       }
       updateSelection(scrollIntoView = false) {
           super.updateSelection(scrollIntoView);
-          const selectedKeys = this.selection.selectedKeys();
+          const selectedKeys = this.nodeSelection.selectedKeys();
           const keyPcOffsets = [
               ...this.sourceResolver.instructionsPhase.nodesToKeyPcOffsets(selectedKeys)
           ];
@@ -2117,11 +2109,13 @@
                   view.updateSelection();
                   broker.broadcastClear(this);
               },
-              brokeredInstructionSelect: function (instructionIds, selected) {
+              brokeredInstructionSelect: function (instructionsOffsets, selected) {
                   const firstSelect = view.offsetSelection.isEmpty();
-                  const keyPcOffsets = view.sourceResolver.instructionsPhase
-                      .instructionsToKeyPcOffsets(instructionIds);
-                  view.offsetSelection.select(keyPcOffsets, selected);
+                  for (const instructionOffset of instructionsOffsets) {
+                      const keyPcOffsets = view.sourceResolver.instructionsPhase
+                          .instructionsToKeyPcOffsets(instructionOffset);
+                      view.offsetSelection.select(keyPcOffsets, selected);
+                  }
                   view.updateSelection(firstSelect);
               },
               brokeredClear: function () {
@@ -2143,8 +2137,8 @@
               if (nodes.length > 0) {
                   e.stopPropagation();
                   if (!e.shiftKey)
-                      this.selectionHandler.clear();
-                  this.selectionHandler.select(nodes, true);
+                      this.nodeSelectionHandler.clear();
+                  this.nodeSelectionHandler.select(nodes, true);
               }
               else {
                   this.updateSelection();
@@ -2158,7 +2152,7 @@
           if (blockId !== undefined) {
               const blockIds = blockId.split(",");
               if (!e.shiftKey)
-                  this.selectionHandler.clear();
+                  this.nodeSelectionHandler.clear();
               this.blockSelectionHandler.select(blockIds, true);
           }
       }
@@ -11556,10 +11550,11 @@
                   view.broker.broadcastClear(this);
                   view.updateGraphVisibility();
               },
-              brokeredNodeSelect: function (locations, selected) {
+              brokeredNodeSelect: function (nodeIds, selected) {
                   if (!view.graph)
                       return;
-                  const selection = view.graph.nodes(node => locations.has(node.identifier()) && (!view.state.hideDead || node.isLive()));
+                  const selection = view.graph.nodes(node => nodeIds.has(node.identifier())
+                      && (!view.state.hideDead || node.isLive()));
                   view.state.selection.select(selection, selected);
                   // Update edge visibility based on selection.
                   for (const item of view.state.selection.selectedKeys()) {
@@ -11867,13 +11862,13 @@
       attachSelection(adaptedSelection) {
           if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          this.selectionHandler.clear();
+          this.nodeSelectionHandler.clear();
           this.blockSelectionHandler.clear();
-          this.selectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
           this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
       }
       detachSelection() {
-          return new SelectionStorage(this.selection.detachSelection(), this.blockSelection.detachSelection());
+          return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
       }
       adaptSelection(selection) {
           for (const key of selection.nodes.keys())
@@ -11910,9 +11905,9 @@
               return function (e) {
                   e.stopPropagation();
                   if (!e.shiftKey) {
-                      view.selectionHandler.clear();
+                      view.nodeSelectionHandler.clear();
                   }
-                  view.selectionHandler.select([nodeId], true);
+                  view.nodeSelectionHandler.select([nodeId], true);
               };
           }
           function getMarker(start, end) {
@@ -12009,7 +12004,7 @@
       }
       searchInputAction(searchBar, e, onlyVisible) {
           e.stopPropagation();
-          this.selectionHandler.clear();
+          this.nodeSelectionHandler.clear();
           const query = searchBar.value;
           if (query.length == 0)
               return;
@@ -12023,7 +12018,7 @@
                   select.push(node.id);
               }
           }
-          this.selectionHandler.select(select, true);
+          this.nodeSelectionHandler.select(select, true);
       }
   }
 
@@ -12893,13 +12888,13 @@
       attachSelection(adaptedSelection) {
           if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          this.selectionHandler.clear();
+          this.nodeSelectionHandler.clear();
           this.blockSelectionHandler.clear();
-          this.selectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
           this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
       }
       detachSelection() {
-          return new SelectionStorage(this.selection.detachSelection(), this.blockSelection.detachSelection());
+          return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
       }
       adaptSelection(selection) {
           for (const key of selection.nodes.keys())
@@ -12940,16 +12935,6 @@
           this.divNode.innerHTML = '';
           this.sequence = sequence;
           this.searchInfo = [];
-          this.divNode.onclick = (e) => {
-              if (!(e.target instanceof HTMLElement))
-                  return;
-              const instructionId = Number.parseInt(e.target.dataset.instructionId, 10);
-              if (!instructionId)
-                  return;
-              if (!e.shiftKey)
-                  this.broker.broadcastClear(null);
-              this.broker.broadcastInstructionSelect(null, [instructionId], true);
-          };
           this.phaseSelect = document.getElementById('phase-select');
           this.currentPhaseIndex = this.phaseSelect.selectedIndex;
           this.addBlocks(this.sequence.blocks);
@@ -12980,7 +12965,7 @@
               return mkLinkHandler(instrId, view.registerAllocationSelectionHandler);
           }
           function mkOperandLinkHandler(text) {
-              return mkLinkHandler(text, view.selectionHandler);
+              return mkLinkHandler(text, view.nodeSelectionHandler);
           }
           function elementForOperandWithSpan(span, text, searchInfo, isVirtual) {
               const selectionText = isVirtual ? "virt_" + text : text;
@@ -13191,7 +13176,7 @@
       }
       searchInputAction(searchBar, e) {
           e.stopPropagation();
-          this.selectionHandler.clear();
+          this.nodeSelectionHandler.clear();
           const query = searchBar.value;
           if (query.length == 0)
               return;
@@ -13203,7 +13188,7 @@
                   select.push(item);
               }
           }
-          this.selectionHandler.select(select, true);
+          this.nodeSelectionHandler.select(select, true);
       }
   }
 
@@ -14185,9 +14170,9 @@
           this.codeMode = codeMode;
           this.sourcePositionToHtmlElements = new Map();
           this.showAdditionalInliningPosition = false;
-          this.selection = new SelectionMap((gp) => gp.toString());
-          this.selectionHandler = this.initializeSourcePositionHandler();
-          broker.addSourcePositionHandler(this.selectionHandler);
+          this.sourcePositionSelection = new SelectionMap((gp) => gp.toString());
+          this.sourcePositionSelectionHandler = this.initializeSourcePositionSelectionHandler();
+          broker.addSourcePositionHandler(this.sourcePositionSelectionHandler);
           this.initializeCode();
       }
       createViewElement() {
@@ -14254,7 +14239,7 @@
                       }
                   }
                   else {
-                      view.selectionHandler.clear();
+                      view.sourcePositionSelectionHandler.clear();
                   }
               };
               const base = source.startPosition;
@@ -14286,7 +14271,7 @@
               }
           }
       }
-      initializeSourcePositionHandler() {
+      initializeSourcePositionSelectionHandler() {
           const view = this;
           const broker = this.broker;
           const sourceResolver = this.sourceResolver;
@@ -14299,27 +14284,27 @@
                   }
                   if (locations.length == 0)
                       return;
-                  view.selection.select(locations, selected);
+                  view.sourcePositionSelection.select(locations, selected);
                   view.updateSelection();
                   broker.broadcastSourcePositionSelect(this, locations, selected);
               },
               clear: function () {
-                  view.selection.clear();
+                  view.sourcePositionSelection.clear();
                   view.updateSelection();
                   broker.broadcastClear(this);
               },
               brokeredSourcePositionSelect: function (locations, selected) {
-                  const firstSelect = view.selection.isEmpty();
+                  const firstSelect = view.sourcePositionSelection.isEmpty();
                   for (const location of locations) {
                       const translated = sourceResolver.translateToSourceId(view.source.sourceId, location);
                       if (!translated)
                           continue;
-                      view.selection.select([translated], selected);
+                      view.sourcePositionSelection.select([translated], selected);
                   }
                   view.updateSelection(firstSelect);
               },
               brokeredClear: function () {
-                  view.selection.clear();
+                  view.sourcePositionSelection.clear();
                   view.updateSelection();
               },
           };
@@ -14334,7 +14319,7 @@
       updateSelection(scrollIntoView = false) {
           const mkVisible = new ViewElements(this.divNode.parentNode);
           for (const [sp, els] of this.sourcePositionToHtmlElements.entries()) {
-              const isSelected = this.selection.isKeySelected(sp);
+              const isSelected = this.sourcePositionSelection.isKeySelected(sp);
               for (const el of els) {
                   mkVisible.consider(el, isSelected);
                   el.classList.toggle("selected", isSelected);
@@ -14354,18 +14339,18 @@
       }
       onSelectLine(lineNumber, doClear) {
           if (doClear) {
-              this.selectionHandler.clear();
+              this.sourcePositionSelectionHandler.clear();
           }
           const positions = this.sourceResolver.lineToSourcePositions(lineNumber - 1);
           if (positions !== undefined) {
-              this.selectionHandler.select(positions, undefined);
+              this.sourcePositionSelectionHandler.select(positions, undefined);
           }
       }
       onSelectSourcePosition(sourcePosition, doClear) {
           if (doClear) {
-              this.selectionHandler.clear();
+              this.sourcePositionSelectionHandler.clear();
           }
-          this.selectionHandler.select([sourcePosition], undefined);
+          this.sourcePositionSelectionHandler.select([sourcePosition], undefined);
       }
       insertSourcePositions(currentSpan, lineNumber, pos, end, adjust) {
           const view = this;
