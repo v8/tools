@@ -6,6 +6,10 @@
   // found in the LICENSE file.
   const MAX_RANK_SENTINEL = 0;
   const BEZIER_CONSTANT = 0.3;
+  const TURBOSHAFT_NODE_X_INDENT = 25;
+  const TURBOSHAFT_BLOCK_BORDER_RADIUS = 35;
+  const TURBOSHAFT_BLOCK_ROW_SEPARATION = 200;
+  const ARROW_HEAD_HEIGHT = 7;
   const DEFAULT_NODE_BUBBLE_RADIUS = 12;
   const NODE_INPUT_WIDTH = 50;
   const MINIMUM_NODE_OUTPUT_APPROACH = 15;
@@ -59,13 +63,13 @@
       }
       return obj;
   }
-  function sortUnique(arr, f, equal) {
+  function sortUnique(arr, comparator, equals) {
       if (arr.length == 0)
           return arr;
-      arr = arr.sort(f);
+      arr = arr.sort(comparator);
       const uniqueArr = [arr[0]];
       for (let i = 1; i < arr.length; i++) {
-          if (!equal(arr[i - 1], arr[i])) {
+          if (!equals(arr[i - 1], arr[i])) {
               uniqueArr.push(arr[i]);
           }
       }
@@ -287,9 +291,13 @@
           this.inputs = new Array();
           this.outputs = new Array();
           this.visible = false;
+          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
+          this.visitOrderWithinRank = 0;
+          this.rank = MAX_RANK_SENTINEL;
           this.x = 0;
           this.y = 0;
-          this.labelBox = measureText(this.displayLabel);
+          if (displayLabel)
+              this.labelBox = measureText(this.displayLabel);
       }
       areAnyOutputsVisible() {
           let visibleCount = 0;
@@ -333,6 +341,23 @@
       getOutputX() {
           return this.getWidth() - (NODE_INPUT_WIDTH / 2);
       }
+      getInputApproach(index) {
+          return this.y - MINIMUM_NODE_INPUT_APPROACH -
+              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      getOutputApproach(showTypes) {
+          return this.y + this.outputApproach + this.getHeight(showTypes) +
+              +DEFAULT_NODE_BUBBLE_RADIUS;
+      }
+      compare(other) {
+          if (this.visitOrderWithinRank < other.visitOrderWithinRank) {
+              return -1;
+          }
+          else if (this.visitOrderWithinRank == other.visitOrderWithinRank) {
+              return 0;
+          }
+          return 1;
+      }
       identifier() {
           return `${this.id}`;
       }
@@ -352,8 +377,6 @@
       constructor(nodeLabel) {
           super(nodeLabel.id, nodeLabel.getDisplayLabel());
           this.nodeLabel = nodeLabel;
-          this.rank = MAX_RANK_SENTINEL;
-          this.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
           // Every control node is a CFG node.
           this.cfg = nodeLabel.control;
           const typeBox = measureText(this.getDisplayType());
@@ -361,7 +384,6 @@
           this.width = alignUp(innerWidth + NODE_INPUT_WIDTH * 2, NODE_INPUT_WIDTH);
           const innerHeight = Math.max(this.labelBox.height, typeBox.height);
           this.normalHeight = innerHeight + 20;
-          this.visitOrderWithinRank = 0;
       }
       getHeight(showTypes) {
           if (showTypes) {
@@ -429,54 +451,24 @@
           }
           return deepestRank;
       }
-      getInputApproach(index) {
-          return this.y - MINIMUM_NODE_INPUT_APPROACH -
-              (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
-      }
-      getOutputApproach(showTypes) {
-          return this.y + this.outputApproach + this.getHeight(showTypes) +
-              +DEFAULT_NODE_BUBBLE_RADIUS;
-      }
       hasBackEdges() {
           return (this.nodeLabel.opcode === "Loop") ||
               ((this.nodeLabel.opcode === "Phi" || this.nodeLabel.opcode === "EffectPhi" ||
                   this.nodeLabel.opcode === "InductionVariablePhi") &&
                   this.inputs[this.inputs.length - 1].source.nodeLabel.opcode === "Loop");
       }
-      compare(other) {
-          if (this.visitOrderWithinRank < other.visitOrderWithinRank) {
-              return -1;
-          }
-          else if (this.visitOrderWithinRank == other.visitOrderWithinRank) {
-              return 0;
-          }
-          return 1;
-      }
   }
 
   // Copyright 2014 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
   class Edge {
-      constructor(target, source) {
+      constructor(target, index, source) {
           this.target = target;
+          this.index = index;
           this.source = source;
           this.backEdgeNumber = 0;
           this.visible = false;
       }
-      isVisible() {
-          return this.visible && this.source.visible && this.target.visible;
-      }
-  }
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
-  class GraphEdge extends Edge {
-      constructor(target, index, source, type) {
-          super(target, source);
-          this.index = index;
-          this.type = type;
-      }
-      getInputHorizontalPosition(graph, showTypes) {
+      getInputHorizontalPosition(graph, extendHeight) {
           if (graph.graphPhase.rendered && this.backEdgeNumber > 0) {
               return graph.maxGraphNodeX + this.backEdgeNumber * MINIMUM_EDGE_SEPARATION;
           }
@@ -485,7 +477,7 @@
           const index = this.index;
           const inputX = target.x + target.getInputX(index);
           const inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
+          const outputApproach = source.getOutputApproach(extendHeight);
           if (inputApproach > outputApproach) {
               return inputX;
           }
@@ -494,17 +486,16 @@
               ? target.x + target.getWidth() + inputOffset
               : target.x - inputOffset;
       }
-      generatePath(graph, showTypes) {
+      generatePath(graph, extendHeight) {
           const target = this.target;
           const source = this.source;
           const inputX = target.x + target.getInputX(this.index);
-          const arrowheadHeight = 7;
-          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - arrowheadHeight;
+          const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - ARROW_HEAD_HEIGHT;
           const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getHeight(showTypes) + DEFAULT_NODE_BUBBLE_RADIUS;
+          const outputY = source.y + source.getHeight(extendHeight) + DEFAULT_NODE_BUBBLE_RADIUS;
           let inputApproach = target.getInputApproach(this.index);
-          const outputApproach = source.getOutputApproach(showTypes);
-          const horizontalPos = this.getInputHorizontalPosition(graph, showTypes);
+          const outputApproach = source.getOutputApproach(extendHeight);
+          const horizontalPos = this.getInputHorizontalPosition(graph, extendHeight);
           let path;
           if (inputY < outputY) {
               path = `M ${outputX} ${outputY}\nL ${outputX} ${outputApproach}\nL ${horizontalPos} ${outputApproach}`;
@@ -522,11 +513,22 @@
           }
           return path;
       }
-      isBackEdge() {
-          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
+      isVisible() {
+          return this.visible && this.source.visible && this.target.visible;
       }
       toString() {
           return `${this.source.id},${this.index},${this.target.id}`;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class GraphEdge extends Edge {
+      constructor(target, index, source, type) {
+          super(target, index, source);
+          this.type = type;
+      }
+      isBackEdge() {
+          return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
       }
   }
 
@@ -539,6 +541,7 @@
           this.stateType = GraphStateType.NeedToFullRebuild;
           this.nodeLabelMap = nodeLabelMap ?? new Array();
           this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
+          this.originIdToNodesMap = new Map();
           this.rendered = false;
       }
       parseDataFromJSON(dataJson, nodeLabelMap) {
@@ -553,10 +556,10 @@
               const jsonOrigin = node.origin;
               if (jsonOrigin) {
                   if (jsonOrigin.nodeId) {
-                      origin = new NodeOrigin(jsonOrigin.nodeId, jsonOrigin.reducer, jsonOrigin.phase);
+                      origin = new NodeOrigin(jsonOrigin.nodeId, jsonOrigin.phase, jsonOrigin.reducer);
                   }
                   else {
-                      origin = new BytecodeOrigin(jsonOrigin.bytecodePosition, jsonOrigin.reducer, jsonOrigin.phase);
+                      origin = new BytecodeOrigin(jsonOrigin.bytecodePosition, jsonOrigin.phase, jsonOrigin.reducer);
                   }
               }
               let sourcePosition = null;
@@ -575,7 +578,14 @@
               }
               const newNode = new GraphNode(label);
               this.data.nodes.push(newNode);
-              nodeIdToNodeMap[newNode.id] = newNode;
+              nodeIdToNodeMap[newNode.identifier()] = newNode;
+              if (origin) {
+                  const identifier = origin.identifier();
+                  if (!this.originIdToNodesMap.has(identifier)) {
+                      this.originIdToNodesMap.set(identifier, new Array());
+                  }
+                  this.originIdToNodesMap.get(identifier).push(newNode);
+              }
           }
           return nodeIdToNodeMap;
       }
@@ -964,22 +974,37 @@
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphNode extends Node$1 {
       constructor(id, title, block, opPropertiesType, properties) {
-          super(id, `${id} ${title}`);
+          super(id);
           this.title = title;
           this.block = block;
           this.opPropertiesType = opPropertiesType;
           this.properties = properties;
+          this.propertiesBox = measureText(this.properties);
           this.visible = true;
       }
       getHeight(showProperties) {
           if (this.properties && showProperties) {
-              return this.labelBox.height * 2;
+              return this.labelBox.height + this.propertiesBox.height;
           }
           return this.labelBox.height;
       }
       getWidth() {
-          const measure = measureText(`${this.getInlineLabel()}[${this.getPropertiesTypeAbbreviation()}]`);
-          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, measure.width);
+          return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.labelBox.width);
+      }
+      initDisplayLabel() {
+          this.displayLabel = this.getInlineLabel();
+          this.labelBox = measureText(this.displayLabel);
+      }
+      getTitle() {
+          let title = `${this.id} ${this.title} ${this.opPropertiesType}`;
+          if (this.inputs.length > 0) {
+              title += `\nInputs: ${this.inputs.map(i => i.source.id).join(", ")}`;
+          }
+          if (this.outputs.length > 0) {
+              title += `\nOutputs: ${this.outputs.map(i => i.target.id).join(", ")}`;
+          }
+          const opPropertiesStr = this.properties.length > 0 ? this.properties : "No op properties";
+          return title + `\n${opPropertiesStr}`;
       }
       getInlineLabel() {
           if (this.inputs.length == 0)
@@ -987,28 +1012,11 @@
           return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(",")})`;
       }
       getReadableProperties(blockWidth) {
-          const propertiesWidth = measureText(this.properties).width;
-          if (blockWidth > propertiesWidth)
+          if (blockWidth > this.propertiesBox.width)
               return this.properties;
-          const widthOfOneSymbol = Math.floor(propertiesWidth / this.properties.length);
+          const widthOfOneSymbol = Math.floor(this.propertiesBox.width / this.properties.length);
           const lengthOfReadableProperties = Math.floor(blockWidth / widthOfOneSymbol);
           return `${this.properties.slice(0, lengthOfReadableProperties - 3)}..`;
-      }
-      getPropertiesTypeAbbreviation() {
-          switch (this.opPropertiesType) {
-              case OpPropertiesType.Pure:
-                  return "P";
-              case OpPropertiesType.Reading:
-                  return "R";
-              case OpPropertiesType.Writing:
-                  return "W";
-              case OpPropertiesType.CanDeopt:
-                  return "CD";
-              case OpPropertiesType.AnySideEffects:
-                  return "ASE";
-              case OpPropertiesType.BlockTerminator:
-                  return "BT";
-          }
       }
   }
   var OpPropertiesType;
@@ -1022,19 +1030,6 @@
   })(OpPropertiesType || (OpPropertiesType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
-  class TurboshaftGraphEdge extends Edge {
-      constructor(target, source) {
-          super(target, source);
-          this.visible = target.visible && source.visible;
-      }
-      toString(idx) {
-          if (idx !== null)
-              return `${this.source.id},${idx},${this.target.id}`;
-          return `${this.source.id},${this.target.id}`;
-      }
-  }
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphBlock extends Node$1 {
       constructor(id, type, deferred, predecessors) {
           super(id, `${type} ${id}${deferred ? " (deferred)" : ""}`);
@@ -1045,13 +1040,26 @@
           this.visible = true;
       }
       getHeight(showProperties) {
-          return this.nodes.reduce((accumulator, node) => {
-              return accumulator + node.getHeight(showProperties);
-          }, this.labelBox.height);
+          if (this.showProperties != showProperties) {
+              this.height = this.nodes.reduce((accumulator, node) => {
+                  return accumulator + node.getHeight(showProperties);
+              }, this.labelBox.height);
+              this.showProperties = showProperties;
+          }
+          return this.height;
       }
       getWidth() {
-          const maxWidth = Math.max(...this.nodes.map((node) => node.getWidth()));
-          return Math.max(maxWidth, this.labelBox.width) + 50;
+          if (!this.width) {
+              const maxNodesWidth = Math.max(...this.nodes.map((node) => node.getWidth()));
+              this.width = Math.max(maxNodesWidth, this.labelBox.width) + TURBOSHAFT_NODE_X_INDENT * 2;
+          }
+          return this.width;
+      }
+      hasBackEdges() {
+          return (this.type == TurboshaftGraphBlockType.Loop) ||
+              (this.type == TurboshaftGraphBlockType.Merge &&
+                  this.inputs.length > 0 &&
+                  this.inputs[this.inputs.length - 1].source.type == TurboshaftGraphBlockType.Loop);
       }
       toString() {
           return `B${this.id}`;
@@ -1065,13 +1073,26 @@
   })(TurboshaftGraphBlockType || (TurboshaftGraphBlockType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftGraphEdge extends Edge {
+      constructor(target, index, source) {
+          super(target, index, source);
+          this.visible = target.visible && source.visible;
+      }
+      isBackEdge() {
+          if (this.target instanceof TurboshaftGraphBlock) {
+              return this.target.hasBackEdges() && (this.target.rank < this.source.rank);
+          }
+          return this.target.rank < this.source.rank;
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphPhase extends Phase {
       constructor(name, highestBlockId, data, nodeIdToNodeMap, blockIdToBlockMap) {
           super(name, PhaseType.TurboshaftGraph);
           this.highestBlockId = highestBlockId;
           this.data = data ?? new TurboshaftGraphData();
           this.stateType = GraphStateType$1.NeedToFullRebuild;
-          this.layoutType = TurboshaftLayoutType.Inline;
           this.nodeIdToNodeMap = nodeIdToNodeMap ?? new Array();
           this.blockIdToBlockMap = blockIdToBlockMap ?? new Array();
           this.rendered = false;
@@ -1086,12 +1107,12 @@
           for (const blockJson of blocksJson) {
               const block = new TurboshaftGraphBlock(blockJson.id, blockJson.type, blockJson.deferred, blockJson.predecessors);
               this.data.blocks.push(block);
-              this.blockIdToBlockMap[block.id] = block;
+              this.blockIdToBlockMap[block.identifier()] = block;
           }
           for (const block of this.blockIdToBlockMap) {
-              for (const predecessor of block.predecessors) {
+              for (const [idx, predecessor] of block.predecessors.entries()) {
                   const source = this.blockIdToBlockMap[predecessor];
-                  const edge = new TurboshaftGraphEdge(block, source);
+                  const edge = new TurboshaftGraphEdge(block, idx, source);
                   block.inputs.push(edge);
                   source.outputs.push(edge);
               }
@@ -1103,17 +1124,20 @@
               const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.op_properties_type, nodeJson.properties);
               block.nodes.push(node);
               this.data.nodes.push(node);
-              this.nodeIdToNodeMap[node.id] = node;
+              this.nodeIdToNodeMap[node.identifier()] = node;
           }
       }
       parseEdgesFromJSON(edgesJson) {
           for (const edgeJson of edgesJson) {
               const target = this.nodeIdToNodeMap[edgeJson.target];
               const source = this.nodeIdToNodeMap[edgeJson.source];
-              const edge = new TurboshaftGraphEdge(target, source);
+              const edge = new TurboshaftGraphEdge(target, -1, source);
               this.data.edges.push(edge);
               target.inputs.push(edge);
               source.outputs.push(edge);
+          }
+          for (const node of this.data.nodes) {
+              node.initDisplayLabel();
           }
       }
   }
@@ -1147,6 +1171,7 @@
           this.phases = new Array();
           // Maps phase names to phaseIds.
           this.phaseNames = new Map();
+          this.instructionsPhase = new InstructionsPhase("");
           // The disassembly phase is stored separately.
           this.disassemblyPhase = undefined;
           // Maps line numbers to source positions
@@ -1240,23 +1265,20 @@
                       break;
                   case PhaseType.Instructions:
                       const castedInstructions = genericPhase;
-                      let instructionsPhase = null;
-                      if (this.instructionsPhase) {
-                          instructionsPhase = this.instructionsPhase;
-                          instructionsPhase.name += `, ${castedInstructions.name}`;
+                      if (this.instructionsPhase.name === "") {
+                          this.instructionsPhase.name = castedInstructions.name;
                       }
                       else {
-                          instructionsPhase = new InstructionsPhase(castedInstructions.name);
+                          this.instructionsPhase.name += `, ${castedInstructions.name}`;
                       }
-                      instructionsPhase.parseNodeIdToInstructionRangeFromJSON(castedInstructions
+                      this.instructionsPhase.parseNodeIdToInstructionRangeFromJSON(castedInstructions
                           ?.nodeIdToInstructionRange);
-                      instructionsPhase.parseBlockIdToInstructionRangeFromJSON(castedInstructions
+                      this.instructionsPhase.parseBlockIdToInstructionRangeFromJSON(castedInstructions
                           ?.blockIdToInstructionRange);
-                      instructionsPhase.parseInstructionOffsetToPCOffsetFromJSON(castedInstructions
+                      this.instructionsPhase.parseInstructionOffsetToPCOffsetFromJSON(castedInstructions
                           ?.instructionOffsetToPCOffset);
-                      instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions
+                      this.instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions
                           ?.codeOffsetsInfo);
-                      this.instructionsPhase = instructionsPhase;
                       break;
                   case PhaseType.Graph:
                       const castedGraph = genericPhase;
@@ -1436,9 +1458,17 @@
           this.allHandlers.push(handler);
           this.nodeHandlers.push(handler);
       }
+      deleteNodeHandler(handler) {
+          this.allHandlers = this.allHandlers.filter(h => h != handler);
+          this.nodeHandlers = this.nodeHandlers.filter(h => h != handler);
+      }
       addBlockHandler(handler) {
           this.allHandlers.push(handler);
           this.blockHandlers.push(handler);
+      }
+      deleteBlockHandler(handler) {
+          this.allHandlers = this.allHandlers.filter(h => h != handler);
+          this.blockHandlers = this.blockHandlers.filter(h => h != handler);
       }
       addInstructionHandler(handler) {
           this.allHandlers.push(handler);
@@ -10420,6 +10450,7 @@
       constructor(graphPhase) {
           super(graphPhase);
           this.nodeMap = graphPhase.nodeIdToNodeMap;
+          this.originNodesMap = graphPhase.originIdToNodesMap;
       }
       *nodes(func = (n) => true) {
           for (const node of this.nodeMap) {
@@ -10480,11 +10511,207 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class LayoutOccupation {
+      constructor(graph) {
+          this.graph = graph;
+          this.filledSlots = new Array();
+          this.occupations = new Array();
+          this.minSlot = 0;
+          this.maxSlot = 0;
+      }
+      clearOutputs(source, showTypes) {
+          for (const edge of source.outputs) {
+              if (!edge.isVisible())
+                  continue;
+              for (const inputEdge of edge.target.inputs) {
+                  if (inputEdge.source === source) {
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      this.clearPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
+                  }
+              }
+          }
+      }
+      clearOccupied() {
+          for (const [firstSlot, endSlotExclusive] of this.occupations) {
+              this.clearSlotRange(firstSlot, endSlotExclusive);
+          }
+          this.occupations = new Array();
+      }
+      occupy(item) {
+          const width = item.getWidth();
+          const margin = MINIMUM_EDGE_SEPARATION;
+          const paddedWidth = width + 2 * margin;
+          const [direction, position] = this.getPlacementHint(item);
+          const x = position - paddedWidth + margin;
+          this.trace(`${item.id} placement hint [${x}, ${(x + paddedWidth)})`);
+          const placement = this.findSpace(x, paddedWidth, direction);
+          const [firstSlot, slotWidth] = placement;
+          const endSlotExclusive = firstSlot + slotWidth - 1;
+          this.occupySlotRange(firstSlot, endSlotExclusive);
+          this.occupations.push([firstSlot, endSlotExclusive]);
+          if (direction < 0) {
+              return this.slotToLeftPosition(firstSlot + slotWidth) - width - margin;
+          }
+          else if (direction > 0) {
+              return this.slotToLeftPosition(firstSlot) + margin;
+          }
+          else {
+              return this.slotToLeftPosition(firstSlot + slotWidth / 2) - (width / 2);
+          }
+      }
+      occupyInputs(item, showTypes) {
+          for (let i = 0; i < item.inputs.length; ++i) {
+              if (item.inputs[i].isVisible()) {
+                  const edge = item.inputs[i];
+                  if (!edge.isBackEdge()) {
+                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
+                      this.trace(`Occupying input ${i} of ${item.id} at ${horizontalPos}`);
+                      this.occupyPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
+                  }
+              }
+          }
+      }
+      print() {
+          let output = "";
+          for (let currentSlot = -40; currentSlot < 40; ++currentSlot) {
+              if (currentSlot != 0) {
+                  output += " ";
+              }
+              else {
+                  output += "|";
+              }
+          }
+          console.log(output);
+          output = "";
+          for (let currentSlot2 = -40; currentSlot2 < 40; ++currentSlot2) {
+              if (this.filledSlots[this.slotToIndex(currentSlot2)]) {
+                  output += "*";
+              }
+              else {
+                  output += " ";
+              }
+          }
+          console.log(output);
+      }
+      getPlacementHint(item) {
+          let position = 0;
+          let direction = -1;
+          let outputEdges = 0;
+          let inputEdges = 0;
+          for (const outputEdge of item.outputs) {
+              if (!outputEdge.isVisible())
+                  continue;
+              const output = outputEdge.target;
+              for (let l = 0; l < output.inputs.length; ++l) {
+                  if (output.rank > item.rank) {
+                      const inputEdge = output.inputs[l];
+                      if (inputEdge.isVisible())
+                          ++inputEdges;
+                      if (output.inputs[l].source == item) {
+                          position += output.x + output.getInputX(l) + NODE_INPUT_WIDTH / 2;
+                          outputEdges++;
+                          if (l >= (output.inputs.length / 2)) {
+                              direction = 1;
+                          }
+                      }
+                  }
+              }
+          }
+          if (outputEdges != 0) {
+              position /= outputEdges;
+          }
+          if (outputEdges > 1 || inputEdges == 1) {
+              direction = 0;
+          }
+          return [direction, position];
+      }
+      occupyPositionRange(from, to) {
+          this.occupySlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
+      }
+      clearPositionRange(from, to) {
+          this.clearSlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
+      }
+      occupySlotRange(from, to) {
+          this.trace(`Occupied [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
+          this.setIndexRange(from, to, true);
+      }
+      clearSlotRange(from, to) {
+          this.trace(`Cleared [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
+          this.setIndexRange(from, to, false);
+      }
+      clearPositionRangeWithMargin(from, to, margin) {
+          const fromMargin = from - Math.floor(margin);
+          const toMargin = to + Math.floor(margin);
+          this.clearPositionRange(fromMargin, toMargin);
+      }
+      occupyPositionRangeWithMargin(from, to, margin) {
+          const fromMargin = from - Math.floor(margin);
+          const toMargin = to + Math.floor(margin);
+          this.occupyPositionRange(fromMargin, toMargin);
+      }
+      findSpace(pos, width, direction) {
+          const widthSlots = Math.floor((width + NODE_INPUT_WIDTH - 1) /
+              NODE_INPUT_WIDTH);
+          const currentSlot = this.positionToSlot(pos + width / 2);
+          let widthSlotsRemainingLeft = widthSlots;
+          let widthSlotsRemainingRight = widthSlots;
+          let slotsChecked = 0;
+          while (true) {
+              const mod = slotsChecked++ % 2;
+              const currentScanSlot = currentSlot + (mod ? -1 : 1) * (slotsChecked >> 1);
+              if (!this.filledSlots[this.slotToIndex(currentScanSlot)]) {
+                  if (mod) {
+                      if (direction <= 0)
+                          --widthSlotsRemainingLeft;
+                  }
+                  else if (direction >= 0) {
+                      --widthSlotsRemainingRight;
+                  }
+                  if (widthSlotsRemainingLeft == 0 || widthSlotsRemainingRight == 0 ||
+                      (widthSlotsRemainingLeft + widthSlotsRemainingRight) == widthSlots &&
+                          (widthSlots == slotsChecked)) {
+                      return mod ? [currentScanSlot, widthSlots]
+                          : [currentScanSlot - widthSlots + 1, widthSlots];
+                  }
+              }
+              else {
+                  if (mod) {
+                      widthSlotsRemainingLeft = widthSlots;
+                  }
+                  else {
+                      widthSlotsRemainingRight = widthSlots;
+                  }
+              }
+          }
+      }
+      setIndexRange(from, to, value) {
+          if (to < from)
+              throw ("Illegal slot range");
+          while (from <= to) {
+              this.maxSlot = Math.max(from, this.maxSlot);
+              this.minSlot = Math.min(from, this.minSlot);
+              this.filledSlots[this.slotToIndex(from++)] = value;
+          }
+      }
+      positionToSlot(position) {
+          return Math.floor(position / NODE_INPUT_WIDTH);
+      }
+      slotToIndex(slot) {
+          return slot >= 0 ? slot * 2 : slot * 2 + 1;
+      }
+      slotToLeftPosition(slot) {
+          return slot * NODE_INPUT_WIDTH;
+      }
+      trace(message) {
+      }
+  }
+
   // Copyright 2015 the V8 project authors. All rights reserved.
   class GraphLayout {
       constructor(graph) {
           this.graph = graph;
-          this.graphOccupation = new GraphOccupation(graph);
+          this.layoutOccupation = new LayoutOccupation(graph);
           this.maxRank = 0;
           this.visitOrderWithinRank = 0;
       }
@@ -10653,14 +10880,14 @@
           // compact and not overlapping live input lines.
           rankSets.reverse().forEach((rankSet) => {
               for (const node of rankSet) {
-                  this.graphOccupation.clearNodeOutputs(node, showTypes);
+                  this.layoutOccupation.clearOutputs(node, showTypes);
               }
               this.traceOccupation("After clearing outputs");
               let placedCount = 0;
               rankSet = rankSet.sort((a, b) => a.compare(b));
               for (const node of rankSet) {
                   if (node.visible) {
-                      node.x = this.graphOccupation.occupyNode(node);
+                      node.x = this.layoutOccupation.occupy(node);
                       this.trace(`Node ${node.id} is placed between [${node.x}, ${node.x + node.getWidth()})`);
                       const staggeredFlooredI = Math.floor(placedCount++ % 3);
                       const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
@@ -10671,10 +10898,10 @@
                   }
               }
               this.traceOccupation("Before clearing nodes");
-              this.graphOccupation.clearOccupiedNodes();
+              this.layoutOccupation.clearOccupied();
               this.traceOccupation("After clearing nodes");
               for (const node of rankSet) {
-                  this.graphOccupation.occupyNodeInputs(node, showTypes);
+                  this.layoutOccupation.occupyInputs(node, showTypes);
               }
               this.traceOccupation("After occupying inputs and determining bounding box");
           });
@@ -10693,200 +10920,6 @@
       trace(message) {
       }
       traceOccupation(message) {
-      }
-  }
-  class GraphOccupation {
-      constructor(graph) {
-          this.graph = graph;
-          this.filledSlots = new Array();
-          this.nodeOccupations = new Array();
-          this.minSlot = 0;
-          this.maxSlot = 0;
-      }
-      clearNodeOutputs(source, showTypes) {
-          for (const edge of source.outputs) {
-              if (!edge.isVisible())
-                  continue;
-              for (const inputEdge of edge.target.inputs) {
-                  if (inputEdge.source === source) {
-                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
-                      this.clearPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
-                  }
-              }
-          }
-      }
-      clearOccupiedNodes() {
-          for (const [firstSlot, endSlotExclusive] of this.nodeOccupations) {
-              this.clearSlotRange(firstSlot, endSlotExclusive);
-          }
-          this.nodeOccupations = new Array();
-      }
-      occupyNode(node) {
-          const width = node.getWidth();
-          const margin = MINIMUM_EDGE_SEPARATION;
-          const paddedWidth = width + 2 * margin;
-          const [direction, position] = this.getPlacementHint(node);
-          const x = position - paddedWidth + margin;
-          this.trace(`Node ${node.id} placement hint [${x}, ${(x + paddedWidth)})`);
-          const placement = this.findSpace(x, paddedWidth, direction);
-          const [firstSlot, slotWidth] = placement;
-          const endSlotExclusive = firstSlot + slotWidth - 1;
-          this.occupySlotRange(firstSlot, endSlotExclusive);
-          this.nodeOccupations.push([firstSlot, endSlotExclusive]);
-          if (direction < 0) {
-              return this.slotToLeftPosition(firstSlot + slotWidth) - width - margin;
-          }
-          else if (direction > 0) {
-              return this.slotToLeftPosition(firstSlot) + margin;
-          }
-          else {
-              return this.slotToLeftPosition(firstSlot + slotWidth / 2) - (width / 2);
-          }
-      }
-      occupyNodeInputs(node, showTypes) {
-          for (let i = 0; i < node.inputs.length; ++i) {
-              if (node.inputs[i].isVisible()) {
-                  const edge = node.inputs[i];
-                  if (!edge.isBackEdge()) {
-                      const horizontalPos = edge.getInputHorizontalPosition(this.graph, showTypes);
-                      this.trace(`Occupying input ${i} of ${node.id} at ${horizontalPos}`);
-                      this.occupyPositionRangeWithMargin(horizontalPos, horizontalPos, NODE_INPUT_WIDTH / 2);
-                  }
-              }
-          }
-      }
-      print() {
-          let output = "";
-          for (let currentSlot = -40; currentSlot < 40; ++currentSlot) {
-              if (currentSlot != 0) {
-                  output += " ";
-              }
-              else {
-                  output += "|";
-              }
-          }
-          console.log(output);
-          output = "";
-          for (let currentSlot2 = -40; currentSlot2 < 40; ++currentSlot2) {
-              if (this.filledSlots[this.slotToIndex(currentSlot2)]) {
-                  output += "*";
-              }
-              else {
-                  output += " ";
-              }
-          }
-          console.log(output);
-      }
-      getPlacementHint(node) {
-          let position = 0;
-          let direction = -1;
-          let outputEdges = 0;
-          let inputEdges = 0;
-          for (const outputEdge of node.outputs) {
-              if (!outputEdge.isVisible())
-                  continue;
-              const output = outputEdge.target;
-              for (let l = 0; l < output.inputs.length; ++l) {
-                  if (output.rank > node.rank) {
-                      const inputEdge = output.inputs[l];
-                      if (inputEdge.isVisible())
-                          ++inputEdges;
-                      if (output.inputs[l].source == node) {
-                          position += output.x + output.getInputX(l) + NODE_INPUT_WIDTH / 2;
-                          outputEdges++;
-                          if (l >= (output.inputs.length / 2)) {
-                              direction = 1;
-                          }
-                      }
-                  }
-              }
-          }
-          if (outputEdges != 0) {
-              position /= outputEdges;
-          }
-          if (outputEdges > 1 || inputEdges == 1) {
-              direction = 0;
-          }
-          return [direction, position];
-      }
-      occupyPositionRange(from, to) {
-          this.occupySlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
-      }
-      clearPositionRange(from, to) {
-          this.clearSlotRange(this.positionToSlot(from), this.positionToSlot(to - 1));
-      }
-      occupySlotRange(from, to) {
-          this.trace(`Occupied [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
-          this.setIndexRange(from, to, true);
-      }
-      clearSlotRange(from, to) {
-          this.trace(`Cleared [${this.slotToLeftPosition(from)} ${this.slotToLeftPosition(to + 1)})`);
-          this.setIndexRange(from, to, false);
-      }
-      clearPositionRangeWithMargin(from, to, margin) {
-          const fromMargin = from - Math.floor(margin);
-          const toMargin = to + Math.floor(margin);
-          this.clearPositionRange(fromMargin, toMargin);
-      }
-      occupyPositionRangeWithMargin(from, to, margin) {
-          const fromMargin = from - Math.floor(margin);
-          const toMargin = to + Math.floor(margin);
-          this.occupyPositionRange(fromMargin, toMargin);
-      }
-      findSpace(pos, width, direction) {
-          const widthSlots = Math.floor((width + NODE_INPUT_WIDTH - 1) /
-              NODE_INPUT_WIDTH);
-          const currentSlot = this.positionToSlot(pos + width / 2);
-          let widthSlotsRemainingLeft = widthSlots;
-          let widthSlotsRemainingRight = widthSlots;
-          let slotsChecked = 0;
-          while (true) {
-              const mod = slotsChecked++ % 2;
-              const currentScanSlot = currentSlot + (mod ? -1 : 1) * (slotsChecked >> 1);
-              if (!this.filledSlots[this.slotToIndex(currentScanSlot)]) {
-                  if (mod) {
-                      if (direction <= 0)
-                          --widthSlotsRemainingLeft;
-                  }
-                  else if (direction >= 0) {
-                      --widthSlotsRemainingRight;
-                  }
-                  if (widthSlotsRemainingLeft == 0 || widthSlotsRemainingRight == 0 ||
-                      (widthSlotsRemainingLeft + widthSlotsRemainingRight) == widthSlots &&
-                          (widthSlots == slotsChecked)) {
-                      return mod ? [currentScanSlot, widthSlots]
-                          : [currentScanSlot - widthSlots + 1, widthSlots];
-                  }
-              }
-              else {
-                  if (mod) {
-                      widthSlotsRemainingLeft = widthSlots;
-                  }
-                  else {
-                      widthSlotsRemainingRight = widthSlots;
-                  }
-              }
-          }
-      }
-      setIndexRange(from, to, value) {
-          if (to < from)
-              throw ("Illegal slot range");
-          while (from <= to) {
-              this.maxSlot = Math.max(from, this.maxSlot);
-              this.minSlot = Math.min(from, this.minSlot);
-              this.filledSlots[this.slotToIndex(from++)] = value;
-          }
-      }
-      positionToSlot(position) {
-          return Math.floor(position / NODE_INPUT_WIDTH);
-      }
-      slotToIndex(slot) {
-          return slot >= 0 ? slot * 2 : slot * 2 + 1;
-      }
-      slotToLeftPosition(slot) {
-          return slot * NODE_INPUT_WIDTH;
-      }
-      trace(message) {
       }
   }
 
@@ -10955,6 +10988,7 @@
           else {
               this.graph.graphPhase.transform = null;
           }
+          this.broker.deleteNodeHandler(this.nodesSelectionHandler);
           super.hide();
           this.deleteContent();
       }
@@ -11119,6 +11153,12 @@
       set cacheLayout(value) {
           storageSetItem("toggle-cache-layout", value);
       }
+      get turboshaftLayoutType() {
+          return storageGetItem("turboshaft-layout-type", TurboshaftLayoutType.Inline);
+      }
+      set turboshaftLayoutType(layoutType) {
+          storageSetItem("turboshaft-layout-type", layoutType);
+      }
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
@@ -11149,9 +11189,8 @@
           this.addToggleImgInput("toggle-hide-dead", "toggle hide dead nodes", this.state.hideDead, partial(this.toggleHideDeadAction, this));
           this.addToggleImgInput("toggle-types", "toggle types", this.state.showTypes, partial(this.toggleTypesAction, this));
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
-          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
           this.phaseName = data.name;
-          this.createGraph(data, adaptedSelection);
+          const adaptedSelection = this.createGraph(data, rememberedSelection);
           this.broker.addNodeHandler(this.nodesSelectionHandler);
           const selectedNodes = adaptedSelection?.size > 0
               ? this.attachSelection(adaptedSelection)
@@ -11232,8 +11271,8 @@
               const adjOutputEdges = visibleEdges.filter(edge => edge.source === node);
               adjInputEdges.attr("relToHover", "input");
               adjOutputEdges.attr("relToHover", "output");
-              const adjInputNodes = adjInputEdges.data().map(edge => edge.source);
               const visibleNodes = view.visibleNodes.selectAll("g");
+              const adjInputNodes = adjInputEdges.data().map(edge => edge.source);
               visibleNodes.data(adjInputNodes, node => node.toString())
                   .attr("relToHover", "input");
               const adjOutputNodes = adjOutputEdges.data().map(edge => edge.target);
@@ -11300,7 +11339,7 @@
           view.visibleBubbles = selectAll("circle");
           view.updateInputAndOutputBubbles();
           graph.maxGraphX = graph.maxGraphNodeX;
-          newAndOldEdges.attr("d", node => node.generatePath(graph, view.state.showTypes));
+          newAndOldEdges.attr("d", edge => edge.generatePath(graph, view.state.showTypes));
       }
       svgKeyDown() {
           let eventHandled = true; // unless the below switch defaults
@@ -11419,11 +11458,6 @@
       initializeNodesSelectionHandler() {
           const view = this;
           return {
-              clear: function () {
-                  view.state.selection.clear();
-                  view.broker.broadcastClear(this);
-                  view.updateGraphVisibility();
-              },
               select: function (selectedNodes, selected) {
                   const locations = new Array();
                   for (const node of selectedNodes) {
@@ -11438,22 +11472,28 @@
                   view.broker.broadcastSourcePositionSelect(this, locations, selected);
                   view.updateGraphVisibility();
               },
+              clear: function () {
+                  view.state.selection.clear();
+                  view.broker.broadcastClear(this);
+                  view.updateGraphVisibility();
+              },
               brokeredNodeSelect: function (locations, selected) {
                   if (!view.graph)
                       return;
                   const selection = view.graph.nodes(node => locations.has(node.identifier()) && (!view.state.hideDead || node.isLive()));
                   view.state.selection.select(selection, selected);
                   // Update edge visibility based on selection.
-                  for (const node of view.graph.nodes()) {
-                      if (view.state.selection.isSelected(node)) {
-                          node.visible = true;
-                          node.inputs.forEach(edge => {
-                              edge.visible = edge.visible || view.state.selection.isSelected(edge.source);
-                          });
-                          node.outputs.forEach(edge => {
-                              edge.visible = edge.visible || view.state.selection.isSelected(edge.target);
-                          });
-                      }
+                  for (const item of view.state.selection.selectedKeys()) {
+                      const node = view.graph.nodeMap[item];
+                      if (!node)
+                          continue;
+                      node.visible = true;
+                      node.inputs.forEach(edge => {
+                          edge.visible = edge.visible || view.state.selection.isSelected(edge.source);
+                      });
+                      node.outputs.forEach(edge => {
+                          edge.visible = edge.visible || view.state.selection.isSelected(edge.target);
+                      });
                   }
                   view.updateGraphVisibility();
               },
@@ -11463,7 +11503,7 @@
               }
           };
       }
-      createGraph(data, selection) {
+      createGraph(data, rememberedSelection) {
           this.graph = new Graph(data);
           this.graphLayout = new GraphLayout(this.graph);
           if (!this.state.cacheLayout ||
@@ -11474,8 +11514,9 @@
           else {
               this.showVisible();
           }
-          if (selection !== undefined) {
-              for (const item of selection) {
+          const adaptedSelection = this.adaptSelectionToCurrentPhase(data.data, rememberedSelection);
+          if (adaptedSelection !== undefined) {
+              for (const item of adaptedSelection) {
                   if (this.graph.nodeMap[item])
                       this.graph.nodeMap[item].visible = true;
               }
@@ -11483,6 +11524,7 @@
           this.graph.makeEdgesVisible();
           this.layoutGraph();
           this.updateGraphVisibility();
+          return adaptedSelection;
       }
       layoutGraph() {
           const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
@@ -11575,32 +11617,29 @@
           });
       }
       adaptSelectionToCurrentPhase(data, selection) {
-          // TODO (danylo boiko) Speed up adapting
-          const updatedGraphSelection = new Set();
+          const updatedSelection = new Set();
           if (!data || !(selection instanceof Map))
-              return updatedGraphSelection;
-          // Adding survived nodes (with the same id)
-          for (const node of data.nodes) {
-              const stringKey = this.state.selection.stringKey(node);
-              if (selection.has(stringKey)) {
-                  updatedGraphSelection.add(stringKey);
+              return updatedSelection;
+          for (const [key, node] of selection.entries()) {
+              // Adding survived nodes (with the same id)
+              const survivedNode = this.graph.nodeMap[key];
+              if (survivedNode) {
+                  updatedSelection.add(this.state.selection.stringKey(survivedNode));
               }
-          }
-          // Adding children of nodes
-          for (const node of data.nodes) {
+              // Adding children of nodes
+              const childNodes = this.graph.originNodesMap.get(key);
+              if (childNodes?.length > 0) {
+                  for (const childNode of childNodes) {
+                      updatedSelection.add(this.state.selection.stringKey(childNode));
+                  }
+              }
+              // Adding ancestors of nodes
               const originStringKey = this.state.selection.originStringKey(node);
-              if (originStringKey && selection.has(originStringKey)) {
-                  updatedGraphSelection.add(this.state.selection.stringKey(node));
+              if (originStringKey) {
+                  updatedSelection.add(originStringKey);
               }
           }
-          // Adding ancestors of nodes
-          selection.forEach(selectedNode => {
-              const originStringKey = this.state.selection.originStringKey(selectedNode);
-              if (originStringKey) {
-                  updatedGraphSelection.add(originStringKey);
-              }
-          });
-          return updatedGraphSelection;
+          return updatedSelection;
       }
       attachSelection(selection) {
           if (!(selection instanceof Set))
@@ -11735,27 +11774,26 @@
           this.updateGraphVisibility();
       }
       selectOrigins() {
-          const state = this.state;
-          // TODO (danylo boiko) Add array type
-          const origins = [];
+          const origins = new Array();
           let phase = this.phaseName;
           const selection = new Set();
-          for (const node of state.selection) {
+          for (const node of this.state.selection) {
               const origin = node.nodeLabel.origin;
-              if (origin) {
+              if (origin && origin instanceof NodeOrigin) {
                   phase = origin.phase;
-                  const node = this.graph.nodeMap[origin.nodeId];
-                  if (node && phase === this.phaseName) {
+                  const node = this.graph.nodeMap[origin.identifier()];
+                  if (phase === this.phaseName && node) {
                       origins.push(node);
                   }
                   else {
-                      selection.add(`${origin.nodeId}`);
+                      selection.add(origin.identifier());
                   }
               }
           }
           // Only go through phase reselection if we actually need
           // to display another phase.
           if (selection.size > 0 && phase !== this.phaseName) {
+              this.hide();
               this.showPhaseByName(phase, selection);
           }
           else if (origins.length > 0) {
@@ -13135,7 +13173,18 @@
               if (!block)
                   continue;
               for (const edge of block.inputs) {
-                  if (!edge || func(edge))
+                  if (!edge || !func(edge))
+                      continue;
+                  yield edge;
+              }
+          }
+      }
+      *nodesEdges(func = (e) => true) {
+          for (const block of this.nodeMap) {
+              if (!block)
+                  continue;
+              for (const edge of block.inputs) {
+                  if (!edge || !func(edge))
                       continue;
                   yield edge;
               }
@@ -13155,7 +13204,7 @@
               this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showProperties)
                   + NODE_INPUT_WIDTH);
           }
-          this.maxGraphX = this.maxGraphNodeX + 3 * MINIMUM_EDGE_SEPARATION;
+          this.maxGraphX = this.maxGraphNodeX + this.maxBackEdgeNumber * MINIMUM_EDGE_SEPARATION;
           this.width = this.maxGraphX - this.minGraphX;
           this.height = this.maxGraphY - this.minGraphY;
           return [
@@ -13165,36 +13214,212 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphLayout {
       constructor(graph) {
           this.graph = graph;
+          this.layoutOccupation = new LayoutOccupation(graph);
+          this.maxRank = 0;
+          this.visitOrderWithinRank = 0;
       }
       rebuild(showProperties) {
-          if (this.graph.graphPhase.stateType == GraphStateType$1.NeedToFullRebuild) {
-              switch (this.graph.graphPhase.layoutType) {
-                  case TurboshaftLayoutType.Inline:
-                      this.inlineRebuild(showProperties);
-                      break;
-                  default:
-                      throw "Unsupported graph layout type";
-              }
-              this.graph.graphPhase.stateType = GraphStateType$1.Cached;
+          switch (this.graph.graphPhase.stateType) {
+              case GraphStateType$1.NeedToFullRebuild:
+                  this.fullRebuild(showProperties);
+                  break;
+              case GraphStateType$1.Cached:
+                  this.cachedRebuild();
+                  break;
+              default:
+                  throw "Unsupported graph state type";
           }
           this.graph.graphPhase.rendered = true;
       }
-      inlineRebuild(showProperties) {
-          // Useless logic to simulate blocks coordinates (will be replaced in the future)
-          let x = 0;
-          let y = 0;
-          for (const block of this.graph.blockMap) {
-              block.x = x;
-              block.y = y;
-              y += block.getHeight(showProperties) + 50;
-              if (y > 1800) {
-                  x += block.getWidth() * 1.5;
-                  y = 0;
+      fullRebuild(showProperties) {
+          this.startTime = performance.now();
+          this.maxRank = 0;
+          this.visitOrderWithinRank = 0;
+          const blocks = this.initBlocks();
+          this.initWorkList(blocks);
+          let visited = new Array();
+          blocks.forEach((block) => this.dfsFindRankLate(visited, block));
+          visited = new Array();
+          blocks.forEach((block) => this.dfsRankOrder(visited, block));
+          const rankSets = this.getRankSets(showProperties);
+          this.placeBlocks(rankSets, showProperties);
+          this.calculateBackEdgeNumbers();
+          this.graph.graphPhase.stateType = GraphStateType$1.Cached;
+      }
+      cachedRebuild() {
+          this.calculateBackEdgeNumbers();
+      }
+      initBlocks() {
+          // First determine the set of blocks that have no inputs. Those are the
+          // basis for top-down DFS to determine rank and block placement.
+          const blocksHasNoInputs = new Array();
+          for (const block of this.graph.blocks()) {
+              blocksHasNoInputs[block.id] = true;
+          }
+          for (const edge of this.graph.blocksEdges()) {
+              blocksHasNoInputs[edge.target.id] = false;
+          }
+          // Finialize the list of blocks.
+          const blocks = new Array();
+          const visited = new Array();
+          for (const block of this.graph.blocks()) {
+              if (blocksHasNoInputs[block.id]) {
+                  blocks.push(block);
+              }
+              visited[block.id] = false;
+              block.rank = 0;
+              block.visitOrderWithinRank = 0;
+              block.outputApproach = MINIMUM_NODE_OUTPUT_APPROACH;
+          }
+          this.trace("layoutGraph init");
+          return blocks;
+      }
+      initWorkList(blocks) {
+          const workList = blocks.slice();
+          while (workList.length != 0) {
+              const block = workList.pop();
+              let changed = false;
+              if (block.rank == MAX_RANK_SENTINEL) {
+                  block.rank = 1;
+                  changed = true;
+              }
+              let begin = 0;
+              let end = block.inputs.length;
+              if (block.type == TurboshaftGraphBlockType.Merge && block.inputs.length > 0) {
+                  begin = block.inputs.length - 1;
+              }
+              else if (block.hasBackEdges()) {
+                  end = 1;
+              }
+              for (let l = begin; l < end; ++l) {
+                  const input = block.inputs[l].source;
+                  if (input.visible && input.rank >= block.rank) {
+                      block.rank = input.rank + 1;
+                      changed = true;
+                  }
+              }
+              if (changed) {
+                  const hasBackEdges = block.hasBackEdges();
+                  for (let l = block.outputs.length - 1; l >= 0; --l) {
+                      if (hasBackEdges && (l != 0)) {
+                          workList.unshift(block.outputs[l].target);
+                      }
+                      else {
+                          workList.push(block.outputs[l].target);
+                      }
+                  }
+              }
+              this.maxRank = Math.max(block.rank, this.maxRank);
+              this.trace("layoutGraph work list");
+          }
+      }
+      dfsFindRankLate(visited, block) {
+          if (visited[block.id])
+              return;
+          visited[block.id] = true;
+          const originalRank = block.rank;
+          let newRank = block.rank;
+          let isFirstInput = true;
+          for (const outputEdge of block.outputs) {
+              const output = outputEdge.target;
+              this.dfsFindRankLate(visited, output);
+              const outputRank = output.rank;
+              if (output.visible && (isFirstInput || outputRank <= newRank) &&
+                  (outputRank > originalRank)) {
+                  newRank = outputRank - 1;
+              }
+              isFirstInput = false;
+          }
+          if (block.hasBackEdges()) {
+              block.rank = newRank;
+          }
+      }
+      dfsRankOrder(visited, block) {
+          if (visited[block.id])
+              return;
+          visited[block.id] = true;
+          for (const outputEdge of block.outputs) {
+              if (outputEdge.isVisible()) {
+                  const output = outputEdge.target;
+                  this.dfsRankOrder(visited, output);
               }
           }
+          if (block.visitOrderWithinRank == 0) {
+              block.visitOrderWithinRank = ++this.visitOrderWithinRank;
+          }
+      }
+      getRankSets(showProperties) {
+          const rankMaxBlockHeight = new Array();
+          for (const block of this.graph.blocks()) {
+              rankMaxBlockHeight[block.rank] = Math.max(rankMaxBlockHeight[block.rank] ?? 0, block.getHeight(showProperties));
+          }
+          const rankSets = new Array();
+          for (const block of this.graph.blocks()) {
+              block.y = rankMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
+                  return accumulator + current;
+              }, block.rank * (TURBOSHAFT_BLOCK_ROW_SEPARATION + 2 * DEFAULT_NODE_BUBBLE_RADIUS));
+              if (block.visible) {
+                  if (!rankSets[block.rank]) {
+                      rankSets[block.rank] = new Array(block);
+                  }
+                  else {
+                      rankSets[block.rank].push(block);
+                  }
+              }
+          }
+          return rankSets;
+      }
+      placeBlocks(rankSets, showProperties) {
+          // Iterate backwards from highest to lowest rank, placing blocks so that they
+          // spread out from the "center" as much as possible while still being
+          // compact and not overlapping live input lines.
+          rankSets.reverse().forEach((rankSet) => {
+              for (const block of rankSet) {
+                  this.layoutOccupation.clearOutputs(block, showProperties);
+              }
+              this.traceOccupation("After clearing outputs");
+              let placedCount = 0;
+              rankSet = rankSet.sort((a, b) => a.compare(b));
+              for (const block of rankSet) {
+                  if (block.visible) {
+                      block.x = this.layoutOccupation.occupy(block);
+                      const blockWidth = block.getWidth();
+                      this.trace(`Block ${block.id} is placed between [${block.x}, ${block.x + blockWidth})`);
+                      const staggeredFlooredI = Math.floor(placedCount++ % 3);
+                      const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
+                      block.outputApproach += delta;
+                  }
+                  else {
+                      block.x = 0;
+                  }
+              }
+              this.traceOccupation("Before clearing blocks");
+              this.layoutOccupation.clearOccupied();
+              this.traceOccupation("After clearing blocks");
+              for (const block of rankSet) {
+                  this.layoutOccupation.occupyInputs(block, showProperties);
+              }
+              this.traceOccupation("After occupying inputs and determining bounding box");
+          });
+      }
+      calculateBackEdgeNumbers() {
+          this.graph.maxBackEdgeNumber = 0;
+          for (const edge of this.graph.blocksEdges()) {
+              if (edge.isBackEdge()) {
+                  edge.backEdgeNumber = ++this.graph.maxBackEdgeNumber;
+              }
+              else {
+                  edge.backEdgeNumber = 0;
+              }
+          }
+      }
+      trace(message) {
+      }
+      traceOccupation(message) {
       }
   }
 
@@ -13202,25 +13427,35 @@
   class TurboshaftGraphView extends MovableView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
-          this.state.selection = new SelectionMap((b) => b.identifier());
-          this.visibleBlocks = this.graphElement.append("g");
+          this.state.selection = new SelectionMap(node => node.identifier());
+          this.state.blocksSelection = new SelectionMap(blockId => String(blockId));
+          this.nodesSelectionHandler = this.initializeNodesSelectionHandler();
+          this.blocksSelectionHandler = this.initializeBlocksSelectionHandler();
+          this.svg.on("click", () => {
+              this.nodesSelectionHandler.clear();
+              this.blocksSelectionHandler.clear();
+          });
           this.visibleEdges = this.graphElement.append("g");
+          this.visibleBlocks = this.graphElement.append("g");
           this.visibleNodes = this.graphElement.append("g");
           this.blockDrag = drag()
               .on("drag", (block) => {
               block.x += event.dx;
               block.y += event.dy;
-              this.updateVisibleBlocks();
+              this.updateBlockLocation(block);
           });
       }
       initializeContent(data, rememberedSelection) {
           this.show();
           this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
           this.addImgInput("show-all", "show all blocks", partial(this.showAllBlocksAction, this));
-          this.addToggleImgInput("toggle-properties", "toggle propetries", this.state.showProperties, partial(this.togglePropertiesAction, this));
+          this.addToggleImgInput("toggle-properties", "toggle properties", this.state.showProperties, partial(this.togglePropertiesAction, this));
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
+          this.addLayoutTypeSelect();
           this.phaseName = data.name;
           this.createGraph(data, rememberedSelection);
+          this.broker.addNodeHandler(this.nodesSelectionHandler);
+          this.broker.addBlockHandler(this.blocksSelectionHandler);
           this.viewWholeGraph();
           if (this.state.cacheLayout && data.transform) {
               this.svg.call(this.panZoom.transform, identity
@@ -13231,8 +13466,8 @@
       updateGraphVisibility() {
           if (!this.graph)
               return;
-          this.updateVisibleBlocks();
-          this.visibleNodes = selectAll(".turboshaft-node");
+          this.updateVisibleBlocksAndEdges();
+          this.visibleNodes = this.visibleBlocks.selectAll(".turboshaft-node");
           this.visibleBubbles = selectAll("circle");
           this.updateInlineNodes();
           this.updateInputAndOutputBubbles();
@@ -13240,6 +13475,74 @@
       svgKeyDown() {
       }
       searchInputAction(searchInput, e, onlyVisible) {
+      }
+      hide() {
+          this.broker.deleteBlockHandler(this.blocksSelectionHandler);
+          super.hide();
+      }
+      initializeNodesSelectionHandler() {
+          const view = this;
+          return {
+              select: function (selectedNodes, selected) {
+                  view.state.selection.select(selectedNodes, selected);
+                  view.updateGraphVisibility();
+              },
+              clear: function () {
+                  view.state.selection.clear();
+                  view.broker.broadcastClear(this);
+                  view.updateGraphVisibility();
+              },
+              brokeredNodeSelect: function (nodeIds, selected) {
+                  const selection = view.graph.nodes(node => nodeIds.has(node.identifier()));
+                  view.state.selection.select(selection, selected);
+                  view.updateGraphVisibility();
+              },
+              brokeredClear: function () {
+                  view.state.selection.clear();
+                  view.updateGraphVisibility();
+              }
+          };
+      }
+      initializeBlocksSelectionHandler() {
+          const view = this;
+          return {
+              select: function (selectedBlocks, selected) {
+                  view.state.blocksSelection.select(selectedBlocks, selected);
+                  view.broker.broadcastBlockSelect(this, selectedBlocks, selected);
+                  view.updateGraphVisibility();
+              },
+              clear: function () {
+                  view.state.blocksSelection.clear();
+                  view.broker.broadcastClear(this);
+                  view.updateGraphVisibility();
+              },
+              brokeredBlockSelect: function (blockIds, selected) {
+                  view.state.blocksSelection.select(blockIds, selected);
+                  view.updateGraphVisibility();
+              },
+              brokeredClear: function () {
+                  view.state.blocksSelection.clear();
+                  view.updateGraphVisibility();
+              },
+          };
+      }
+      addLayoutTypeSelect() {
+          const view = this;
+          const select = document.createElement("select");
+          select.id = "layout-type-select";
+          select.className = "graph-toolbox-item";
+          const keys = Object.keys(TurboshaftLayoutType).filter(t => isNaN(Number(t)));
+          for (const key of keys) {
+              const option = document.createElement("option");
+              option.text = key;
+              select.add(option);
+          }
+          select.selectedIndex = this.state.turboshaftLayoutType;
+          select.onchange = function () {
+              view.state.turboshaftLayoutType = this.selectedIndex;
+              view.layoutAction(view);
+          };
+          this.toolbox.appendChild(select);
       }
       createGraph(data, selection) {
           this.graph = new TurboshaftGraph(data);
@@ -13257,17 +13560,54 @@
       }
       layoutGraph() {
           const layoutMessage = this.graph.graphPhase.stateType == GraphStateType.Cached
-              ? "Layout graph from cache"
-              : "Layout graph";
+              ? "Layout turboshaft graph from cache"
+              : "Layout turboshaft graph";
           console.time(layoutMessage);
+          this.graph.graphPhase.layoutType = this.state.turboshaftLayoutType;
           this.graphLayout.rebuild(this.state.showProperties);
           const extent = this.graph.redetermineGraphBoundingBox(this.state.showProperties);
           this.panZoom.translateExtent(extent);
           this.minScale(this.graph.width, this.graph.height);
           console.timeEnd(layoutMessage);
       }
-      updateVisibleBlocks() {
+      updateBlockLocation(block) {
+          this.visibleBlocks
+              .selectAll(".turboshaft-block")
+              .filter(b => b == block)
+              .attr("transform", block => `translate(${block.x},${block.y})`);
+          this.visibleEdges
+              .selectAll("path")
+              .filter(edge => edge.target === block || edge.source === block)
+              .attr("d", edge => edge.generatePath(this.graph, this.state.showProperties));
+      }
+      updateVisibleBlocksAndEdges() {
           const view = this;
+          // select existing edges
+          const filteredEdges = [
+              ...this.graph.blocksEdges(edge => this.graph.isRendered()
+                  && edge.source.visible && edge.target.visible)
+          ];
+          const selEdges = view.visibleEdges
+              .selectAll("path")
+              .data(filteredEdges, edge => edge.toString());
+          // remove old edges
+          selEdges.exit().remove();
+          // add new edges
+          const newEdges = selEdges
+              .enter()
+              .append("path")
+              .style("marker-end", "url(#end-arrow)")
+              .attr("id", edge => `e,${edge.toString()}`)
+              .on("click", edge => {
+              event.stopPropagation();
+              if (!event.shiftKey) {
+                  view.blocksSelectionHandler.clear();
+              }
+              view.blocksSelectionHandler.select([edge.source.identifier(), edge.target.identifier()], true);
+          })
+              .attr("adjacentToHover", "false");
+          const newAndOldEdges = newEdges.merge(selEdges);
+          newAndOldEdges.classed("hidden", edge => !edge.isVisible());
           // select existing blocks
           const filteredBlocks = [
               ...this.graph.blocks(block => this.graph.isRendered() && block.visible)
@@ -13285,11 +13625,34 @@
               .classed("block", b => b.type == TurboshaftGraphBlockType.Block)
               .classed("merge", b => b.type == TurboshaftGraphBlockType.Merge)
               .classed("loop", b => b.type == TurboshaftGraphBlockType.Loop)
+              .on("mouseenter", (block) => {
+              const visibleEdges = view.visibleEdges
+                  .selectAll("path");
+              const adjInputEdges = visibleEdges.filter(edge => edge.target === block);
+              const adjOutputEdges = visibleEdges.filter(edge => edge.source === block);
+              adjInputEdges.classed("input", true);
+              adjOutputEdges.classed("output", true);
+              view.updateGraphVisibility();
+          })
+              .on("mouseleave", (block) => {
+              const visibleEdges = view.visibleEdges
+                  .selectAll("path");
+              const adjEdges = visibleEdges
+                  .filter(edge => edge.target === block || edge.source === block);
+              adjEdges.classed("input output", false);
+              view.updateGraphVisibility();
+          })
+              .on("click", (block) => {
+              if (!event.shiftKey)
+                  view.blocksSelectionHandler.clear();
+              view.blocksSelectionHandler.select([block.identifier()], undefined);
+              event.stopPropagation();
+          })
               .call(view.blockDrag);
           newBlocks
               .append("rect")
-              .attr("rx", 35)
-              .attr("ry", 35)
+              .attr("rx", TURBOSHAFT_BLOCK_BORDER_RADIUS)
+              .attr("ry", TURBOSHAFT_BLOCK_BORDER_RADIUS)
               .attr("width", block => block.getWidth())
               .attr("height", block => block.getHeight(view.state.showProperties));
           newBlocks.each(function (block) {
@@ -13305,10 +13668,11 @@
               view.appendInputAndOutputBubbles(svg, block);
           });
           newBlocks.merge(selBlocks)
-              .classed("selected", block => view.state.selection.isSelected(block))
+              .classed("selected", block => view.state.blocksSelection.isSelected(block.identifier()))
               .attr("transform", block => `translate(${block.x},${block.y})`)
               .select("rect")
               .attr("height", block => block.getHeight(view.state.showProperties));
+          newAndOldEdges.attr("d", edge => edge.generatePath(this.graph, view.state.showProperties));
       }
       appendInlineNodes(svg, block) {
           const state = this.state;
@@ -13322,32 +13686,55 @@
           const newNodes = selNodes
               .enter()
               .append("g")
-              .classed("turboshaft-node", true)
-              .classed("inline-node", true);
+              .classed("turboshaft-node inline-node", true);
           let nodeY = block.labelBox.height;
           const blockWidth = block.getWidth();
+          const view = this;
           newNodes.each(function (node) {
               const nodeSvg = select(this);
               nodeSvg
                   .attr("id", node.id)
                   .append("text")
-                  .attr("dx", 25)
+                  .attr("dx", TURBOSHAFT_NODE_X_INDENT)
                   .classed("inline-node-label", true)
                   .attr("dy", nodeY)
                   .append("tspan")
-                  .text(`${node.getInlineLabel()}[${node.getPropertiesTypeAbbreviation()}]`);
+                  .text(node.displayLabel)
+                  .append("title")
+                  .text(node.getTitle());
+              nodeSvg
+                  .on("mouseenter", (node) => {
+                  view.visibleNodes.data(node.inputs.map(edge => edge.source), source => source.toString())
+                      .classed("input", true);
+                  view.visibleNodes.data(node.outputs.map(edge => edge.target), target => target.toString())
+                      .classed("output", true);
+                  view.updateGraphVisibility();
+              })
+                  .on("mouseleave", (node) => {
+                  const inOutNodes = node.inputs.map(edge => edge.source)
+                      .concat(node.outputs.map(edge => edge.target));
+                  view.visibleNodes.data(inOutNodes, inOut => inOut.toString())
+                      .classed("input output", false);
+                  view.updateGraphVisibility();
+              })
+                  .on("click", (node) => {
+                  if (!event.shiftKey)
+                      view.nodesSelectionHandler.clear();
+                  view.nodesSelectionHandler.select([node], undefined);
+                  event.stopPropagation();
+              });
               nodeY += node.labelBox.height;
               if (node.properties) {
                   nodeSvg
                       .append("text")
-                      .attr("dx", 25)
+                      .attr("dx", TURBOSHAFT_NODE_X_INDENT)
                       .classed("inline-node-properties", true)
                       .attr("dy", nodeY)
                       .append("tspan")
                       .text(node.getReadableProperties(blockWidth))
                       .append("title")
                       .text(node.properties);
-                  nodeY += node.labelBox.height;
+                  nodeY += node.propertiesBox.height;
               }
           });
           newNodes.merge(selNodes)
@@ -13396,7 +13783,7 @@
               svg.append("circle")
                   .classed("filledBubbleStyle", block.inputs[i].isVisible())
                   .classed("bubbleStyle", !block.inputs[i].isVisible())
-                  .attr("id", `ib,${block.inputs[i].toString(i)}`)
+                  .attr("id", `ib,${block.inputs[i].toString()}`)
                   .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
                   .attr("transform", `translate(${x},${y})`);
           }
@@ -13429,10 +13816,13 @@
               const nodeY = state.showProperties && node.properties
                   ? totalHeight - node.labelBox.height
                   : totalHeight;
-              nodeSvg.select(".inline-node-label").attr("dy", nodeY);
-              nodeSvg.select(".inline-node-properties").attr("visibility", state.showProperties
-                  ? "visible"
-                  : "hidden");
+              nodeSvg
+                  .select(".inline-node-label")
+                  .classed("selected", node => state.selection.isSelected(node))
+                  .attr("dy", nodeY);
+              nodeSvg
+                  .select(".inline-node-properties")
+                  .attr("visibility", state.showProperties ? "visible" : "hidden");
           });
       }
       // Actions (handlers of toolbox menu and hotkeys events)
@@ -13662,7 +14052,7 @@
                   view.updateSelection();
               },
           };
-          view.selection = new SelectionMap((sp) => sp.toString());
+          view.selection = new SelectionMap((gp) => gp.toString());
           broker.addSourcePositionHandler(selectionHandler);
           this.selectionHandler = selectionHandler;
           this.initializeCode();
