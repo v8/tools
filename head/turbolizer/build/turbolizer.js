@@ -2,8 +2,6 @@
   'use strict';
 
   // Copyright 2014 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
   const MAX_RANK_SENTINEL = 0;
   const BEZIER_CONSTANT = 0.3;
   const TURBOSHAFT_NODE_X_INDENT = 25;
@@ -22,7 +20,15 @@
   const RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
   const RANGES_PANE_WIDTH_DEFAULT_PERCENT = 1 / 2;
   const RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
+  const ROW_GROUP_SIZE = 20;
+  const POSITIONS_PER_INSTRUCTION = 4;
+  const FIXED_REGISTER_LABEL_WIDTH = 6;
+  const SESSION_STORAGE_PREFIX = "ranges-setting-";
+  const INTERVAL_TEXT_FOR_NONE = "none";
+  const INTERVAL_TEXT_FOR_CONST = "const";
+  const INTERVAL_TEXT_FOR_STACK = "stack:";
   const MULTIVIEW_ID = "multiview";
+  const RESIZER_RANGES_ID = "resizer-ranges";
   const SHOW_HIDE_RANGES_ID = "show-hide-ranges";
   const SHOW_HIDE_SOURCE_ID = "show-hide-source";
   const SHOW_HIDE_DISASSEMBLY_ID = "show-hide-disassembly";
@@ -31,6 +37,8 @@
   const SOURCE_EXPAND_ID = "source-expand";
   const INTERMEDIATE_PANE_ID = "middle";
   const GRAPH_PANE_ID = "graph";
+  const SCHEDULE_PANE_ID = "schedule";
+  const SEQUENCE_PANE_ID = "sequence";
   const GENERATED_PANE_ID = "right";
   const DISASSEMBLY_PANE_ID = "disassembly";
   const DISASSEMBLY_COLLAPSE_ID = "disassembly-shrink";
@@ -727,6 +735,19 @@
       getInstructionRangeForBlock(blockId) {
           return this.blockIdToInstructionRange[blockId] ?? [-1, -1];
       }
+      getInstructionMarker(start, end) {
+          if (start != end) {
+              return ["&#8857;", `This node generated instructions in range [${start},${end}). ` +
+                      `This is currently unreliable for constants.`];
+          }
+          if (start != -1) {
+              return ["&#183;", `The instruction selector did not generate instructions ` +
+                      `for this node, but processed the node at instruction ${start}. ` +
+                      `This usually means that this node was folded into another node; ` +
+                      `the highlighted machine code is a guess.`];
+          }
+          return ["", `This not is not in the final schedule.`];
+      }
       getInstructionKindForPCOffset(offset) {
           if (this.codeOffsetsInfo) {
               if (offset >= this.codeOffsetsInfo.deoptimizationExits) {
@@ -870,47 +891,39 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class SchedulePhase extends Phase {
-      constructor(name, data) {
+      constructor(name, dataJson) {
           super(name, PhaseType.Schedule);
           this.createNode = match => {
-              let inputs = [];
+              let inputs = new Array();
               if (match.groups.args) {
-                  const nodeIdsString = match.groups.args.replace(/\s/g, '');
-                  const nodeIdStrings = nodeIdsString.split(',');
+                  const nodeIdsString = match.groups.args.replace(/\s/g, "");
+                  const nodeIdStrings = nodeIdsString.split(",");
                   inputs = nodeIdStrings.map(n => Number.parseInt(n, 10));
               }
-              const node = {
-                  id: Number.parseInt(match.groups.id, 10),
-                  label: match.groups.label,
-                  inputs: inputs
-              };
+              const nodeId = Number.parseInt(match.groups.id, 10);
+              const node = new ScheduleNode(nodeId, match.groups.label, inputs);
               if (match.groups.blocks) {
-                  const nodeIdsString = match.groups.blocks.replace(/\s/g, '').replace(/B/g, '');
-                  const nodeIdStrings = nodeIdsString.split(',');
-                  this.schedule.currentBlock.succ = nodeIdStrings.map(n => Number.parseInt(n, 10));
+                  const nodeIdsString = match.groups.blocks.replace(/\s/g, "").replace(/B/g, "");
+                  const nodeIdStrings = nodeIdsString.split(",");
+                  this.data.lastBlock().successors = nodeIdStrings.map(n => Number.parseInt(n, 10));
               }
-              this.schedule.nodes[node.id] = node;
-              this.schedule.currentBlock.nodes.push(node);
+              this.data.nodes[node.id] = node;
+              this.data.lastBlock().nodes.push(node);
           };
           this.createBlock = match => {
-              let predecessors = [];
+              let predecessors = new Array();
               if (match.groups.in) {
-                  const blockIdsString = match.groups.in.replace(/\s/g, '').replace(/B/g, '');
-                  const blockIdStrings = blockIdsString.split(',');
+                  const blockIdsString = match.groups.in.replace(/\s/g, "").replace(/B/g, "");
+                  const blockIdStrings = blockIdsString.split(",");
                   predecessors = blockIdStrings.map(n => Number.parseInt(n, 10));
               }
-              const block = {
-                  id: Number.parseInt(match.groups.id, 10),
-                  isDeferred: match.groups.deferred != undefined,
-                  pred: predecessors.sort(),
-                  succ: [],
-                  nodes: []
-              };
-              this.schedule.blocks[block.id] = block;
-              this.schedule.currentBlock = block;
+              const blockId = Number.parseInt(match.groups.id, 10);
+              const block = new ScheduleBlock(blockId, match.groups.deferred !== undefined, predecessors.sort());
+              this.data.blocks[block.id] = block;
           };
           this.setGotoSuccessor = match => {
-              this.schedule.currentBlock.succ = [Number.parseInt(match.groups.successor.replace(/\s/g, ''), 10)];
+              this.data.lastBlock().successors =
+                  [Number.parseInt(match.groups.successor.replace(/\s/g, ""), 10)];
           };
           this.parsingRules = [
               {
@@ -930,16 +943,11 @@
                   process: this.setGotoSuccessor
               }
           ];
-          this.data = data;
-          this.schedule = {
-              currentBlock: undefined,
-              blocks: new Array(),
-              nodes: new Array()
-          };
-          this.parseScheduleFromJSON(data);
+          this.data = new ScheduleData();
+          this.parseScheduleFromJSON(dataJson);
       }
-      parseScheduleFromJSON(scheduleDataJson) {
-          const lines = scheduleDataJson.split(/[\n]/);
+      parseScheduleFromJSON(dataJson) {
+          const lines = dataJson.split(/[\n]/);
           nextLine: for (const line of lines) {
               for (const rule of this.parsingRules) {
                   for (const lineRegexp of rule.lineRegexps) {
@@ -954,13 +962,261 @@
           }
       }
   }
+  class ScheduleNode {
+      constructor(id, label, inputs) {
+          this.id = id;
+          this.label = label;
+          this.inputs = inputs;
+      }
+      toString() {
+          return `${this.id}: ${this.label}(${this.inputs.join(", ")})`;
+      }
+  }
+  class ScheduleBlock {
+      constructor(id, deferred, predecessors) {
+          this.id = id;
+          this.deferred = deferred;
+          this.predecessors = predecessors;
+          this.successors = new Array();
+          this.nodes = new Array();
+      }
+  }
+  class ScheduleData {
+      constructor() {
+          this.nodes = new Array();
+          this.blocks = new Array();
+      }
+      lastBlock() {
+          if (this.blocks.length == 0)
+              return null;
+          return this.blocks[this.blocks.length - 1];
+      }
+  }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class SequencePhase extends Phase {
-      constructor(name, blocks, registerAllocation) {
+      constructor(name, blocksJSON, registerAllocationJSON) {
           super(name, PhaseType.Sequence);
-          this.blocks = blocks;
-          this.registerAllocation = registerAllocation;
+          this.parseBlocksFromJSON(blocksJSON);
+          this.parseRegisterAllocationFromJSON(registerAllocationJSON);
+      }
+      getNumInstructions() {
+          const lastBlock = this.lastBlock();
+          return lastBlock.instructions[lastBlock.instructions.length - 1].id + 1;
+      }
+      lastBlock() {
+          if (this.blocks.length == 0)
+              return null;
+          return this.blocks[this.blocks.length - 1];
+      }
+      parseBlocksFromJSON(blocksJSON) {
+          if (!blocksJSON || blocksJSON.length == 0)
+              return;
+          this.blocks = new Array();
+          for (const block of blocksJSON) {
+              const newBlock = new SequenceBlock(block.id, block.deferred, block.loopHeader, block.loopEnd, block.predecessors, block.successors);
+              this.blocks.push(newBlock);
+              this.parseBlockInstructions(block.instructions);
+              this.parseBlockPhis(block.phis);
+          }
+      }
+      parseBlockInstructions(instructionsJSON) {
+          if (!instructionsJSON || instructionsJSON.length == 0)
+              return;
+          for (const instruction of instructionsJSON) {
+              const newInstruction = new SequenceBlockInstruction(instruction.id, instruction.opcode, instruction.flags, instruction.temps);
+              for (const input of instruction.inputs) {
+                  newInstruction.inputs.push(this.parseOperandFromJSON(input));
+              }
+              for (const output of instruction.outputs) {
+                  newInstruction.outputs.push(this.parseOperandFromJSON(output));
+              }
+              for (const gap of instruction.gaps) {
+                  const newGap = new Array();
+                  for (const [destination, source] of gap) {
+                      newGap.push([this.parseOperandFromJSON(destination), this.parseOperandFromJSON(source)]);
+                  }
+                  newInstruction.gaps.push(newGap);
+              }
+              this.lastBlock().instructions.push(newInstruction);
+          }
+      }
+      parseBlockPhis(phisJSON) {
+          if (!phisJSON || phisJSON.length == 0)
+              return;
+          for (const phi of phisJSON) {
+              const newBlockPhi = new SequenceBlockPhi(phi.operands, this.parseOperandFromJSON(phi.output));
+              this.lastBlock().phis.push(newBlockPhi);
+          }
+      }
+      parseRegisterAllocationFromJSON(registerAllocationJSON) {
+          if (!registerAllocationJSON)
+              return;
+          this.registerAllocation = new RegisterAllocation();
+          this.registerAllocation.fixedDoubleLiveRanges =
+              this.parseRangesFromJSON(registerAllocationJSON.fixedDoubleLiveRanges);
+          this.registerAllocation.fixedLiveRanges =
+              this.parseRangesFromJSON(registerAllocationJSON.fixedLiveRanges);
+          this.registerAllocation.liveRanges =
+              this.parseRangesFromJSON(registerAllocationJSON.liveRanges);
+      }
+      parseRangesFromJSON(rangesJSON) {
+          if (!rangesJSON)
+              return null;
+          const parsedRanges = new Array();
+          for (const [idx, range] of Object.entries(rangesJSON)) {
+              const newRange = new Range(range.isDeferred);
+              for (const childRange of range.childRanges) {
+                  let operand = null;
+                  if (childRange.op) {
+                      if (typeof childRange.op === "string") {
+                          operand = childRange.op;
+                      }
+                      else {
+                          operand = this.parseOperandFromJSON(childRange.op);
+                      }
+                  }
+                  const newChildRange = new ChildRange(childRange.id, childRange.type, operand, childRange.intervals, childRange.uses);
+                  newRange.childRanges.push(newChildRange);
+              }
+              parsedRanges[idx] = newRange;
+          }
+          return parsedRanges;
+      }
+      parseOperandFromJSON(operandJSON) {
+          return new SequenceBlockOperand(operandJSON.type, operandJSON.text, operandJSON.tooltip);
+      }
+  }
+  class SequenceBlock {
+      constructor(id, deferred, loopHeader, loopEnd, predecessors, successors) {
+          this.id = id;
+          this.deferred = deferred;
+          this.loopHeader = loopHeader;
+          this.loopEnd = loopEnd;
+          this.predecessors = predecessors;
+          this.successors = successors;
+          this.instructions = new Array();
+          this.phis = new Array();
+      }
+  }
+  class SequenceBlockInstruction {
+      constructor(id, opcode, flags, temps) {
+          this.id = id;
+          this.opcode = opcode;
+          this.flags = flags;
+          this.inputs = new Array();
+          this.outputs = new Array();
+          this.gaps = new Array();
+          this.temps = temps;
+      }
+  }
+  class SequenceBlockPhi {
+      constructor(operands, output) {
+          this.operands = operands;
+          this.output = output;
+      }
+  }
+  class RegisterAllocation {
+      constructor() {
+          this.fixedDoubleLiveRanges = new Array();
+          this.fixedLiveRanges = new Array();
+          this.liveRanges = new Array();
+      }
+      forEachFixedRange(row, callback) {
+          const forEachRangeInMap = (rangeMap) => {
+              // There are two fixed live ranges for each register, one for normal, another for deferred.
+              // These are combined into a single row.
+              const fixedRegisterMap = new Map();
+              for (const [registerIndex, range] of rangeMap.entries()) {
+                  if (!range)
+                      continue;
+                  const registerName = range.fixedRegisterName();
+                  if (fixedRegisterMap.has(registerName)) {
+                      const entry = fixedRegisterMap.get(registerName);
+                      entry.ranges[1] = range;
+                      // Only use the deferred register index if no normal index exists.
+                      if (!range.isDeferred) {
+                          entry.registerIndex = registerIndex;
+                      }
+                  }
+                  else {
+                      fixedRegisterMap.set(registerName, { registerIndex, ranges: [range, undefined] });
+                  }
+              }
+              // Sort the registers by number.
+              const sortedMap = new Map([...fixedRegisterMap.entries()].sort(([nameA, _], [nameB, __]) => {
+                  if (nameA.length > nameB.length) {
+                      return 1;
+                  }
+                  else if (nameA.length < nameB.length) {
+                      return -1;
+                  }
+                  else if (nameA > nameB) {
+                      return 1;
+                  }
+                  else if (nameA < nameB) {
+                      return -1;
+                  }
+                  return 0;
+              }));
+              for (const [registerName, { ranges, registerIndex }] of sortedMap) {
+                  callback(-registerIndex - 1, row, registerName, ranges);
+                  ++row;
+              }
+          };
+          forEachRangeInMap(this.fixedLiveRanges);
+          forEachRangeInMap(this.fixedDoubleLiveRanges);
+          return row;
+      }
+  }
+  class Range {
+      constructor(isDeferred) {
+          this.isDeferred = isDeferred;
+          this.childRanges = new Array();
+      }
+      fixedRegisterName() {
+          const operation = this.childRanges[0].op;
+          if (operation instanceof SequenceBlockOperand) {
+              return operation.text;
+          }
+          return operation;
+      }
+  }
+  class ChildRange {
+      constructor(id, type, op, intervals, uses) {
+          this.id = id;
+          this.type = type;
+          this.op = op;
+          this.intervals = intervals;
+          this.uses = uses;
+      }
+      getTooltip(registerIndex) {
+          switch (this.type) {
+              case "none":
+                  return INTERVAL_TEXT_FOR_NONE;
+              case "spill_range":
+                  return `${INTERVAL_TEXT_FOR_STACK}${registerIndex}`;
+              default:
+                  if (this.op instanceof SequenceBlockOperand && this.op.type == "constant") {
+                      return INTERVAL_TEXT_FOR_CONST;
+                  }
+                  else {
+                      if (this.op instanceof SequenceBlockOperand && this.op.text) {
+                          return this.op.text;
+                      }
+                      else if (typeof this.op === "string") {
+                          return this.op;
+                      }
+                  }
+          }
+          return "";
+      }
+  }
+  class SequenceBlockOperand {
+      constructor(type, text, tooltip) {
+          this.type = type;
+          this.text = text;
+          this.tooltip = tooltip;
       }
   }
 
@@ -1726,7 +1982,7 @@
       }
       initializeContent(genericPhase, _) {
           this.clearText();
-          if (!(genericPhase instanceof SequencePhase)) {
+          if (genericPhase instanceof DisassemblyPhase) {
               this.processText(genericPhase.data);
           }
           this.show();
@@ -2227,27 +2483,27 @@
       }
       get numberStyle() {
           return {
-              css: ['instruction-binary', 'lit']
+              css: ["instruction-binary", "lit"]
           };
       }
       get opcodeStyle() {
           return {
-              css: 'kwd'
+              css: "kwd"
           };
       }
       get unclassifiedStyle() {
           return {
-              css: 'com'
+              css: "com"
           };
       }
       get commentStyle() {
           return {
-              css: 'com'
+              css: "com"
           };
       }
       get sourcePositionHeaderStyle() {
           return {
-              css: 'com'
+              css: "com"
           };
       }
       get blockHeaderStyle() {
@@ -11848,24 +12104,26 @@
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   class ScheduleView extends TextView {
-      constructor(parentId, broker) {
-          super(parentId, broker);
+      constructor(parent, broker) {
+          super(parent, broker);
           this.sourceResolver = broker.sourceResolver;
       }
       createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "schedule");
+          const pane = document.createElement("div");
+          pane.setAttribute("id", SCHEDULE_PANE_ID);
           pane.classList.add("scrollable");
           pane.setAttribute("tabindex", "0");
           return pane;
       }
-      attachSelection(adaptedSelection) {
-          if (!(adaptedSelection instanceof SelectionStorage))
-              return;
-          this.nodeSelectionHandler.clear();
-          this.blockSelectionHandler.clear();
-          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
-          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
+      initializeContent(schedule, rememberedSelection) {
+          this.divNode.innerHTML = "";
+          this.schedule = schedule;
+          this.addBlocks(schedule.data.blocks);
+          this.show();
+          if (rememberedSelection) {
+              const adaptedSelection = this.adaptSelection(rememberedSelection);
+              this.attachSelection(adaptedSelection);
+          }
       }
       detachSelection() {
           return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
@@ -11877,148 +12135,127 @@
               selection.adaptedBocks.add(key);
           return selection;
       }
-      initializeContent(schedule, rememberedSelection) {
-          this.divNode.innerHTML = "";
-          this.schedule = schedule;
-          this.addBlocks(schedule.schedule.blocks);
-          this.show();
-          if (rememberedSelection) {
-              const adaptedSelection = this.adaptSelection(rememberedSelection);
-              this.attachSelection(adaptedSelection);
-          }
-      }
-      createElementFromString(htmlString) {
-          const div = document.createElement('div');
-          div.innerHTML = htmlString.trim();
-          return div.firstChild;
-      }
-      elementForBlock(block) {
-          const view = this;
-          function createElement(tag, cls, content) {
-              const el = document.createElement(tag);
-              el.className = cls;
-              if (content != undefined)
-                  el.innerHTML = content;
-              return el;
-          }
-          function mkNodeLinkHandler(nodeId) {
-              return function (e) {
-                  e.stopPropagation();
-                  if (!e.shiftKey) {
-                      view.nodeSelectionHandler.clear();
-                  }
-                  view.nodeSelectionHandler.select([nodeId], true);
-              };
-          }
-          function getMarker(start, end) {
-              if (start != end) {
-                  return ["&#8857;", `This node generated instructions in range [${start},${end}). ` +
-                          `This is currently unreliable for constants.`];
-              }
-              if (start != -1) {
-                  return ["&#183;", `The instruction selector did not generate instructions ` +
-                          `for this node, but processed the node at instruction ${start}. ` +
-                          `This usually means that this node was folded into another node; ` +
-                          `the highlighted machine code is a guess.`];
-              }
-              return ["", `This not is not in the final schedule.`];
-          }
-          function createElementForNode(node) {
-              const nodeEl = createElement("div", "node");
-              const [start, end] = view.sourceResolver.instructionsPhase.getInstruction(node.id);
-              const [marker, tooltip] = getMarker(start, end);
-              const instrMarker = createElement("div", "instr-marker com", marker);
-              instrMarker.setAttribute("title", tooltip);
-              instrMarker.onclick = mkNodeLinkHandler(node.id);
-              nodeEl.appendChild(instrMarker);
-              const nodeId = createElement("div", "node-id tag clickable", node.id);
-              nodeId.onclick = mkNodeLinkHandler(node.id);
-              view.addHtmlElementForNodeId(node.id, nodeId);
-              nodeEl.appendChild(nodeId);
-              const nodeLabel = createElement("div", "node-label", node.label);
-              nodeEl.appendChild(nodeLabel);
-              if (node.inputs.length > 0) {
-                  const nodeParameters = createElement("div", "parameter-list comma-sep-list");
-                  for (const param of node.inputs) {
-                      const paramEl = createElement("div", "parameter tag clickable", param);
-                      nodeParameters.appendChild(paramEl);
-                      paramEl.onclick = mkNodeLinkHandler(param);
-                      view.addHtmlElementForNodeId(param, paramEl);
-                  }
-                  nodeEl.appendChild(nodeParameters);
-              }
-              return nodeEl;
-          }
-          function mkBlockLinkHandler(blockId) {
-              return function (e) {
-                  e.stopPropagation();
-                  if (!e.shiftKey) {
-                      view.blockSelectionHandler.clear();
-                  }
-                  view.blockSelectionHandler.select(["" + blockId], true);
-              };
-          }
-          const scheduleBlock = createElement("div", "schedule-block");
-          scheduleBlock.classList.toggle("deferred", block.isDeferred);
-          const [start, end] = view.sourceResolver.instructionsPhase
-              .getInstructionRangeForBlock(block.id);
-          const instrMarker = createElement("div", "instr-marker com", "&#8857;");
-          instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
-          instrMarker.onclick = mkBlockLinkHandler(block.id);
-          scheduleBlock.appendChild(instrMarker);
-          const blockId = createElement("div", "block-id com clickable", block.id);
-          blockId.onclick = mkBlockLinkHandler(block.id);
-          scheduleBlock.appendChild(blockId);
-          const blockPred = createElement("div", "predecessor-list block-list comma-sep-list");
-          for (const pred of block.pred) {
-              const predEl = createElement("div", "block-id com clickable", pred);
-              predEl.onclick = mkBlockLinkHandler(pred);
-              blockPred.appendChild(predEl);
-          }
-          if (block.pred.length)
-              scheduleBlock.appendChild(blockPred);
-          const nodes = createElement("div", "nodes");
-          for (const node of block.nodes) {
-              nodes.appendChild(createElementForNode(node));
-          }
-          scheduleBlock.appendChild(nodes);
-          const blockSucc = createElement("div", "successor-list block-list comma-sep-list");
-          for (const succ of block.succ) {
-              const succEl = createElement("div", "block-id com clickable", succ);
-              succEl.onclick = mkBlockLinkHandler(succ);
-              blockSucc.appendChild(succEl);
-          }
-          if (block.succ.length)
-              scheduleBlock.appendChild(blockSucc);
-          this.addHtmlElementForBlockId(block.id, scheduleBlock);
-          return scheduleBlock;
-      }
-      addBlocks(blocks) {
-          for (const block of blocks) {
-              const blockEl = this.elementForBlock(block);
-              this.divNode.appendChild(blockEl);
-          }
-      }
-      lineString(node) {
-          return `${node.id}: ${node.label}(${node.inputs.join(", ")})`;
-      }
       searchInputAction(searchBar, e, onlyVisible) {
           e.stopPropagation();
           this.nodeSelectionHandler.clear();
           const query = searchBar.value;
           if (query.length == 0)
               return;
-          const select = [];
-          window.sessionStorage.setItem("lastSearch", query);
+          const select = new Array();
+          storageSetItem("lastSearch", query);
           const reg = new RegExp(query);
-          for (const node of this.schedule.schedule.nodes) {
+          for (const node of this.schedule.data.nodes) {
               if (node === undefined)
                   continue;
-              if (reg.exec(this.lineString(node)) != null) {
+              if (reg.exec(node.toString()) !== null) {
                   select.push(node.id);
               }
           }
           this.nodeSelectionHandler.select(select, true);
+      }
+      addBlocks(blocks) {
+          for (const block of blocks) {
+              const blockEl = this.createElementForBlock(block);
+              this.divNode.appendChild(blockEl);
+          }
+      }
+      attachSelection(adaptedSelection) {
+          if (!(adaptedSelection instanceof SelectionStorage))
+              return;
+          this.nodeSelectionHandler.clear();
+          this.blockSelectionHandler.clear();
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
+      }
+      createElementForBlock(block) {
+          const scheduleBlock = this.createElement("div", "schedule-block");
+          scheduleBlock.classList.toggle("deferred", block.deferred);
+          const [start, end] = this.sourceResolver.instructionsPhase
+              .getInstructionRangeForBlock(block.id);
+          const instrMarker = this.createElement("div", "instr-marker com", "&#8857;");
+          instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
+          instrMarker.onclick = this.mkBlockLinkHandler(block.id);
+          scheduleBlock.appendChild(instrMarker);
+          const blockId = this.createElement("div", "block-id com clickable", String(block.id));
+          blockId.onclick = this.mkBlockLinkHandler(block.id);
+          scheduleBlock.appendChild(blockId);
+          const blockPred = this.createElement("div", "predecessor-list block-list comma-sep-list");
+          for (const pred of block.predecessors) {
+              const predEl = this.createElement("div", "block-id com clickable", String(pred));
+              predEl.onclick = this.mkBlockLinkHandler(pred);
+              blockPred.appendChild(predEl);
+          }
+          if (block.predecessors.length)
+              scheduleBlock.appendChild(blockPred);
+          const nodes = this.createElement("div", "nodes");
+          for (const node of block.nodes) {
+              nodes.appendChild(this.createElementForNode(node));
+          }
+          scheduleBlock.appendChild(nodes);
+          const blockSucc = this.createElement("div", "successor-list block-list comma-sep-list");
+          for (const succ of block.successors) {
+              const succEl = this.createElement("div", "block-id com clickable", String(succ));
+              succEl.onclick = this.mkBlockLinkHandler(succ);
+              blockSucc.appendChild(succEl);
+          }
+          if (block.successors.length)
+              scheduleBlock.appendChild(blockSucc);
+          this.addHtmlElementForBlockId(block.id, scheduleBlock);
+          return scheduleBlock;
+      }
+      createElementForNode(node) {
+          const nodeEl = this.createElement("div", "node");
+          const [start, end] = this.sourceResolver.instructionsPhase.getInstruction(node.id);
+          const [marker, tooltip] = this.sourceResolver.instructionsPhase
+              .getInstructionMarker(start, end);
+          const instrMarker = this.createElement("div", "instr-marker com", marker);
+          instrMarker.setAttribute("title", tooltip);
+          instrMarker.onclick = this.mkNodeLinkHandler(node.id);
+          nodeEl.appendChild(instrMarker);
+          const nodeIdEl = this.createElement("div", "node-id tag clickable", String(node.id));
+          nodeIdEl.onclick = this.mkNodeLinkHandler(node.id);
+          this.addHtmlElementForNodeId(node.id, nodeIdEl);
+          nodeEl.appendChild(nodeIdEl);
+          const nodeLabel = this.createElement("div", "node-label", node.label);
+          nodeEl.appendChild(nodeLabel);
+          if (node.inputs.length > 0) {
+              const nodeParameters = this.createElement("div", "parameter-list comma-sep-list");
+              for (const param of node.inputs) {
+                  const paramEl = this.createElement("div", "parameter tag clickable", String(param));
+                  nodeParameters.appendChild(paramEl);
+                  paramEl.onclick = this.mkNodeLinkHandler(param);
+                  this.addHtmlElementForNodeId(param, paramEl);
+              }
+              nodeEl.appendChild(nodeParameters);
+          }
+          return nodeEl;
+      }
+      mkBlockLinkHandler(blockId) {
+          const view = this;
+          return function (e) {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  view.blockSelectionHandler.clear();
+              }
+              view.blockSelectionHandler.select([blockId], true);
+          };
+      }
+      mkNodeLinkHandler(nodeId) {
+          const view = this;
+          return function (e) {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  view.nodeSelectionHandler.clear();
+              }
+              view.nodeSelectionHandler.select([nodeId], true);
+          };
+      }
+      createElement(tag, cls, content) {
+          const el = document.createElement(tag);
+          el.className = cls;
+          if (content !== undefined)
+              el.innerHTML = content;
+          return el;
       }
   }
 
@@ -12033,20 +12270,10 @@
   }
 
   // Copyright 2020 the V8 project authors. All rights reserved.
-  class Constants {
-  }
-  // Determines how many rows each div group holds for the purposes of
-  // hiding by syncHidden.
-  Constants.ROW_GROUP_SIZE = 20;
-  Constants.POSITIONS_PER_INSTRUCTION = 4;
-  Constants.FIXED_REGISTER_LABEL_WIDTH = 6;
-  Constants.INTERVAL_TEXT_FOR_NONE = "none";
-  Constants.INTERVAL_TEXT_FOR_CONST = "const";
-  Constants.INTERVAL_TEXT_FOR_STACK = "stack:";
   // This class holds references to the HTMLElements that represent each cell.
   class Grid {
       constructor() {
-          this.elements = [];
+          this.elements = new Array();
       }
       setRow(row, elementsRow) {
           this.elements[row] = elementsRow;
@@ -12067,9 +12294,6 @@
           this.sequenceView = sequenceView;
           this.grids = new Map();
       }
-      currentGrid() {
-          return this.grids.get(this.sequenceView.currentPhaseIndex);
-      }
       getAnyGrid() {
           return this.grids.values().next().value;
       }
@@ -12087,20 +12311,15 @@
       getInterval(row, column) {
           return this.currentGrid().getInterval(row, column);
       }
+      currentGrid() {
+          return this.grids.get(this.sequenceView.currentPhaseIndex);
+      }
   }
   // This class is used as a wrapper to access the interval HTMLElements
   class IntervalElementsAccessor {
       constructor(sequenceView) {
           this.sequenceView = sequenceView;
           this.map = new Map();
-      }
-      currentIntervals() {
-          const intervals = this.map.get(this.sequenceView.currentPhaseIndex);
-          if (intervals == undefined) {
-              this.map.set(this.sequenceView.currentPhaseIndex, new Array());
-              return this.currentIntervals();
-          }
-          return intervals;
       }
       addInterval(interval) {
           this.currentIntervals().push(interval);
@@ -12112,27 +12331,30 @@
               }
           }
       }
-  }
-  // A simple class used to hold two Range objects. This is used to allow the two fixed register live
-  // ranges of normal and deferred to be easily combined into a single row.
-  class RangePair {
-      constructor(ranges) {
-          this.ranges = ranges;
-      }
-      forEachRange(callback) {
-          this.ranges.forEach((range) => { if (range)
-              callback(range); });
+      currentIntervals() {
+          const intervals = this.map.get(this.sequenceView.currentPhaseIndex);
+          if (intervals === undefined) {
+              this.map.set(this.sequenceView.currentPhaseIndex, new Array());
+              return this.currentIntervals();
+          }
+          return intervals;
       }
   }
   // A number of css variables regarding dimensions of HTMLElements are required by RangeView.
   class CSSVariables {
       constructor() {
-          const getNumberValue = varName => {
-              return parseFloat(getComputedStyle(document.body)
-                  .getPropertyValue(varName).match(/[+-]?\d+(\.\d+)?/g)[0]);
-          };
-          this.positionWidth = getNumberValue("--range-position-width");
-          this.blockBorderWidth = getNumberValue("--range-block-border");
+          this.positionWidth = this.getNumericValue("--range-position-width");
+          this.blockBorderWidth = this.getNumericValue("--range-block-border");
+      }
+      getNumericValue(varName) {
+          const propertyValue = getComputedStyle(document.body).getPropertyValue(varName);
+          return parseFloat(propertyValue.match(/[+-]?\d+(\.\d+)?/g)[0]);
+      }
+  }
+  class UserSettingsObject {
+      constructor(value, resetFunction) {
+          this.value = value;
+          this.resetFunction = resetFunction;
       }
   }
   // Manages the user's setting options regarding how the grid is displayed.
@@ -12141,12 +12363,12 @@
           this.settings = new Map();
       }
       addSetting(settingName, value, resetFunction) {
-          this.settings.set(settingName, { value, resetFunction });
+          this.settings.set(settingName, new UserSettingsObject(value, resetFunction));
       }
       getToggleElement(settingName, settingLabel) {
           const toggleEl = createElement("label", "range-toggle-setting", settingLabel);
           const toggleInput = createElement("input", "range-toggle-setting");
-          toggleInput.id = "range-toggle-" + settingName;
+          toggleInput.id = `range-toggle-${settingName}`;
           toggleInput.setAttribute("type", "checkbox");
           toggleInput.oninput = () => {
               toggleInput.disabled = true;
@@ -12159,7 +12381,7 @@
       }
       reset(settingName) {
           const settingObject = this.settings.get(settingName);
-          window.sessionStorage.setItem(UserSettings.SESSION_STORAGE_PREFIX + settingName, settingObject.value.toString());
+          storageSetItem(this.getSettingKey(settingName), settingObject.value);
           settingObject.resetFunction(settingObject.value);
       }
       get(settingName) {
@@ -12169,23 +12391,24 @@
           this.settings.get(settingName).value = value;
       }
       resetFromSessionStorage() {
-          this.settings.forEach((settingObject, settingName) => {
-              const storedString = window.sessionStorage.getItem(UserSettings.SESSION_STORAGE_PREFIX + settingName);
-              if (storedString) {
-                  const storedValue = storedString == "true" ? true : false;
-                  this.set(settingName, storedValue);
-                  if (storedValue) {
-                      const toggle = document.getElementById("range-toggle-" + settingName);
-                      if (!toggle.checked) {
-                          toggle.checked = storedValue;
-                          settingObject.resetFunction(storedValue);
-                      }
+          for (const [settingName, setting] of this.settings.entries()) {
+              const storedValue = storageGetItem(this.getSettingKey(settingName));
+              if (storedValue === undefined)
+                  continue;
+              this.set(settingName, storedValue);
+              if (storedValue) {
+                  const toggle = document.getElementById(`range-toggle-${settingName}`);
+                  if (!toggle.checked) {
+                      toggle.checked = storedValue;
+                      setting.resetFunction(storedValue);
                   }
               }
-          });
+          }
+      }
+      getSettingKey(settingName) {
+          return `${SESSION_STORAGE_PREFIX}${settingName}`;
       }
   }
-  UserSettings.SESSION_STORAGE_PREFIX = "ranges-setting-";
   // Store the required data from the blocks JSON.
   class BlocksData {
       constructor(blocks) {
@@ -12198,18 +12421,18 @@
           }
       }
       isInstructionBorder(position) {
-          return ((position + 1) % Constants.POSITIONS_PER_INSTRUCTION) == 0;
+          return ((position + 1) % POSITIONS_PER_INSTRUCTION) == 0;
       }
       isBlockBorder(position) {
-          return this.isInstructionBorder(position)
-              && this.blockBorders.has(Math.floor(position / Constants.POSITIONS_PER_INSTRUCTION));
+          const border = Math.floor(position / POSITIONS_PER_INSTRUCTION);
+          return this.isInstructionBorder(position) && this.blockBorders.has(border);
       }
   }
   class Divs {
       constructor(userSettings) {
-          this.container = document.getElementById("ranges");
-          this.resizerBar = document.getElementById("resizer-ranges");
-          this.snapper = document.getElementById("show-hide-ranges");
+          this.container = document.getElementById(RANGES_PANE_ID);
+          this.resizerBar = document.getElementById(RESIZER_RANGES_ID);
+          this.snapper = document.getElementById(SHOW_HIDE_RANGES_ID);
           this.content = document.createElement("div");
           this.content.appendChild(this.elementForTitle(userSettings));
           this.showOnLoad = document.createElement("div");
@@ -12240,60 +12463,6 @@
           return titleEl;
       }
   }
-  class Helper {
-      static virtualRegisterName(registerIndex) {
-          return "v" + registerIndex;
-      }
-      static fixedRegisterName(range) {
-          return range.childRanges[0].op.text;
-      }
-      static getPositionElementsFromInterval(interval) {
-          return interval.children[1].children;
-      }
-      static forEachFixedRange(source, row, callback) {
-          const forEachRangeInMap = (rangeMap) => {
-              // There are two fixed live ranges for each register, one for normal, another for deferred.
-              // These are combined into a single row.
-              const fixedRegisterMap = new Map();
-              for (const [registerIndex, range] of Object.entries(rangeMap)) {
-                  const registerName = this.fixedRegisterName(range);
-                  if (fixedRegisterMap.has(registerName)) {
-                      const entry = fixedRegisterMap.get(registerName);
-                      entry.ranges[1] = range;
-                      // Only use the deferred register index if no normal index exists.
-                      if (!range.isDeferred) {
-                          entry.registerIndex = parseInt(registerIndex, 10);
-                      }
-                  }
-                  else {
-                      fixedRegisterMap.set(registerName, { ranges: [range, undefined],
-                          registerIndex: parseInt(registerIndex, 10) });
-                  }
-              }
-              // Sort the registers by number.
-              const sortedMap = new Map([...fixedRegisterMap.entries()].sort(([nameA, _], [nameB, __]) => {
-                  // Larger numbers create longer strings.
-                  if (nameA.length > nameB.length)
-                      return 1;
-                  if (nameA.length < nameB.length)
-                      return -1;
-                  // Sort lexicographically if same length.
-                  if (nameA > nameB)
-                      return 1;
-                  if (nameA < nameB)
-                      return -1;
-                  return 0;
-              }));
-              for (const [registerName, { ranges, registerIndex }] of sortedMap) {
-                  callback("" + (-registerIndex - 1), row, registerName, new RangePair(ranges));
-                  ++row;
-              }
-          };
-          forEachRangeInMap(source.fixedLiveRanges);
-          forEachRangeInMap(source.fixedDoubleLiveRanges);
-          return row;
-      }
-  }
   class RowConstructor {
       constructor(view) {
           this.view = view;
@@ -12303,98 +12472,86 @@
       // RangePair is used to allow the two fixed register live ranges of normal and deferred to be
       // easily combined into a single row.
       construct(grid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval) {
-          const positionArray = new Array(this.view.numPositions);
+          const positions = new Array(this.view.numPositions);
           // Construct all of the new intervals.
           const intervalMap = this.elementsForIntervals(registerIndex, ranges);
           for (let position = 0; position < this.view.numPositions; ++position) {
               const interval = intervalMap.get(position);
-              if (interval == undefined) {
-                  positionArray[position] = getElementForEmptyPosition(position);
+              if (interval === undefined) {
+                  positions[position] = getElementForEmptyPosition(position);
               }
               else {
                   callbackForInterval(position, interval);
                   this.view.intervalsAccessor.addInterval(interval);
-                  const intervalPositionElements = Helper.getPositionElementsFromInterval(interval);
+                  const intervalPositionElements = this.getPositionElementsFromInterval(interval);
                   for (let j = 0; j < intervalPositionElements.length; ++j) {
                       // Point positionsArray to the new elements.
-                      positionArray[position + j] = intervalPositionElements[j];
+                      positions[position + j] = intervalPositionElements[j];
                   }
                   position += intervalPositionElements.length - 1;
               }
           }
-          grid.setRow(row, positionArray);
-          ranges.forEachRange((range) => this.setUses(grid, row, range));
+          grid.setRow(row, positions);
+          for (const range of ranges) {
+              if (!range)
+                  continue;
+              this.setUses(grid, row, range);
+          }
+      }
+      getPositionElementsFromInterval(interval) {
+          return interval.children[1].children;
       }
       // This is the main function used to build new intervals.
       // Returns a map of LifeTimePositions to intervals.
       elementsForIntervals(registerIndex, ranges) {
           const intervalMap = new Map();
-          let tooltip = "";
-          ranges.forEachRange((range) => {
+          for (const range of ranges) {
+              if (!range)
+                  continue;
               for (const childRange of range.childRanges) {
-                  switch (childRange.type) {
-                      case "none":
-                          tooltip = Constants.INTERVAL_TEXT_FOR_NONE;
-                          break;
-                      case "spill_range":
-                          tooltip = Constants.INTERVAL_TEXT_FOR_STACK + registerIndex;
-                          break;
-                      default:
-                          if (childRange.op.type == "constant") {
-                              tooltip = Constants.INTERVAL_TEXT_FOR_CONST;
-                          }
-                          else {
-                              if (childRange.op.text) {
-                                  tooltip = childRange.op.text;
-                              }
-                              else {
-                                  tooltip = childRange.op;
-                              }
-                          }
-                          break;
-                  }
-                  childRange.intervals.forEach((intervalNums, index) => {
+                  const tooltip = childRange.getTooltip(registerIndex);
+                  for (const [index, intervalNums] of childRange.intervals.entries()) {
                       const interval = new Interval(intervalNums);
                       const intervalEl = this.elementForInterval(childRange, interval, tooltip, index, range.isDeferred);
                       intervalMap.set(interval.start, intervalEl);
-                  });
+                  }
               }
-          });
+          }
           return intervalMap;
       }
       elementForInterval(childRange, interval, tooltip, index, isDeferred) {
           const intervalEl = createElement("div", "range-interval");
-          const title = childRange.id + ":" + index + " " + tooltip;
-          intervalEl.setAttribute("title", isDeferred ? "deferred: " + title : title);
+          const title = `${childRange.id}:${index} ${tooltip}`;
+          intervalEl.setAttribute("title", isDeferred ? `deferred: ${title}` : title);
           this.setIntervalColor(intervalEl, tooltip);
           const intervalInnerWrapper = createElement("div", "range-interval-wrapper");
-          intervalEl.style.gridColumn = (interval.start + 1) + " / " + (interval.end + 1);
-          intervalInnerWrapper.style.gridTemplateColumns = "repeat(" + (interval.end - interval.start)
-              + ",calc(" + this.view.cssVariables.positionWidth + "ch + "
-              + this.view.cssVariables.blockBorderWidth + "px)";
+          intervalEl.style.gridColumn = `${(interval.start + 1)} / ${(interval.end + 1)}`;
+          intervalInnerWrapper.style.gridTemplateColumns = `repeat(${(interval.end - interval.start)}`
+              + `,calc(${this.view.cssVariables.positionWidth}ch + `
+              + `${this.view.cssVariables.blockBorderWidth}px)`;
           const intervalTextEl = this.elementForIntervalString(tooltip, interval.end - interval.start);
           intervalEl.appendChild(intervalTextEl);
           for (let i = interval.start; i < interval.end; ++i) {
-              const classes = "range-position range-interval-position range-empty"
-                  + (this.view.blocksData.isBlockBorder(i) ? " range-block-border" :
-                      this.view.blocksData.isInstructionBorder(i) ? " range-instr-border" : "");
+              const classes = "range-position range-interval-position range-empty" +
+                  (this.view.blocksData.isBlockBorder(i) ? " range-block-border"
+                      : this.view.blocksData.isInstructionBorder(i) ? " range-instr-border" : "");
               const positionEl = createElement("div", classes, "_");
-              positionEl.style.gridColumn = (i - interval.start + 1) + "";
+              positionEl.style.gridColumn = String(i - interval.start + 1);
               intervalInnerWrapper.appendChild(positionEl);
           }
           intervalEl.appendChild(intervalInnerWrapper);
           return intervalEl;
       }
       setIntervalColor(interval, tooltip) {
-          if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_NONE))
+          if (tooltip.includes(INTERVAL_TEXT_FOR_NONE))
               return;
-          if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_STACK + "-")) {
+          if (tooltip.includes(`${INTERVAL_TEXT_FOR_STACK}-`)) {
               interval.style.backgroundColor = "rgb(250, 158, 168)";
           }
-          else if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_STACK)) {
+          else if (tooltip.includes(INTERVAL_TEXT_FOR_STACK)) {
               interval.style.backgroundColor = "rgb(250, 158, 100)";
           }
-          else if (tooltip.includes(Constants.INTERVAL_TEXT_FOR_CONST)) {
+          else if (tooltip.includes(INTERVAL_TEXT_FOR_CONST)) {
               interval.style.backgroundColor = "rgb(153, 158, 230)";
           }
           else {
@@ -12411,7 +12568,7 @@
           const spacePerCell = this.view.cssVariables.positionWidth;
           // One character space is removed to accommodate for padding.
           const spaceAvailable = (numCells * spacePerCell) - 0.5;
-          let str = tooltip + "";
+          let intervalStr = tooltip;
           const length = tooltip.length;
           spanEl.style.width = null;
           let paddingLeft = null;
@@ -12420,18 +12577,18 @@
               paddingLeft = (length == spaceAvailable) ? "0.5ch" : "1ch";
           }
           else {
-              str = "";
+              intervalStr = "";
           }
           spanEl.style.paddingTop = null;
           spanEl.style.paddingLeft = paddingLeft;
-          spanEl.innerHTML = str;
+          spanEl.innerHTML = intervalStr;
       }
       setUses(grid, row, range) {
           for (const liveRange of range.childRanges) {
-              if (liveRange.uses) {
-                  for (const use of liveRange.uses) {
-                      grid.getCell(row, use).classList.toggle("range-use", true);
-                  }
+              if (!liveRange.uses)
+                  continue;
+              for (const use of liveRange.uses) {
+                  grid.getCell(row, use).classList.toggle("range-use", true);
               }
           }
       }
@@ -12441,9 +12598,9 @@
           this.view = rangeView;
       }
       construct() {
-          this.gridTemplateColumns = "repeat(" + this.view.numPositions
-              + ",calc(" + this.view.cssVariables.positionWidth + "ch + "
-              + this.view.cssVariables.blockBorderWidth + "px)";
+          this.gridTemplateColumns = `repeat(${this.view.numPositions}`
+              + `,calc(${this.view.cssVariables.positionWidth}ch + `
+              + `${this.view.cssVariables.blockBorderWidth}px)`;
           this.grid = new Grid();
           this.view.gridAccessor.addGrid(this.grid);
           this.view.divs.wholeHeader = this.elementForHeader();
@@ -12460,9 +12617,7 @@
           gridContainer.appendChild(this.view.divs.grid);
           this.view.divs.showOnLoad.appendChild(gridContainer);
           this.resetGroups();
-          let row = 0;
-          row = this.addVirtualRanges(row);
-          this.addFixedRanges(row);
+          this.addFixedRanges(this.addVirtualRanges(0));
       }
       // The following three functions are for constructing the groups which the rows are contained
       // within and which make up the grid. This is so as to allow groups of rows to easily be displayed
@@ -12480,31 +12635,35 @@
       }
       addRowToGroup(row, rowEl) {
           this.currentGroup.appendChild(rowEl);
-          this.currentPlaceholderGroup
-              .appendChild(createElement("div", "range-positions range-positions-placeholder", "_"));
-          if ((row + 1) % Constants.ROW_GROUP_SIZE == 0) {
+          this.currentPlaceholderGroup.appendChild(createElement("div", "range-positions range-positions-placeholder", "_"));
+          if ((row + 1) % ROW_GROUP_SIZE == 0) {
               this.appendGroupsToGrid();
               this.resetGroups();
           }
       }
       addVirtualRanges(row) {
           const source = this.view.sequenceView.sequence.registerAllocation;
-          for (const [registerIndex, range] of Object.entries(source.liveRanges)) {
-              const registerName = Helper.virtualRegisterName(registerIndex);
+          for (const [registerIndex, range] of source.liveRanges.entries()) {
+              if (!range)
+                  continue;
+              const registerName = this.virtualRegisterName(registerIndex);
               const registerEl = this.elementForVirtualRegister(registerName);
-              this.addRowToGroup(row, this.elementForRow(row, registerIndex, new RangePair([range, undefined])));
+              this.addRowToGroup(row, this.elementForRow(row, registerIndex, [range, undefined]));
               this.view.divs.registers.appendChild(registerEl);
               ++row;
           }
           return row;
       }
+      virtualRegisterName(registerIndex) {
+          return `v${registerIndex}`;
+      }
       addFixedRanges(row) {
-          row = Helper.forEachFixedRange(this.view.sequenceView.sequence.registerAllocation, row, (registerIndex, row, registerName, ranges) => {
+          row = this.view.sequenceView.sequence.registerAllocation.forEachFixedRange(row, (registerIndex, row, registerName, ranges) => {
               const registerEl = this.elementForFixedRegister(registerName);
               this.addRowToGroup(row, this.elementForRow(row, registerIndex, ranges));
               this.view.divs.registers.appendChild(registerEl);
           });
-          if (row % Constants.ROW_GROUP_SIZE != 0) {
+          if (row % ROW_GROUP_SIZE != 0) {
               this.appendGroupsToGrid();
           }
       }
@@ -12516,12 +12675,11 @@
           rowEl.style.gridTemplateColumns = this.gridTemplateColumns;
           const getElementForEmptyPosition = (position) => {
               const blockBorder = this.view.blocksData.isBlockBorder(position);
-              const classes = "range-position range-empty "
-                  + (blockBorder ? "range-block-border" :
-                      this.view.blocksData.isInstructionBorder(position) ? "range-instr-border"
-                          : "range-position-border");
+              const classes = "range-position range-empty " + (blockBorder
+                  ? "range-block-border" : this.view.blocksData.isInstructionBorder(position)
+                  ? "range-instr-border" : "range-position-border");
               const positionEl = createElement("div", classes, "_");
-              positionEl.style.gridColumn = (position + 1) + "";
+              positionEl.style.gridColumn = String(position + 1);
               rowEl.appendChild(positionEl);
               return positionEl;
           };
@@ -12538,7 +12696,7 @@
       }
       elementForFixedRegister(registerName) {
           let text = registerName;
-          const span = "".padEnd(Constants.FIXED_REGISTER_LABEL_WIDTH - text.length, "_");
+          const span = "".padEnd(FIXED_REGISTER_LABEL_WIDTH - text.length, "_");
           text = "HW - <span class='range-transparent'>" + span + "</span>" + text;
           const regEl = createElement("div", "range-reg");
           regEl.innerHTML = text;
@@ -12563,59 +12721,59 @@
       elementForBlockHeader() {
           const headerEl = createElement("div", "range-block-ids");
           headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
-          const elementForBlockIndex = (index, firstInstruction, instrCount) => {
-              const str = "B" + index;
-              const element = createElement("div", "range-block-id range-header-element range-block-border", str);
-              element.setAttribute("title", str);
-              const firstGridCol = (firstInstruction * Constants.POSITIONS_PER_INSTRUCTION) + 1;
-              const lastGridCol = firstGridCol + (instrCount * Constants.POSITIONS_PER_INSTRUCTION);
-              element.style.gridColumn = firstGridCol + " / " + lastGridCol;
-              return element;
-          };
           let blockIndex = 0;
           for (let i = 0; i < this.view.sequenceView.numInstructions;) {
               const instrCount = this.view.blocksData.blockInstructionCountMap.get(blockIndex);
-              headerEl.appendChild(elementForBlockIndex(blockIndex, i, instrCount));
+              headerEl.appendChild(this.elementForBlockIndex(blockIndex, i, instrCount));
               ++blockIndex;
               i += instrCount;
           }
           return headerEl;
       }
+      elementForBlockIndex(index, firstInstruction, instrCount) {
+          const str = `B${index}`;
+          const element = createElement("div", "range-block-id range-header-element range-block-border", str);
+          element.setAttribute("title", str);
+          const firstGridCol = (firstInstruction * POSITIONS_PER_INSTRUCTION) + 1;
+          const lastGridCol = firstGridCol + (instrCount * POSITIONS_PER_INSTRUCTION);
+          element.style.gridColumn = `${firstGridCol} / ${lastGridCol}`;
+          return element;
+      }
       elementForInstructionHeader() {
           const headerEl = createElement("div", "range-instruction-ids");
           headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
-          const elementForInstructionIndex = (index, isBlockBorder) => {
-              const classes = "range-instruction-id range-header-element "
-                  + (isBlockBorder ? "range-block-border" : "range-instr-border");
-              const element = createElement("div", classes, "" + index);
-              element.setAttribute("title", "" + index);
-              const firstGridCol = (index * Constants.POSITIONS_PER_INSTRUCTION) + 1;
-              element.style.gridColumn = firstGridCol + " / "
-                  + (firstGridCol + Constants.POSITIONS_PER_INSTRUCTION);
-              return element;
-          };
           for (let i = 0; i < this.view.sequenceView.numInstructions; ++i) {
-              const blockBorder = this.view.blocksData.blockBorders.has(i);
-              headerEl.appendChild(elementForInstructionIndex(i, blockBorder));
+              headerEl.appendChild(this.elementForInstructionIndex(i));
           }
           return headerEl;
+      }
+      elementForInstructionIndex(index) {
+          const isBlockBorder = this.view.blocksData.blockBorders.has(index);
+          const classes = "range-instruction-id range-header-element "
+              + (isBlockBorder ? "range-block-border" : "range-instr-border");
+          const element = createElement("div", classes, String(index));
+          element.setAttribute("title", String(index));
+          const firstGridCol = (index * POSITIONS_PER_INSTRUCTION) + 1;
+          element.style.gridColumn = `${firstGridCol} / ${(firstGridCol + POSITIONS_PER_INSTRUCTION)}`;
+          return element;
       }
       elementForPositionHeader() {
           const headerEl = createElement("div", "range-positions range-positions-header");
           headerEl.style.gridTemplateColumns = this.gridTemplateColumns;
-          const elementForPositionIndex = (index, isBlockBorder) => {
-              const classes = "range-position range-header-element " +
-                  (isBlockBorder ? "range-block-border"
-                      : this.view.blocksData.isInstructionBorder(index) ? "range-instr-border"
-                          : "range-position-border");
-              const element = createElement("div", classes, "" + index);
-              element.setAttribute("title", "" + index);
-              return element;
-          };
           for (let i = 0; i < this.view.numPositions; ++i) {
-              headerEl.appendChild(elementForPositionIndex(i, this.view.blocksData.isBlockBorder(i)));
+              headerEl.appendChild(this.elementForPositionIndex(i));
           }
           return headerEl;
+      }
+      elementForPositionIndex(index) {
+          const isBlockBorder = this.view.blocksData.isBlockBorder(index);
+          const classes = "range-position range-header-element " +
+              (isBlockBorder ? "range-block-border"
+                  : this.view.blocksData.isInstructionBorder(index) ? "range-instr-border"
+                      : "range-position-border");
+          const element = createElement("div", classes, "" + index);
+          element.setAttribute("title", "" + index);
+          return element;
       }
       elementForGrid() {
           const gridEl = createElement("div", "range-grid");
@@ -12652,11 +12810,13 @@
           this.view.gridAccessor.addGrid(newGrid);
           const source = this.view.sequenceView.sequence.registerAllocation;
           let row = 0;
-          for (const [registerIndex, range] of Object.entries(source.liveRanges)) {
-              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, new RangePair([range, undefined]));
+          for (const [registerIndex, range] of source.liveRanges.entries()) {
+              if (!range)
+                  continue;
+              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, [range, undefined]);
               ++row;
           }
-          Helper.forEachFixedRange(this.view.sequenceView.sequence.registerAllocation, row, (registerIndex, row, _, ranges) => {
+          this.view.sequenceView.sequence.registerAllocation.forEachFixedRange(row, (registerIndex, row, _, ranges) => {
               this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges);
           });
       }
@@ -12672,15 +12832,15 @@
               // The number of intervals already inserted is tracked so that the inserted intervals
               // are ordered correctly.
               const intervalsAlreadyInserted = numReplacements.get(currentInterval);
-              numReplacements.set(currentInterval, intervalsAlreadyInserted ? intervalsAlreadyInserted + 1
-                  : 1);
+              numReplacements.set(currentInterval, intervalsAlreadyInserted
+                  ? intervalsAlreadyInserted + 1 : 1);
               if (intervalsAlreadyInserted) {
                   for (let j = 0; j < intervalsAlreadyInserted; ++j) {
                       currentInterval = currentInterval.nextElementSibling;
                   }
               }
               interval.classList.add("range-hidden");
-              currentInterval.insertAdjacentElement('afterend', interval);
+              currentInterval.insertAdjacentElement("afterend", interval);
           };
           this.view.rowConstructor.construct(newGrid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval);
       }
@@ -12698,12 +12858,9 @@
       // This function is used to hide the rows which are not currently in view and
       // so reduce the performance cost of things like hit tests and scrolling.
       syncHidden() {
-          const getOffset = (rowEl, placeholderRowEl, isHidden) => {
-              return isHidden ? placeholderRowEl.offsetTop : rowEl.offsetTop;
-          };
           const toHide = new Array();
           const sampleCell = this.divs.registers.children[1];
-          const buffer = 2 * sampleCell.clientHeight;
+          const buffer = sampleCell.clientHeight * 2;
           const min = this.divs.grid.offsetTop + this.divs.grid.scrollTop - buffer;
           const max = min + this.divs.grid.clientHeight + buffer;
           // The rows are grouped by being contained within a group div. This is so as to allow
@@ -12717,8 +12874,8 @@
               const placeholderGroup = rangeGroups[i - 1];
               const isHidden = mainGroup.classList.contains("range-hidden");
               // The offsets are used to calculate whether the group is in view.
-              const offsetMin = getOffset(mainGroup.firstChild, placeholderGroup.firstChild, isHidden);
-              const offsetMax = getOffset(mainGroup.lastChild, placeholderGroup.lastChild, isHidden);
+              const offsetMin = this.getOffset(mainGroup.firstChild, placeholderGroup.firstChild, isHidden);
+              const offsetMax = this.getOffset(mainGroup.lastChild, placeholderGroup.lastChild, isHidden);
               if (offsetMax > min && offsetMin < max) {
                   if (isHidden) {
                       // Show the rows, hide the placeholders.
@@ -12741,20 +12898,25 @@
       // content when scrolling.
       syncScroll(toSync, source, target) {
           // Continually delay timeout until scrolling has stopped.
-          toSync == ToSync.TOP ? clearTimeout(this.scrollTopTimeout)
+          toSync == ToSync.TOP
+              ? clearTimeout(this.scrollTopTimeout)
               : clearTimeout(this.scrollLeftTimeout);
           if (target.onscroll) {
-              if (toSync == ToSync.TOP)
+              if (toSync == ToSync.TOP) {
                   this.scrollTopFunc = target.onscroll;
-              else
+              }
+              else {
                   this.scrollLeftFunc = target.onscroll;
+              }
           }
           // Clear onscroll to prevent the target syncing back with the source.
           target.onscroll = null;
-          if (toSync == ToSync.TOP)
+          if (toSync == ToSync.TOP) {
               target.scrollTop = source.scrollTop;
-          else
+          }
+          else {
               target.scrollLeft = source.scrollLeft;
+          }
           // Only show / hide the grid content once scrolling has stopped.
           if (toSync == ToSync.TOP) {
               this.scrollTopTimeout = setTimeout(() => {
@@ -12779,6 +12941,9 @@
               this.divs.grid.scrollTop = this.scrollTop;
           }
       }
+      getOffset(rowEl, placeholderRowEl, isHidden) {
+          return isHidden ? placeholderRowEl.offsetTop : rowEl.offsetTop;
+      }
   }
   // RangeView displays the live range data as passed in by SequenceView.
   // The data is displayed in a grid format, with the fixed and virtual registers
@@ -12790,9 +12955,9 @@
   // after register allocation, only the intervals need to be changed.
   class RangeView {
       constructor(sequence) {
+          this.sequenceView = sequence;
           this.initialized = false;
           this.isShown = false;
-          this.sequenceView = sequence;
       }
       initializeContent(blocks) {
           if (!this.initialized) {
@@ -12805,7 +12970,7 @@
               this.blocksData = new BlocksData(blocks);
               this.divs = new Divs(this.userSettings);
               this.scrollHandler = new ScrollHandler(this.divs);
-              this.numPositions = this.sequenceView.numInstructions * Constants.POSITIONS_PER_INSTRUCTION;
+              this.numPositions = this.sequenceView.numInstructions * POSITIONS_PER_INSTRUCTION;
               this.rowConstructor = new RowConstructor(this);
               const constructor = new RangeViewConstructor(this);
               constructor.construct();
@@ -12827,7 +12992,7 @@
               this.divs.snapper.style.visibility = "visible";
               // Dispatch a resize event to ensure that the
               // panel is shown.
-              window.dispatchEvent(new Event('resize'));
+              window.dispatchEvent(new Event("resize"));
               setTimeout(() => {
                   this.userSettings.resetFromSessionStorage();
                   this.scrollHandler.restoreScroll();
@@ -12846,11 +13011,11 @@
               this.divs.showOnLoad.style.visibility = "hidden";
           }
           else {
-              window.document.getElementById('ranges').style.visibility = "hidden";
+              window.document.getElementById(RANGES_PANE_ID).style.visibility = "hidden";
           }
           // Dispatch a resize event to ensure that the
           // panel is hidden.
-          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new Event("resize"));
       }
       onresize() {
           if (this.isShown)
@@ -12859,39 +13024,30 @@
       resetLandscapeMode(isInLandscapeMode) {
           // Used to communicate the setting to Resizer.
           this.divs.container.dataset.landscapeMode = isInLandscapeMode.toString();
-          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new Event("resize"));
           // Required to adjust scrollbar spacing.
           setTimeout(() => {
-              window.dispatchEvent(new Event('resize'));
+              window.dispatchEvent(new Event("resize"));
           }, 100);
       }
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SequenceView extends TextView {
-      constructor(parentId, broker) {
-          super(parentId, broker);
+      constructor(parent, broker) {
+          super(parent, broker);
           this.numInstructions = 0;
           this.phaseIndexes = new Set();
           this.isShown = false;
           this.showRangeView = false;
-          this.rangeView = null;
           this.toggleRangeViewEl = this.elementForToggleRangeView();
       }
       createViewElement() {
-          const pane = document.createElement('div');
-          pane.setAttribute('id', "sequence");
+          const pane = document.createElement("div");
+          pane.setAttribute("id", SEQUENCE_PANE_ID);
           pane.classList.add("scrollable");
           pane.setAttribute("tabindex", "0");
           return pane;
-      }
-      attachSelection(adaptedSelection) {
-          if (!(adaptedSelection instanceof SelectionStorage))
-              return;
-          this.nodeSelectionHandler.clear();
-          this.blockSelectionHandler.clear();
-          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
-          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
       }
       detachSelection() {
           return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
@@ -12904,7 +13060,7 @@
           return selection;
       }
       show() {
-          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
+          this.currentPhaseIndex = this.phaseSelectEl.selectedIndex;
           if (!this.isShown) {
               this.isShown = true;
               this.phaseIndexes.add(this.currentPhaseIndex);
@@ -12918,7 +13074,7 @@
           // A single SequenceView object is used for two phases (i.e before and after
           // register allocation), tracking the indexes lets the redundant hides and
           // shows be avoided when switching between the two.
-          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
+          this.currentPhaseIndex = this.phaseSelectEl.selectedIndex;
           if (!this.phaseIndexes.has(this.currentPhaseIndex)) {
               this.isShown = false;
               this.container.removeChild(this.divNode);
@@ -12932,149 +13088,61 @@
               this.rangeView.onresize();
       }
       initializeContent(sequence, rememberedSelection) {
-          this.divNode.innerHTML = '';
+          this.divNode.innerHTML = "";
           this.sequence = sequence;
-          this.searchInfo = [];
-          this.phaseSelect = document.getElementById('phase-select');
-          this.currentPhaseIndex = this.phaseSelect.selectedIndex;
+          this.searchInfo = new Array();
+          this.phaseSelectEl = document.getElementById("phase-select");
+          this.currentPhaseIndex = this.phaseSelectEl.selectedIndex;
           this.addBlocks(this.sequence.blocks);
-          const lastBlock = this.sequence.blocks[this.sequence.blocks.length - 1];
-          this.numInstructions = lastBlock.instructions[lastBlock.instructions.length - 1].id + 1;
+          this.numInstructions = this.sequence.getNumInstructions();
           this.addRangeView();
           this.show();
           if (rememberedSelection) {
               const adaptedSelection = this.adaptSelection(rememberedSelection);
-              this.attachSelection(adaptedSelection);
+              if (adaptedSelection.isAdapted())
+                  this.attachSelection(adaptedSelection);
+          }
+      }
+      searchInputAction(searchBar, e) {
+          e.stopPropagation();
+          this.nodeSelectionHandler.clear();
+          const query = searchBar.value;
+          if (query.length == 0)
+              return;
+          const select = new Array();
+          storageSetItem("lastSearch", query);
+          const reg = new RegExp(query);
+          for (const item of this.searchInfo) {
+              if (reg.exec(item) != null) {
+                  select.push(item);
+              }
+          }
+          this.nodeSelectionHandler.select(select, true);
+      }
+      attachSelection(adaptedSelection) {
+          if (!(adaptedSelection instanceof SelectionStorage))
+              return;
+          this.nodeSelectionHandler.clear();
+          this.blockSelectionHandler.clear();
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
+          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
+      }
+      addBlocks(blocks) {
+          for (const block of blocks) {
+              const blockEl = this.elementForBlock(block);
+              this.divNode.appendChild(blockEl);
           }
       }
       elementForBlock(block) {
-          const view = this;
-          function mkLinkHandler(id, handler) {
-              return function (e) {
-                  e.stopPropagation();
-                  if (!e.shiftKey) {
-                      handler.clear();
-                  }
-                  handler.select(["" + id], true);
-              };
-          }
-          function mkBlockLinkHandler(blockId) {
-              return mkLinkHandler(blockId, view.blockSelectionHandler);
-          }
-          function mkInstructionLinkHandler(instrId) {
-              return mkLinkHandler(instrId, view.registerAllocationSelectionHandler);
-          }
-          function mkOperandLinkHandler(text) {
-              return mkLinkHandler(text, view.nodeSelectionHandler);
-          }
-          function elementForOperandWithSpan(span, text, searchInfo, isVirtual) {
-              const selectionText = isVirtual ? "virt_" + text : text;
-              span.onclick = mkOperandLinkHandler(selectionText);
-              searchInfo.push(text);
-              view.addHtmlElementForNodeId(selectionText, span);
-              const container = createElement("div", "");
-              container.appendChild(span);
-              return container;
-          }
-          function elementForOperand(operand, searchInfo) {
-              let isVirtual = false;
-              let className = "parameter tag clickable " + operand.type;
-              if (operand.text[0] == 'v' && !(operand.tooltip && operand.tooltip.includes("Float"))) {
-                  isVirtual = true;
-                  className += " virtual-reg";
-              }
-              const span = createElement("span", className, operand.text);
-              if (operand.tooltip) {
-                  span.setAttribute("title", operand.tooltip);
-              }
-              return elementForOperandWithSpan(span, operand.text, searchInfo, isVirtual);
-          }
-          function elementForPhiOperand(text, searchInfo) {
-              const span = createElement("span", "parameter tag clickable virtual-reg", text);
-              return elementForOperandWithSpan(span, text, searchInfo, true);
-          }
-          function elementForInstruction(instruction, searchInfo) {
-              const instNodeEl = createElement("div", "instruction-node");
-              const instId = createElement("div", "instruction-id", instruction.id);
-              const offsets = view.sourceResolver.instructionsPhase.instructionToPcOffsets(instruction.id);
-              instId.classList.add("clickable");
-              view.addHtmlElementForInstructionId(instruction.id, instId);
-              instId.onclick = mkInstructionLinkHandler(instruction.id);
-              instId.dataset.instructionId = instruction.id;
-              if (offsets) {
-                  instId.setAttribute("title", `This instruction generated gap code at pc-offset 0x${offsets.gap.toString(16)}, code at pc-offset 0x${offsets.arch.toString(16)}, condition handling at pc-offset 0x${offsets.condition.toString(16)}.`);
-              }
-              instNodeEl.appendChild(instId);
-              const instContentsEl = createElement("div", "instruction-contents");
-              instNodeEl.appendChild(instContentsEl);
-              // Print gap moves.
-              const gapEl = createElement("div", "gap", "gap");
-              let hasGaps = false;
-              for (const gap of instruction.gaps) {
-                  const moves = createElement("div", "comma-sep-list gap-move");
-                  for (const move of gap) {
-                      hasGaps = true;
-                      const moveEl = createElement("div", "move");
-                      const destinationEl = elementForOperand(move[0], searchInfo);
-                      moveEl.appendChild(destinationEl);
-                      const assignEl = createElement("div", "assign", "=");
-                      moveEl.appendChild(assignEl);
-                      const sourceEl = elementForOperand(move[1], searchInfo);
-                      moveEl.appendChild(sourceEl);
-                      moves.appendChild(moveEl);
-                  }
-                  gapEl.appendChild(moves);
-              }
-              if (hasGaps) {
-                  instContentsEl.appendChild(gapEl);
-              }
-              const instEl = createElement("div", "instruction");
-              instContentsEl.appendChild(instEl);
-              if (instruction.outputs.length > 0) {
-                  const outputs = createElement("div", "comma-sep-list input-output-list");
-                  for (const output of instruction.outputs) {
-                      const outputEl = elementForOperand(output, searchInfo);
-                      outputs.appendChild(outputEl);
-                  }
-                  instEl.appendChild(outputs);
-                  const assignEl = createElement("div", "assign", "=");
-                  instEl.appendChild(assignEl);
-              }
-              const text = instruction.opcode + instruction.flags;
-              const instLabel = createElement("div", "node-label", text);
-              if (instruction.opcode == "ArchNop" && instruction.outputs.length == 1 && instruction.outputs[0].tooltip) {
-                  instLabel.innerText = instruction.outputs[0].tooltip;
-              }
-              searchInfo.push(text);
-              view.addHtmlElementForNodeId(text, instLabel);
-              instEl.appendChild(instLabel);
-              if (instruction.inputs.length > 0) {
-                  const inputs = createElement("div", "comma-sep-list input-output-list");
-                  for (const input of instruction.inputs) {
-                      const inputEl = elementForOperand(input, searchInfo);
-                      inputs.appendChild(inputEl);
-                  }
-                  instEl.appendChild(inputs);
-              }
-              if (instruction.temps.length > 0) {
-                  const temps = createElement("div", "comma-sep-list input-output-list temps");
-                  for (const temp of instruction.temps) {
-                      const tempEl = elementForOperand(temp, searchInfo);
-                      temps.appendChild(tempEl);
-                  }
-                  instEl.appendChild(temps);
-              }
-              return instNodeEl;
-          }
           const sequenceBlock = createElement("div", "schedule-block");
           sequenceBlock.classList.toggle("deferred", block.deferred);
-          const blockId = createElement("div", "block-id com clickable", block.id);
-          blockId.onclick = mkBlockLinkHandler(block.id);
-          sequenceBlock.appendChild(blockId);
+          const blockIdEl = createElement("div", "block-id com clickable", String(block.id));
+          blockIdEl.onclick = this.mkBlockLinkHandler(block.id);
+          sequenceBlock.appendChild(blockIdEl);
           const blockPred = createElement("div", "predecessor-list block-list comma-sep-list");
           for (const pred of block.predecessors) {
-              const predEl = createElement("div", "block-id com clickable", pred);
-              predEl.onclick = mkBlockLinkHandler(pred);
+              const predEl = createElement("div", "block-id com clickable", String(pred));
+              predEl.onclick = this.mkBlockLinkHandler(pred);
               blockPred.appendChild(predEl);
           }
           if (block.predecessors.length > 0)
@@ -13088,24 +13156,24 @@
           for (const phi of block.phis) {
               const phiEl = createElement("div", "phi");
               phiContents.appendChild(phiEl);
-              const outputEl = elementForOperand(phi.output, this.searchInfo);
+              const outputEl = this.elementForOperand(phi.output);
               phiEl.appendChild(outputEl);
               const assignEl = createElement("div", "assign", "=");
               phiEl.appendChild(assignEl);
               for (const input of phi.operands) {
-                  const inputEl = elementForPhiOperand(input, this.searchInfo);
+                  const inputEl = this.elementForPhiOperand(input);
                   phiEl.appendChild(inputEl);
               }
           }
           const instructions = createElement("div", "instructions");
           for (const instruction of block.instructions) {
-              instructions.appendChild(elementForInstruction(instruction, this.searchInfo));
+              instructions.appendChild(this.elementForInstruction(instruction));
           }
           sequenceBlock.appendChild(instructions);
           const blockSucc = createElement("div", "successor-list block-list comma-sep-list");
           for (const succ of block.successors) {
-              const succEl = createElement("div", "block-id com clickable", succ);
-              succEl.onclick = mkBlockLinkHandler(succ);
+              const succEl = createElement("div", "block-id com clickable", String(succ));
+              succEl.onclick = this.mkBlockLinkHandler(succ);
               blockSucc.appendChild(succEl);
           }
           if (block.successors.length > 0)
@@ -13113,45 +13181,157 @@
           this.addHtmlElementForBlockId(block.id, sequenceBlock);
           return sequenceBlock;
       }
-      addBlocks(blocks) {
-          for (const block of blocks) {
-              const blockEl = this.elementForBlock(block);
-              this.divNode.appendChild(blockEl);
+      elementForOperand(operand) {
+          let isVirtual = false;
+          let className = `parameter tag clickable ${operand.type}`;
+          if (operand.text[0] === "v" && !(operand.tooltip && operand.tooltip.includes("Float"))) {
+              isVirtual = true;
+              className += " virtual-reg";
           }
+          const span = createElement("span", className, operand.text);
+          if (operand.tooltip) {
+              span.setAttribute("title", operand.tooltip);
+          }
+          return this.elementForOperandWithSpan(span, operand.text, isVirtual);
+      }
+      elementForPhiOperand(text) {
+          const span = createElement("span", "parameter tag clickable virtual-reg", text);
+          return this.elementForOperandWithSpan(span, text, true);
+      }
+      elementForOperandWithSpan(span, text, isVirtual) {
+          const selectionText = isVirtual ? `virt_${text}` : text;
+          span.onclick = this.mkOperandLinkHandler(selectionText);
+          this.searchInfo.push(text);
+          this.addHtmlElementForNodeId(selectionText, span);
+          const container = createElement("div", "");
+          container.appendChild(span);
+          return container;
+      }
+      elementForInstruction(instruction) {
+          const instNodeEl = createElement("div", "instruction-node");
+          const instId = createElement("div", "instruction-id", String(instruction.id));
+          const offsets = this.sourceResolver.instructionsPhase.instructionToPcOffsets(instruction.id);
+          instId.classList.add("clickable");
+          this.addHtmlElementForInstructionId(instruction.id, instId);
+          instId.onclick = this.mkInstructionLinkHandler(instruction.id);
+          instId.dataset.instructionId = String(instruction.id);
+          if (offsets) {
+              instId.setAttribute("title", `This instruction generated gap code at pc-offset 0x${offsets.gap.toString(16)}, code at pc-offset 0x${offsets.arch.toString(16)}, condition handling at pc-offset 0x${offsets.condition.toString(16)}.`);
+          }
+          instNodeEl.appendChild(instId);
+          const instContentsEl = createElement("div", "instruction-contents");
+          instNodeEl.appendChild(instContentsEl);
+          // Print gap moves.
+          const gapEl = createElement("div", "gap", "gap");
+          let hasGaps = false;
+          for (const gap of instruction.gaps) {
+              const moves = createElement("div", "comma-sep-list gap-move");
+              for (const [destination, source] of gap) {
+                  hasGaps = true;
+                  const moveEl = createElement("div", "move");
+                  const destinationEl = this.elementForOperand(destination);
+                  moveEl.appendChild(destinationEl);
+                  const assignEl = createElement("div", "assign", "=");
+                  moveEl.appendChild(assignEl);
+                  const sourceEl = this.elementForOperand(source);
+                  moveEl.appendChild(sourceEl);
+                  moves.appendChild(moveEl);
+              }
+              gapEl.appendChild(moves);
+          }
+          if (hasGaps) {
+              instContentsEl.appendChild(gapEl);
+          }
+          const instEl = createElement("div", "instruction");
+          instContentsEl.appendChild(instEl);
+          if (instruction.outputs.length > 0) {
+              const outputs = createElement("div", "comma-sep-list input-output-list");
+              for (const output of instruction.outputs) {
+                  const outputEl = this.elementForOperand(output);
+                  outputs.appendChild(outputEl);
+              }
+              instEl.appendChild(outputs);
+              const assignEl = createElement("div", "assign", "=");
+              instEl.appendChild(assignEl);
+          }
+          const text = instruction.opcode + instruction.flags;
+          const instLabel = createElement("div", "node-label", text);
+          if (instruction.opcode == "ArchNop" && instruction.outputs.length == 1
+              && instruction.outputs[0].tooltip) {
+              instLabel.innerText = instruction.outputs[0].tooltip;
+          }
+          this.searchInfo.push(text);
+          this.addHtmlElementForNodeId(text, instLabel);
+          instEl.appendChild(instLabel);
+          if (instruction.inputs.length > 0) {
+              const inputs = createElement("div", "comma-sep-list input-output-list");
+              for (const input of instruction.inputs) {
+                  const inputEl = this.elementForOperand(input);
+                  inputs.appendChild(inputEl);
+              }
+              instEl.appendChild(inputs);
+          }
+          if (instruction.temps.length > 0) {
+              const temps = createElement("div", "comma-sep-list input-output-list temps");
+              for (const temp of instruction.temps) {
+                  const tempEl = this.elementForOperand(temp);
+                  temps.appendChild(tempEl);
+              }
+              instEl.appendChild(temps);
+          }
+          return instNodeEl;
       }
       addRangeView() {
-          const preventRangeView = reason => {
-              const toggleRangesInput = this.toggleRangeViewEl.firstChild;
-              if (this.rangeView) {
-                  toggleRangesInput.checked = false;
-                  this.toggleRangeView(toggleRangesInput);
-              }
-              toggleRangesInput.disabled = true;
-              this.toggleRangeViewEl.style.textDecoration = "line-through";
-              this.toggleRangeViewEl.setAttribute("title", reason);
-          };
           if (this.sequence.registerAllocation) {
               if (!this.rangeView) {
                   this.rangeView = new RangeView(this);
               }
               const source = this.sequence.registerAllocation;
-              if (source.fixedLiveRanges.size == 0 && source.liveRanges.size == 0) {
-                  preventRangeView("No live ranges to show");
+              if (source.fixedLiveRanges.length == 0 && source.liveRanges.length == 0) {
+                  this.preventRangeView("No live ranges to show");
               }
               else if (this.numInstructions >= 249) {
                   // This is due to the css grid-column being limited to 1000 columns.
                   // Performance issues would otherwise impose some limit.
                   // TODO(george.wort@arm.com): Allow the user to specify an instruction range
                   //                            to display that spans less than 249 instructions.
-                  preventRangeView("Live range display is only supported for sequences with less than 249 instructions");
+                  this.preventRangeView("Live range display is only supported for sequences with less than 249 instructions");
               }
               if (this.showRangeView) {
                   this.rangeView.initializeContent(this.sequence.blocks);
               }
           }
           else {
-              preventRangeView("No live range data provided");
+              this.preventRangeView("No live range data provided");
           }
+      }
+      preventRangeView(reason) {
+          const toggleRangesInput = this.toggleRangeViewEl.firstChild;
+          if (this.rangeView) {
+              toggleRangesInput.checked = false;
+              this.toggleRangeView(toggleRangesInput);
+          }
+          toggleRangesInput.disabled = true;
+          this.toggleRangeViewEl.style.textDecoration = "line-through";
+          this.toggleRangeViewEl.setAttribute("title", reason);
+      }
+      mkBlockLinkHandler(blockId) {
+          return this.mkLinkHandler(blockId, this.blockSelectionHandler);
+      }
+      mkInstructionLinkHandler(instrId) {
+          return this.mkLinkHandler(instrId, this.registerAllocationSelectionHandler);
+      }
+      mkOperandLinkHandler(text) {
+          return this.mkLinkHandler(text, this.nodeSelectionHandler);
+      }
+      mkLinkHandler(id, handler) {
+          return function (e) {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  handler.clear();
+              }
+              handler.select([id], true);
+          };
       }
       elementForToggleRangeView() {
           const toggleRangeViewEl = createElement("label", "", "show live ranges");
@@ -13171,24 +13351,8 @@
           else {
               this.rangeView.hide();
           }
-          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new Event("resize"));
           toggleRangesInput.disabled = false;
-      }
-      searchInputAction(searchBar, e) {
-          e.stopPropagation();
-          this.nodeSelectionHandler.clear();
-          const query = searchBar.value;
-          if (query.length == 0)
-              return;
-          const select = [];
-          window.sessionStorage.setItem("lastSearch", query);
-          const reg = new RegExp(query);
-          for (const item of this.searchInfo) {
-              if (reg.exec(item) != null) {
-                  select.push(item);
-              }
-          }
-          this.nodeSelectionHandler.select(select, true);
       }
   }
 
