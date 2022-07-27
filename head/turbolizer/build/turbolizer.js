@@ -138,6 +138,11 @@
       if (storageGetItem(key, null, false) === null)
           storageSetItem(key, toSet);
   }
+  function copyToClipboard(text) {
+      if (!text || text.length == 0)
+          return;
+      navigator.clipboard.writeText(text);
+  }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -1327,6 +1332,12 @@
                   + TURBOSHAFT_NODE_X_INDENT * 2;
           }
           return this.width;
+      }
+      compressHeight() {
+          if (this.collapsed) {
+              this.height = this.getHeight(null);
+              this.showProperties = null;
+          }
       }
       getRankIndent() {
           return this.rank * (TURBOSHAFT_BLOCK_ROW_SEPARATION + 2 * DEFAULT_NODE_BUBBLE_RADIUS);
@@ -11704,9 +11715,6 @@
               case 80: // 'p'
                   this.selectOrigins();
                   break;
-              default:
-                  eventHandled = false;
-                  break;
               case 83: // 's'
                   if (!event.ctrlKey && !event.shiftKey) {
                       this.hideSelectedAction(this);
@@ -11722,6 +11730,9 @@
                   else {
                       eventHandled = false;
                   }
+                  break;
+              default:
+                  eventHandled = false;
                   break;
           }
           if (eventHandled)
@@ -13405,8 +13416,6 @@
           this.minGraphY = 0;
           this.maxGraphY = 1;
           for (const block of this.blocks()) {
-              if (!block.visible)
-                  continue;
               this.minGraphX = Math.min(this.minGraphX, block.x);
               this.maxGraphNodeX = Math.max(this.maxGraphNodeX, block.x + block.getWidth());
               this.minGraphY = Math.min(this.minGraphY, block.y - NODE_INPUT_WIDTH);
@@ -13456,9 +13465,7 @@
           this.visitOrderWithinRank = 0;
           const blocks = this.initBlocks();
           this.initWorkList(blocks);
-          let visited = new Array();
-          blocks.forEach((block) => this.dfsFindRankLate(visited, block));
-          visited = new Array();
+          const visited = new Array();
           blocks.forEach((block) => this.dfsRankOrder(visited, block));
           const rankSets = this.getRankSets(showProperties);
           this.placeBlocks(rankSets, showProperties);
@@ -13503,17 +13510,13 @@
                   block.rank = 1;
                   changed = true;
               }
-              let begin = 0;
               let end = block.inputs.length;
-              if (block.type == TurboshaftGraphBlockType.Merge && block.inputs.length > 0) {
-                  begin = block.inputs.length - 1;
-              }
-              else if (block.hasBackEdges()) {
+              if (block.hasBackEdges()) {
                   end = 1;
               }
-              for (let l = begin; l < end; ++l) {
+              for (let l = 0; l < end; ++l) {
                   const input = block.inputs[l].source;
-                  if (input.visible && input.rank >= block.rank) {
+                  if (input.rank >= block.rank) {
                       block.rank = input.rank + 1;
                       changed = true;
                   }
@@ -13533,27 +13536,6 @@
               this.trace("layoutGraph work list");
           }
       }
-      dfsFindRankLate(visited, block) {
-          if (visited[block.id])
-              return;
-          visited[block.id] = true;
-          const originalRank = block.rank;
-          let newRank = block.rank;
-          let isFirstInput = true;
-          for (const outputEdge of block.outputs) {
-              const output = outputEdge.target;
-              this.dfsFindRankLate(visited, output);
-              const outputRank = output.rank;
-              if (output.visible && (isFirstInput || outputRank <= newRank) &&
-                  (outputRank > originalRank)) {
-                  newRank = outputRank - 1;
-              }
-              isFirstInput = false;
-          }
-          if (block.type != TurboshaftGraphBlockType.Merge) {
-              block.rank = newRank;
-          }
-      }
       dfsRankOrder(visited, block) {
           if (visited[block.id])
               return;
@@ -13569,22 +13551,17 @@
           }
       }
       getRankSets(showProperties) {
-          const rankMaxBlockHeight = new Array();
-          for (const block of this.graph.blocks()) {
-              rankMaxBlockHeight[block.rank] = Math.max(rankMaxBlockHeight[block.rank] ?? 0, block.getHeight(showProperties));
-          }
+          const ranksMaxBlockHeight = this.graph.getRanksMaxBlockHeight(showProperties);
           const rankSets = new Array();
           for (const block of this.graph.blocks()) {
-              block.y = rankMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
+              block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
                   return accumulator + current;
-              }, block.rank * (TURBOSHAFT_BLOCK_ROW_SEPARATION + 2 * DEFAULT_NODE_BUBBLE_RADIUS));
-              if (block.visible) {
-                  if (!rankSets[block.rank]) {
-                      rankSets[block.rank] = new Array(block);
-                  }
-                  else {
-                      rankSets[block.rank].push(block);
-                  }
+              }, block.getRankIndent());
+              if (!rankSets[block.rank]) {
+                  rankSets[block.rank] = new Array(block);
+              }
+              else {
+                  rankSets[block.rank].push(block);
               }
           }
           return rankSets;
@@ -13601,17 +13578,12 @@
               let placedCount = 0;
               rankSet = rankSet.sort((a, b) => a.compare(b));
               for (const block of rankSet) {
-                  if (block.visible) {
-                      block.x = this.layoutOccupation.occupy(block);
-                      const blockWidth = block.getWidth();
-                      this.trace(`Block ${block.id} is placed between [${block.x}, ${block.x + blockWidth})`);
-                      const staggeredFlooredI = Math.floor(placedCount++ % 3);
-                      const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
-                      block.outputApproach += delta;
-                  }
-                  else {
-                      block.x = 0;
-                  }
+                  block.x = this.layoutOccupation.occupy(block);
+                  const blockWidth = block.getWidth();
+                  this.trace(`Block ${block.id} is placed between [${block.x}, ${block.x + blockWidth})`);
+                  const staggeredFlooredI = Math.floor(placedCount++ % 3);
+                  const delta = MINIMUM_EDGE_SEPARATION * staggeredFlooredI;
+                  block.outputApproach += delta;
               }
               this.traceOccupation("Before clearing blocks");
               this.layoutOccupation.clearOccupied();
@@ -13667,7 +13639,10 @@
       initializeContent(data, rememberedSelection) {
           this.show();
           this.addImgInput("layout", "layout graph", partial(this.layoutAction, this));
-          this.addImgInput("show-all", "show all blocks", partial(this.showAllBlocksAction, this));
+          this.addImgInput("show-all", "uncollapse all blocks", partial(this.uncollapseAllBlocksAction, this));
+          this.addImgInput("compress-layout", "compress layout", partial(this.compressLayoutAction, this));
+          this.addImgInput("collapse-selected", "collapse selected blocks", partial(this.changeSelectedCollapsingAction, this, true));
+          this.addImgInput("uncollapse-selected", "uncollapse selected blocks", partial(this.changeSelectedCollapsingAction, this, false));
           this.addImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this));
           this.addToggleImgInput("toggle-properties", "toggle properties", this.state.showProperties, partial(this.togglePropertiesAction, this));
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
@@ -13698,7 +13673,59 @@
           this.updateInlineNodes();
       }
       svgKeyDown() {
-          event.preventDefault();
+          let eventHandled = true; // unless the below switch defaults
+          switch (event.keyCode) {
+              case 38: // UP
+              case 40: // DOWN
+                  this.showSelectionFrontierNodes(event.keyCode == 38, undefined, true);
+                  break;
+              case 65: // 'a'
+                  this.selectAllNodes();
+                  break;
+              case 67: // 'c'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.copyToClipboardHoveredNodeInfo();
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 73: // 'i'
+                  this.selectNodesOfSelectedBlocks();
+                  break;
+              case 80: // 'p'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.changeSelectedCollapsingAction(this, true);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 82: // 'r'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.layoutAction(this);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 83: // 's'
+                  if (!event.ctrlKey && !event.shiftKey) {
+                      this.changeSelectedCollapsingAction(this, false);
+                  }
+                  else {
+                      eventHandled = false;
+                  }
+                  break;
+              case 85: // 'u'
+                  this.collapseUnusedBlocks();
+                  break;
+              default:
+                  eventHandled = false;
+                  break;
+          }
+          if (eventHandled)
+              event.preventDefault();
       }
       searchInputAction(searchInput, e, onlyVisible) {
           if (e.keyCode == 13) {
@@ -13709,9 +13736,11 @@
                   return;
               const reg = new RegExp(query);
               const filterFunction = (node) => {
-                  return reg.exec(node.displayLabel) !== null ||
+                  if (!onlyVisible)
+                      node.block.collapsed = false;
+                  return (!onlyVisible || !node.block.collapsed) && (reg.exec(node.displayLabel) !== null ||
                       (this.state.showProperties && reg.exec(node.properties)) ||
-                      reg.exec(node.getTitle());
+                      reg.exec(node.getTitle()));
               };
               const selection = this.searchNodes(filterFunction, e, onlyVisible);
               this.nodeSelectionHandler.select(selection, true);
@@ -13812,11 +13841,8 @@
           if (!this.state.cacheLayout ||
               this.graph.graphPhase.stateType == GraphStateType.NeedToFullRebuild) {
               this.updateGraphStateType(GraphStateType.NeedToFullRebuild);
-              this.showAllBlocksAction(this);
           }
-          else {
-              this.showVisible();
-          }
+          this.showVisible();
           const adaptedSelection = this.adaptSelection(rememberedSelection);
           this.layoutGraph();
           this.updateGraphVisibility();
@@ -13848,8 +13874,7 @@
           const iconsPath = "img/turboshaft/";
           // select existing edges
           const filteredEdges = [
-              ...this.graph.blocksEdges(edge => this.graph.isRendered()
-                  && edge.source.visible && edge.target.visible)
+              ...this.graph.blocksEdges(_ => this.graph.isRendered())
           ];
           const selEdges = view.visibleEdges
               .selectAll("path")
@@ -13874,7 +13899,7 @@
           newAndOldEdges.classed("hidden", edge => !edge.isVisible());
           // select existing blocks
           const filteredBlocks = [
-              ...this.graph.blocks(block => this.graph.isRendered() && block.visible)
+              ...this.graph.blocks(_ => this.graph.isRendered())
           ];
           const allBlocks = view.visibleBlocks
               .selectAll(".turboshaft-block");
@@ -13996,6 +14021,7 @@
                       .classed("input", true);
                   view.visibleNodes.data(node.outputs.map(edge => edge.target), target => target.toString())
                       .classed("output", true);
+                  view.hoveredNodeIdentifier = node.identifier();
                   view.updateGraphVisibility();
               })
                   .on("mouseleave", (node) => {
@@ -14003,6 +14029,7 @@
                       .concat(node.outputs.map(edge => edge.target));
                   view.visibleNodes.data(inOutNodes, inOut => inOut.toString())
                       .classed("input output", false);
+                  view.hoveredNodeIdentifier = null;
                   view.updateGraphVisibility();
               })
                   .on("click", (node) => {
@@ -14026,9 +14053,7 @@
               }
           });
           newNodes.merge(selNodes)
-              .classed("selected", node => state.selection.isSelected(node))
-              .select("rect")
-              .attr("height", node => node.getHeight(state.showProperties));
+              .classed("selected", node => state.selection.isSelected(node));
       }
       updateInlineNodes() {
           const state = this.state;
@@ -14066,8 +14091,7 @@
           }
           if (block.outputs.length > 0) {
               const x = block.getOutputX();
-              const y = block.getHeight(this.state.showProperties)
-                  + DEFAULT_NODE_BUBBLE_RADIUS;
+              const y = block.getHeight(this.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
               svg.append("circle")
                   .classed("filledBubbleStyle", true)
                   .attr("id", `ob,${block.id}`)
@@ -14082,8 +14106,7 @@
               if (components[0] === "ob") {
                   const from = view.graph.blockMap[components[1]];
                   const x = from.getOutputX();
-                  const y = from.getHeight(view.state.showProperties)
-                      + DEFAULT_NODE_BUBBLE_RADIUS;
+                  const y = from.getHeight(view.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
                   this.setAttribute("transform", `translate(${x},${y})`);
               }
           });
@@ -14139,15 +14162,34 @@
           view.viewWholeGraph();
           view.focusOnSvg();
       }
-      // TODO (danylo boiko) Uncollapse all blocks
-      showAllBlocksAction(view) {
-          for (const node of view.graph.blocks()) {
-              node.visible = true;
+      uncollapseAllBlocksAction(view) {
+          for (const block of view.graph.blocks()) {
+              block.collapsed = false;
           }
-          for (const edge of view.graph.blocksEdges()) {
-              edge.visible = true;
+          view.updateGraphVisibility();
+          view.focusOnSvg();
+      }
+      compressLayoutAction(view) {
+          for (const block of view.graph.blocks()) {
+              block.compressHeight();
           }
-          view.showVisible();
+          const ranksMaxBlockHeight = view.graph.getRanksMaxBlockHeight(view.state.showProperties);
+          for (const block of view.graph.blocks()) {
+              block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
+                  return accumulator + current;
+              }, block.getRankIndent());
+          }
+          view.adaptiveUpdateGraphVisibility();
+      }
+      changeSelectedCollapsingAction(view, collapsed) {
+          for (const key of view.state.blocksSelection.selectedKeys()) {
+              const block = view.graph.blockMap[key];
+              if (!block)
+                  continue;
+              block.collapsed = collapsed;
+          }
+          view.updateGraphVisibility();
+          view.focusOnSvg();
       }
       zoomSelectionAction(view) {
           view.viewSelection();
@@ -14155,7 +14197,12 @@
       }
       togglePropertiesAction(view) {
           view.state.showProperties = !view.state.showProperties;
-          const ranksMaxBlockHeight = view.graph.getRanksMaxBlockHeight(view.state.showProperties);
+          const ranksMaxBlockHeight = new Array();
+          for (const block of view.graph.blocks()) {
+              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.collapsed
+                  ? block.height
+                  : block.getHeight(view.state.showProperties));
+          }
           for (const block of view.graph.blocks()) {
               block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
                   return accumulator + current;
@@ -14169,6 +14216,45 @@
           view.state.cacheLayout = !view.state.cacheLayout;
           const element = document.getElementById("toggle-cache-layout");
           element.classList.toggle("button-input-toggled", view.state.cacheLayout);
+      }
+      // Hotkeys handlers
+      selectAllNodes() {
+          this.state.selection.select(this.graph.nodeMap, true);
+          this.updateGraphVisibility();
+      }
+      collapseUnusedBlocks() {
+          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+          if (!node)
+              return;
+          const usedBlocks = new Set([node.block]);
+          for (const input of node.inputs) {
+              usedBlocks.add(input.source.block);
+          }
+          for (const output of node.outputs) {
+              usedBlocks.add(output.target.block);
+          }
+          for (const block of this.graph.blockMap) {
+              block.collapsed = !usedBlocks.has(block);
+          }
+          this.updateGraphVisibility();
+      }
+      copyToClipboardHoveredNodeInfo() {
+          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+          if (!node)
+              return;
+          copyToClipboard(node.getTitle());
+      }
+      selectNodesOfSelectedBlocks() {
+          let selectedNodes = new Array();
+          for (const key of this.state.blocksSelection.selectedKeys()) {
+              const block = this.graph.blockMap[key];
+              if (!block)
+                  continue;
+              block.collapsed = false;
+              selectedNodes = selectedNodes.concat(block.nodes);
+          }
+          this.state.selection.select(selectedNodes, true);
+          this.updateGraphVisibility();
       }
   }
 
@@ -14498,8 +14584,8 @@
           return `source-pre-${this.source.sourceId}-header`;
       }
       getHtmlCodeLines() {
-          const ordereList = this.divNode.querySelector(`#${this.getCodeHtmlElementName()} ol`);
-          return ordereList.childNodes;
+          const orderList = this.divNode.querySelector(`#${this.getCodeHtmlElementName()} ol`);
+          return orderList.childNodes;
       }
       onSelectLine(lineNumber, doClear) {
           if (doClear) {
