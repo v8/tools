@@ -3,18 +3,21 @@
 // found in the LICENSE file.
 
 import { GenericPosition, SourceResolver } from "../source-resolver";
+import { GraphNode } from "../phases/graph-phase/graph-node";
 import {
   ClearableHandler,
   SourcePositionSelectionHandler,
   NodeSelectionHandler,
   BlockSelectionHandler,
   InstructionSelectionHandler,
-  RegisterAllocationSelectionHandler
+  RegisterAllocationSelectionHandler,
+  HistoryHandler
 } from "./selection-handler";
 
 export class SelectionBroker {
   sourceResolver: SourceResolver;
   allHandlers: Array<ClearableHandler>;
+  historyHandlers: Array<HistoryHandler>;
   nodeHandlers: Array<NodeSelectionHandler>;
   blockHandlers: Array<BlockSelectionHandler>;
   instructionHandlers: Array<InstructionSelectionHandler>;
@@ -24,11 +27,20 @@ export class SelectionBroker {
   constructor(sourceResolver: SourceResolver) {
     this.sourceResolver = sourceResolver;
     this.allHandlers = new Array<ClearableHandler>();
+    this.historyHandlers = new Array<HistoryHandler>();
     this.nodeHandlers = new Array<NodeSelectionHandler>();
     this.blockHandlers = new Array<BlockSelectionHandler>();
     this.instructionHandlers = new Array<InstructionSelectionHandler>();
     this.sourcePositionHandlers = new Array<SourcePositionSelectionHandler>();
     this.registerAllocationHandlers = new Array<RegisterAllocationSelectionHandler>();
+  }
+
+  public addHistoryHandler(handler: HistoryHandler): void {
+    this.historyHandlers.push(handler);
+  }
+
+  public deleteHistoryHandler(handler: HistoryHandler): void {
+    this.historyHandlers = this.historyHandlers.filter(h => h != handler);
   }
 
   public addNodeHandler(handler: NodeSelectionHandler & ClearableHandler): void {
@@ -68,11 +80,17 @@ export class SelectionBroker {
     this.registerAllocationHandlers.push(handler);
   }
 
-  // TODO (danylo boiko) Add instructionOffsets type
-  public broadcastInstructionSelect(from, instructionOffsets, selected: boolean): void {
+  public broadcastHistoryShow(from, node: GraphNode, phaseName: string): void {
+    for (const handler of this.historyHandlers) {
+      if (handler != from) handler.showTurbofanNodeHistory(node, phaseName);
+    }
+  }
+
+  public broadcastInstructionSelect(from, instructionOffsets: Array<number>, selected: boolean):
+    void {
     // Select the lines from the disassembly (right panel)
     for (const handler of this.instructionHandlers) {
-      if (handler != from) handler.brokeredInstructionSelect(instructionOffsets, selected);
+      if (handler != from) handler.brokeredInstructionSelect([instructionOffsets], selected);
     }
 
     // Select the lines from the source panel (left panel)

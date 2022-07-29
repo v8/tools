@@ -33,10 +33,10 @@ export class TurboshaftGraphView extends MovableView<TurboshaftGraph> {
   visibleEdges: d3.Selection<any, TurboshaftGraphEdge<TurboshaftGraphBlock>, any, any>;
   visibleBubbles: d3.Selection<any, any, any, any>;
   blockDrag: d3.DragBehavior<any, TurboshaftGraphBlock, TurboshaftGraphBlock>;
-  hoveredNodeIdentifier: string;
 
   constructor(idOrContainer: string | HTMLElement, broker: SelectionBroker,
-              showPhaseByName: (name: string) => void, toolbox: HTMLElement) {
+              showPhaseByName: (name: string, selection: SelectionStorage) => void,
+              toolbox: HTMLElement) {
     super(idOrContainer, broker, showPhaseByName, toolbox);
 
     this.state.selection = new SelectionMap(node => node.identifier());
@@ -99,6 +99,10 @@ export class TurboshaftGraphView extends MovableView<TurboshaftGraph> {
         this.viewWholeGraph();
       }
     }
+
+    if (this.graphLayout.graph.graphPhase.propertiesShowed != this.state.showProperties) {
+      this.compressLayoutAction(this);
+    }
   }
 
   public updateGraphVisibility(): void {
@@ -152,7 +156,12 @@ export class TurboshaftGraphView extends MovableView<TurboshaftGraph> {
         }
         break;
       case 85: // 'u'
-        this.collapseUnusedBlocks();
+        this.collapseUnusedBlocks(this.state.selection.selection.values());
+        break;
+      case 89: // 'y'
+        const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+        if (!node) return;
+        this.collapseUnusedBlocks([node]);
         break;
       default:
         eventHandled = false;
@@ -189,6 +198,7 @@ export class TurboshaftGraphView extends MovableView<TurboshaftGraph> {
   }
 
   public hide(): void {
+    this.graphLayout.graph.graphPhase.propertiesShowed = this.state.showProperties;
     this.broker.deleteBlockHandler(this.blockSelectionHandler);
     super.hide();
   }
@@ -731,17 +741,21 @@ export class TurboshaftGraphView extends MovableView<TurboshaftGraph> {
     this.updateGraphVisibility();
   }
 
-  private collapseUnusedBlocks(): void {
-    const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
-    if (!node) return;
+  private collapseUnusedBlocks(usedNodes: Iterable<TurboshaftGraphNode>): void {
+    const usedBlocks = new Set<TurboshaftGraphBlock>();
+    for (const node of usedNodes) {
+      usedBlocks.add(node.block);
 
-    const usedBlocks = new Set<TurboshaftGraphBlock>([node.block]);
-    for (const input of node.inputs) {
-      usedBlocks.add(input.source.block);
+      for (const input of node.inputs) {
+        usedBlocks.add(input.source.block);
+      }
+
+      for (const output of node.outputs) {
+        usedBlocks.add(output.target.block);
+      }
     }
-    for (const output of node.outputs) {
-      usedBlocks.add(output.target.block);
-    }
+
+    if (usedBlocks.size == 0) return;
 
     for (const block of this.graph.blockMap) {
       block.collapsed = !usedBlocks.has(block);

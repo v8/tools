@@ -19,6 +19,9 @@
   const DISASSEMBLY_PANE_DEFAULT_PERCENT = 3 / 4;
   const RANGES_PANE_HEIGHT_DEFAULT_PERCENT = 3 / 4;
   const RANGES_PANE_WIDTH_DEFAULT_PERCENT = 1 / 2;
+  const HISTORY_DEFAULT_HEIGHT_PERCENT = 1 / 3.5;
+  const HISTORY_CONTENT_INDENT = 8;
+  const HISTORY_SCROLLBAR_WIDTH = 6;
   const RESIZER_RANGES_HEIGHT_BUFFER_PERCENTAGE = 5;
   const ROW_GROUP_SIZE = 20;
   const POSITIONS_PER_INSTRUCTION = 4;
@@ -27,6 +30,7 @@
   const INTERVAL_TEXT_FOR_NONE = "none";
   const INTERVAL_TEXT_FOR_CONST = "const";
   const INTERVAL_TEXT_FOR_STACK = "stack:";
+  const HISTORY_ID = "history";
   const MULTIVIEW_ID = "multiview";
   const RESIZER_RANGES_ID = "resizer-ranges";
   const SHOW_HIDE_RANGES_ID = "show-hide-ranges";
@@ -103,13 +107,13 @@
   function alignUp(raw, multiple) {
       return Math.floor((raw + multiple - 1) / multiple) * multiple;
   }
-  function measureText(text) {
+  function measureText(text, coefficient = 1) {
       const textMeasure = document.getElementById("text-measure");
       if (textMeasure instanceof SVGTSpanElement) {
           textMeasure.textContent = text;
           return {
-              width: textMeasure.getBBox().width,
-              height: textMeasure.getBBox().height,
+              width: textMeasure.getBBox().width * coefficient,
+              height: textMeasure.getBBox().height * coefficient,
           };
       }
       return { width: 0, height: 0 };
@@ -142,6 +146,10 @@
       if (!text || text.length == 0)
           return;
       navigator.clipboard.writeText(text);
+  }
+  function getNumericCssValue(varName) {
+      const propertyValue = getComputedStyle(document.body).getPropertyValue(varName);
+      return parseFloat(propertyValue.match(/[+-]?\d+(\.\d+)?/g)[0]);
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
@@ -480,6 +488,11 @@
               ((this.nodeLabel.opcode === "Phi" || this.nodeLabel.opcode === "EffectPhi" ||
                   this.nodeLabel.opcode === "InductionVariablePhi") &&
                   this.inputs[this.inputs.length - 1].source.nodeLabel.opcode === "Loop");
+      }
+      equals(that) {
+          if (!that)
+              return false;
+          return this.nodeLabel.equals(that.nodeLabel);
       }
   }
 
@@ -1650,6 +1663,9 @@
       getPhase(phaseId) {
           return this.phases[phaseId];
       }
+      getPhaseNameById(phaseId) {
+          return this.getPhase(phaseId).name;
+      }
       getPhaseIdByName(phaseName) {
           return this.phaseNames.get(phaseName);
       }
@@ -1725,11 +1741,18 @@
       constructor(sourceResolver) {
           this.sourceResolver = sourceResolver;
           this.allHandlers = new Array();
+          this.historyHandlers = new Array();
           this.nodeHandlers = new Array();
           this.blockHandlers = new Array();
           this.instructionHandlers = new Array();
           this.sourcePositionHandlers = new Array();
           this.registerAllocationHandlers = new Array();
+      }
+      addHistoryHandler(handler) {
+          this.historyHandlers.push(handler);
+      }
+      deleteHistoryHandler(handler) {
+          this.historyHandlers = this.historyHandlers.filter(h => h != handler);
       }
       addNodeHandler(handler) {
           this.allHandlers.push(handler);
@@ -1759,12 +1782,17 @@
           this.allHandlers.push(handler);
           this.registerAllocationHandlers.push(handler);
       }
-      // TODO (danylo boiko) Add instructionOffsets type
+      broadcastHistoryShow(from, node, phaseName) {
+          for (const handler of this.historyHandlers) {
+              if (handler != from)
+                  handler.showTurbofanNodeHistory(node, phaseName);
+          }
+      }
       broadcastInstructionSelect(from, instructionOffsets, selected) {
           // Select the lines from the disassembly (right panel)
           for (const handler of this.instructionHandlers) {
               if (handler != from)
-                  handler.brokeredInstructionSelect(instructionOffsets, selected);
+                  handler.brokeredInstructionSelect([instructionOffsets], selected);
           }
           // Select the lines from the source panel (left panel)
           const pcOffsets = this.sourceResolver.instructionsPhase
@@ -2174,7 +2202,7 @@
               select: function (instructionIds, selected) {
                   view.registerAllocationSelection.select(instructionIds, selected);
                   view.updateSelection();
-                  view.broker.broadcastInstructionSelect(null, [instructionIds], selected);
+                  view.broker.broadcastInstructionSelect(null, instructionIds, selected);
               },
               clear: function () {
                   view.registerAllocationSelection.clear();
@@ -11511,6 +11539,7 @@
               : null;
           if (selectedNodes?.length > 0) {
               this.connectVisibleSelectedElements(this.state.selection);
+              this.updateGraphVisibility();
               this.viewSelection();
           }
           else {
@@ -11592,6 +11621,7 @@
               const adjOutputNodes = adjOutputEdges.data().map(edge => edge.target);
               visibleNodes.data(adjOutputNodes, node => node.toString())
                   .attr("relToHover", "output");
+              view.hoveredNodeIdentifier = node.identifier();
               view.updateGraphVisibility();
           })
               .on("mouseleave", node => {
@@ -11602,6 +11632,7 @@
                   .concat(adjEdges.data().map(edge => edge.source));
               const visibleNodes = view.visibleNodes.selectAll("g");
               visibleNodes.data(adjNodes, node => node.toString()).attr("relToHover", "none");
+              view.hoveredNodeIdentifier = null;
               view.updateGraphVisibility();
           })
               .on("click", node => {
@@ -11650,7 +11681,7 @@
               .attr("transform", node => `translate(${node.x},${node.y})`)
               .select("rect")
               .attr("height", node => node.getHeight(view.state.showTypes));
-          view.visibleBubbles = selectAll("circle");
+          view.visibleBubbles = view.svg.selectAll("circle");
           view.updateInputAndOutputBubbles();
           graph.maxGraphX = graph.maxGraphNodeX;
           newAndOldEdges.attr("d", edge => edge.generatePath(graph, view.state.showTypes));
@@ -11658,6 +11689,10 @@
       svgKeyDown() {
           let eventHandled = true; // unless the below switch defaults
           switch (event.keyCode) {
+              case 38: // UP
+              case 40: // DOWN
+                  this.showSelectionFrontierNodes(event.keyCode == 38, undefined, true);
+                  break;
               case 49:
               case 50:
               case 51:
@@ -11669,16 +11704,8 @@
               case 57: // '1'-'9'
                   this.showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 49), !event.ctrlKey);
                   break;
-              case 97:
-              case 98:
-              case 99:
-              case 100:
-              case 101:
-              case 102:
-              case 103:
-              case 104:
-              case 105: // 'numpad 1'-'numpad 9'
-                  this.showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 97), !event.ctrlKey);
+              case 65: // 'a'
+                  this.selectAllNodes();
                   break;
               case 67: // 'c'
                   this.showSelectionFrontierNodes(event.altKey, (edge) => edge.type === "control", true);
@@ -11686,8 +11713,8 @@
               case 69: // 'e'
                   this.showSelectionFrontierNodes(event.altKey, (edge) => edge.type === "effect", true);
                   break;
-              case 79: // 'o'
-                  this.showSelectionFrontierNodes(false, undefined, false);
+              case 72: // 'h'
+                  this.showHoveredNodeHistory();
                   break;
               case 73: // 'i'
                   if (!event.ctrlKey && !event.shiftKey) {
@@ -11697,12 +11724,11 @@
                       eventHandled = false;
                   }
                   break;
-              case 65: // 'a'
-                  this.selectAllNodes();
+              case 79: // 'o'
+                  this.showSelectionFrontierNodes(false, undefined, false);
                   break;
-              case 38: // UP
-              case 40: // DOWN
-                  this.showSelectionFrontierNodes(event.keyCode == 38, undefined, true);
+              case 80: // 'p'
+                  this.selectOrigins();
                   break;
               case 82: // 'r'
                   if (!event.ctrlKey && !event.shiftKey) {
@@ -11711,9 +11737,6 @@
                   else {
                       eventHandled = false;
                   }
-                  break;
-              case 80: // 'p'
-                  this.selectOrigins();
                   break;
               case 83: // 's'
                   if (!event.ctrlKey && !event.shiftKey) {
@@ -11730,6 +11753,17 @@
                   else {
                       eventHandled = false;
                   }
+                  break;
+              case 97:
+              case 98:
+              case 99:
+              case 100:
+              case 101:
+              case 102:
+              case 103:
+              case 104:
+              case 105: // 'numpad 1'-'numpad 9'
+                  this.showSelectionFrontierNodes(true, (edge, index) => index == (event.keyCode - 97), !event.ctrlKey);
                   break;
               default:
                   eventHandled = false;
@@ -11768,6 +11802,9 @@
       adaptSelection(rememberedSelection) {
           if (!this.graph.nodeMap || !(rememberedSelection instanceof SelectionStorage)) {
               return new SelectionStorage();
+          }
+          for (const node of rememberedSelection.adaptedNodes) {
+              this.graph.makeNodeVisible(node);
           }
           for (const [key, node] of rememberedSelection.nodes.entries()) {
               // Adding survived nodes (with the same id)
@@ -12083,10 +12120,16 @@
           this.state.selection.select(allVisibleNodes, true);
           this.updateGraphVisibility();
       }
+      showHoveredNodeHistory() {
+          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+          if (!node)
+              return;
+          this.broker.broadcastHistoryShow(null, node, this.phaseName);
+      }
       selectOrigins() {
+          const selection = new SelectionStorage();
           const origins = new Array();
           let phase = this.phaseName;
-          const selection = new Set();
           for (const node of this.state.selection) {
               const origin = node.nodeLabel.origin;
               if (origin && origin instanceof NodeOrigin) {
@@ -12096,14 +12139,13 @@
                       origins.push(node);
                   }
                   else {
-                      selection.add(origin.identifier());
+                      selection.adaptNode(origin.identifier());
                   }
               }
           }
           // Only go through phase reselection if we actually need
           // to display another phase.
-          if (selection.size > 0 && phase !== this.phaseName) {
-              this.hide();
+          if (selection.isAdapted() && phase !== this.phaseName) {
               this.showPhaseByName(phase, selection);
           }
           else if (origins.length > 0) {
@@ -12354,12 +12396,8 @@
   // A number of css variables regarding dimensions of HTMLElements are required by RangeView.
   class CSSVariables {
       constructor() {
-          this.positionWidth = this.getNumericValue("--range-position-width");
-          this.blockBorderWidth = this.getNumericValue("--range-block-border");
-      }
-      getNumericValue(varName) {
-          const propertyValue = getComputedStyle(document.body).getPropertyValue(varName);
-          return parseFloat(propertyValue.match(/[+-]?\d+(\.\d+)?/g)[0]);
+          this.positionWidth = getNumericCssValue("--range-position-width");
+          this.blockBorderWidth = getNumericCssValue("--range-block-border");
       }
   }
   class UserSettingsObject {
@@ -13662,6 +13700,9 @@
                   this.viewWholeGraph();
               }
           }
+          if (this.graphLayout.graph.graphPhase.propertiesShowed != this.state.showProperties) {
+              this.compressLayoutAction(this);
+          }
       }
       updateGraphVisibility() {
           if (!this.graph)
@@ -13718,7 +13759,13 @@
                   }
                   break;
               case 85: // 'u'
-                  this.collapseUnusedBlocks();
+                  this.collapseUnusedBlocks(this.state.selection.selection.values());
+                  break;
+              case 89: // 'y'
+                  const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+                  if (!node)
+                      return;
+                  this.collapseUnusedBlocks([node]);
                   break;
               default:
                   eventHandled = false;
@@ -13752,6 +13799,7 @@
           e.stopPropagation();
       }
       hide() {
+          this.graphLayout.graph.graphPhase.propertiesShowed = this.state.showProperties;
           this.broker.deleteBlockHandler(this.blockSelectionHandler);
           super.hide();
       }
@@ -14222,17 +14270,19 @@
           this.state.selection.select(this.graph.nodeMap, true);
           this.updateGraphVisibility();
       }
-      collapseUnusedBlocks() {
-          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
-          if (!node)
+      collapseUnusedBlocks(usedNodes) {
+          const usedBlocks = new Set();
+          for (const node of usedNodes) {
+              usedBlocks.add(node.block);
+              for (const input of node.inputs) {
+                  usedBlocks.add(input.source.block);
+              }
+              for (const output of node.outputs) {
+                  usedBlocks.add(output.target.block);
+              }
+          }
+          if (usedBlocks.size == 0)
               return;
-          const usedBlocks = new Set([node.block]);
-          for (const input of node.inputs) {
-              usedBlocks.add(input.source.block);
-          }
-          for (const output of node.outputs) {
-              usedBlocks.add(output.target.block);
-          }
           for (const block of this.graph.blockMap) {
               block.collapsed = !usedBlocks.has(block);
           }
@@ -14323,6 +14373,12 @@
           this.selectMenu.selectedIndex = initialPhaseIndex;
           this.displayPhase(this.sourceResolver.getPhase(initialPhaseIndex));
       }
+      displayPhaseByName(phaseName, selection) {
+          this.currentPhaseView.hide();
+          const phaseId = this.sourceResolver.getPhaseIdByName(phaseName);
+          this.selectMenu.selectedIndex = phaseId;
+          this.displayPhase(this.sourceResolver.getPhase(phaseId), selection);
+      }
       onresize() {
           this.currentPhaseView?.onresize();
       }
@@ -14344,11 +14400,6 @@
           const rememberedSelection = selection ? selection : this.hideCurrentPhase();
           view.initializeContent(data, rememberedSelection);
           this.currentPhaseView = view;
-      }
-      displayPhaseByName(phaseName, selection) {
-          const phaseId = this.sourceResolver.getPhaseIdByName(phaseName);
-          this.selectMenu.selectedIndex = phaseId;
-          this.displayPhase(this.sourceResolver.getPhase(phaseId), selection);
       }
       displayNextGraphPhase() {
           let nextPhaseIndex = this.selectMenu.selectedIndex + 1;
@@ -15112,11 +15163,415 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class HistoryView extends View {
+      constructor(id, broker, sourceResolver, showPhaseByName) {
+          super(id);
+          this.broker = broker;
+          this.sourceResolver = sourceResolver;
+          this.showPhaseByName = showPhaseByName;
+          this.historyHandler = this.initializeNodeSelectionHandler();
+          this.broker.addHistoryHandler(this.historyHandler);
+          this.phaseIdToHistory = new Map();
+          this.x = 0;
+          this.y = 0;
+          this.initializeSvgHistoryContainer();
+      }
+      createViewElement() {
+          return createElement("div", "history-container");
+      }
+      hide() {
+          super.hide();
+          this.broker.deleteHistoryHandler(this.historyHandler);
+      }
+      initializeSvgHistoryContainer() {
+          this.svg = select(this.divNode)
+              .append("svg")
+              .classed("history-svg-container", true)
+              .attr("version", "2.0")
+              .attr("transform", _ => `translate(${this.x},${this.y})`)
+              .style("visibility", "hidden");
+          const dragHandler = drag().on("drag", () => {
+              const rect = document.body.getBoundingClientRect();
+              const x = this.x + event.dx;
+              this.x = event.dx > 0 ? Math.min(x, rect.width - this.getWidth()) : Math.max(x, 0);
+              const y = this.y + event.dy;
+              this.y = event.dy > 0 ? Math.min(y, rect.height - this.getHeight()) : Math.max(y, 0);
+              this.svg.attr("transform", _ => `translate(${this.x},${this.y})`);
+          });
+          this.svg.call(dragHandler);
+      }
+      initializeNodeSelectionHandler() {
+          const view = this;
+          return {
+              showTurbofanNodeHistory: function (node, phaseName) {
+                  view.clear();
+                  view.node = node;
+                  const phaseId = view.sourceResolver.getPhaseIdByName(phaseName);
+                  const historyChain = view.getHistoryChain(phaseId, node);
+                  view.getPhaseHistory(historyChain);
+                  view.render();
+              }
+          };
+      }
+      render() {
+          this.setLabel();
+          this.svg
+              .attr("width", this.getWidth())
+              .attr("height", this.getHeight());
+          this.svg
+              .append("text")
+              .classed("history-label", true)
+              .attr("text-anchor", "middle")
+              .attr("x", this.getWidth() / 2)
+              .append("tspan")
+              .text(this.label);
+          this.svg
+              .append("circle")
+              .classed("close-button", true)
+              .attr("r", this.labelBox.height / 4)
+              .attr("cx", this.getWidth() - this.labelBox.height / 2)
+              .attr("cy", this.labelBox.height / 2)
+              .on("click", () => {
+              event.stopPropagation();
+              this.clear();
+              this.svg.style("visibility", "hidden");
+          });
+          this.historyList = this.svg
+              .append("g")
+              .attr("clip-path", "url(#history-clip-path)");
+          this.renderHistoryContent();
+          this.renderHistoryContentScroll();
+          this.svg.style("visibility", "visible");
+      }
+      renderHistoryContent() {
+          const existCircles = new Set();
+          const defs = this.svg.append("svg:defs");
+          let recordY = 0;
+          for (const [phaseId, phaseHistory] of this.phaseIdToHistory.entries()) {
+              if (!phaseHistory.hasChanges())
+                  continue;
+              const phaseName = this.sourceResolver.getPhaseNameById(phaseId);
+              this.historyList
+                  .append("text")
+                  .classed("history-item", true)
+                  .attr("dy", recordY)
+                  .append("tspan")
+                  .text(phaseName);
+              recordY += this.labelBox.height;
+              for (const record of phaseHistory.nodeIdToRecord.values()) {
+                  const changes = Array.from(record.changes.values()).sort();
+                  const circleId = changes.map(i => HistoryChange[i]).join("-");
+                  if (!existCircles.has(circleId)) {
+                      const def = defs.append("linearGradient")
+                          .attr("id", circleId);
+                      const step = 100 / changes.length;
+                      for (let i = 0; i < changes.length; i++) {
+                          const start = i * step;
+                          const stop = (i + 1) * step;
+                          def.append("stop")
+                              .attr("offset", `${start}%`)
+                              .style("stop-color", this.getHistoryChangeColor(changes[i]));
+                          def.append("stop")
+                              .attr("offset", `${stop}%`)
+                              .style("stop-color", this.getHistoryChangeColor(changes[i]));
+                      }
+                      existCircles.add(circleId);
+                  }
+                  this.historyList
+                      .append("circle")
+                      .classed("history-item", true)
+                      .attr("r", this.labelBox.height / 3.5)
+                      .attr("cx", this.labelBox.height / 3)
+                      .attr("cy", this.labelBox.height / 2.5 + recordY)
+                      .attr("fill", `url(#${circleId})`)
+                      .append("title")
+                      .text(`[${record.toString()}]`);
+                  this.historyList
+                      .append("text")
+                      .classed("history-item history-item-record", true)
+                      .attr("dy", recordY)
+                      .attr("dx", this.labelBox.height * 0.75)
+                      .append("tspan")
+                      .text(record.node.displayLabel)
+                      .on("click", () => {
+                      const selectionStorage = new SelectionStorage();
+                      selectionStorage.adaptNode(record.node.identifier());
+                      this.showPhaseByName(phaseName, selectionStorage);
+                  })
+                      .append("title")
+                      .text(record.node.getTitle());
+                  recordY += this.labelBox.height;
+              }
+          }
+      }
+      renderHistoryContentScroll() {
+          let scrollDistance = 0;
+          const historyArea = {
+              x: HISTORY_CONTENT_INDENT,
+              y: this.labelBox.height + HISTORY_CONTENT_INDENT / 2,
+              width: this.getWidth() - HISTORY_CONTENT_INDENT * 2,
+              height: this.getHeight() - this.labelBox.height - HISTORY_CONTENT_INDENT * 1.5
+          };
+          const content = this.historyList
+              .append("g")
+              .attr("transform", `translate(${historyArea.x},${historyArea.y})`);
+          this.historyList
+              .selectAll(".history-item")
+              .each(function () {
+              content.node().appendChild(select(this).node());
+          });
+          this.historyList
+              .append("clipPath")
+              .attr("id", "history-clip-path")
+              .append("rect")
+              .attr("width", historyArea.width)
+              .attr("height", historyArea.height)
+              .attr("transform", `translate(${historyArea.x},${historyArea.y})`);
+          const scrollX = historyArea.x + historyArea.width - HISTORY_SCROLLBAR_WIDTH;
+          const scrollBar = this.historyList
+              .append("rect")
+              .classed("history-content-scroll", true)
+              .attr("width", HISTORY_SCROLLBAR_WIDTH)
+              .attr("rx", HISTORY_SCROLLBAR_WIDTH / 2)
+              .attr("ry", HISTORY_SCROLLBAR_WIDTH / 2)
+              .attr("transform", `translate(${scrollX},${historyArea.y})`);
+          // Calculate maximum scrollable amount
+          const contentBBox = content.node().getBBox();
+          const absoluteContentHeight = contentBBox.y + contentBBox.height;
+          const scrollbarHeight = historyArea.height * historyArea.height / absoluteContentHeight;
+          scrollBar.attr("height", Math.min(scrollbarHeight, historyArea.height));
+          const maxScroll = Math.max(absoluteContentHeight - historyArea.height, 0);
+          const updateScrollPosition = (diff) => {
+              scrollDistance += diff;
+              scrollDistance = Math.min(maxScroll, Math.max(0, scrollDistance));
+              content.attr("transform", `translate(${historyArea.x},${historyArea.y - scrollDistance})`);
+              const scrollBarPosition = scrollDistance / maxScroll * (historyArea.height - scrollbarHeight);
+              if (!isNaN(scrollBarPosition))
+                  scrollBar.attr("y", scrollBarPosition);
+          };
+          this.svg.on("wheel", () => {
+              updateScrollPosition(event.deltaY);
+          });
+          const dragBehaviour = drag().on("drag", () => {
+              updateScrollPosition(event.dy * maxScroll / (historyArea.height - scrollbarHeight));
+          });
+          scrollBar.call(dragBehaviour);
+      }
+      setLabel() {
+          this.label = `${this.node.id} ${this.node.nodeLabel.opcode}`;
+          const coefficient = this.getCoefficient("history-tspan-font-size");
+          this.labelBox = measureText(this.label, coefficient);
+      }
+      getCoefficient(varName) {
+          const tspanSize = getNumericCssValue("--tspan-font-size");
+          const varSize = getNumericCssValue(`--${varName}`);
+          return Math.min(tspanSize, varSize) / Math.max(tspanSize, varSize);
+      }
+      getPhaseHistory(historyChain) {
+          const uniqueAncestors = new Set();
+          const coefficient = this.getCoefficient("history-item-tspan-font-size");
+          let prevNode = null;
+          let first = true;
+          for (let i = 0; i < this.sourceResolver.phases.length; i++) {
+              const phase = this.sourceResolver.getPhase(i);
+              if (!(phase instanceof GraphPhase))
+                  continue;
+              const phaseNameMeasure = measureText(phase.name, coefficient);
+              this.maxPhaseNameWidth = Math.max(this.maxPhaseNameWidth, phaseNameMeasure.width);
+              const node = historyChain.get(i);
+              if (!node && prevNode) {
+                  this.addToHistory(i, prevNode, HistoryChange.Removed);
+              }
+              if (node && phase.originIdToNodesMap.has(node.identifier())) {
+                  this.addHistoryAncestors(node.identifier(), phase, uniqueAncestors);
+              }
+              if (prevNode && !prevNode.equals(node) &&
+                  phase.originIdToNodesMap.has(prevNode.identifier())) {
+                  const prevNodeCurrentState = phase.nodeIdToNodeMap[prevNode.identifier()];
+                  const inplaceUpdate = prevNodeCurrentState?.nodeLabel?.inplaceUpdatePhase;
+                  if (!prevNodeCurrentState) {
+                      this.addToHistory(i, prevNode, HistoryChange.Removed);
+                  }
+                  else if (!prevNodeCurrentState?.equals(node) && inplaceUpdate == phase.name) {
+                      this.addToHistory(i, prevNodeCurrentState, HistoryChange.InplaceUpdated);
+                  }
+                  else if (node.identifier() != prevNode.identifier()) {
+                      this.addToHistory(i, prevNodeCurrentState, HistoryChange.Survived);
+                  }
+                  this.addHistoryAncestors(prevNode.identifier(), phase, uniqueAncestors);
+              }
+              if (!node) {
+                  prevNode = null;
+                  continue;
+              }
+              if (node.nodeLabel.inplaceUpdatePhase && node.nodeLabel.inplaceUpdatePhase == phase.name) {
+                  this.addToHistory(i, node, HistoryChange.InplaceUpdated);
+              }
+              if (first) {
+                  this.addToHistory(i, node, HistoryChange.Emerged);
+                  first = false;
+              }
+              this.addToHistory(i, node, HistoryChange.Current);
+              prevNode = node;
+          }
+      }
+      addHistoryAncestors(key, phase, uniqueAncestors) {
+          let changed = false;
+          const phaseId = this.sourceResolver.getPhaseIdByName(phase.name);
+          for (const ancestor of phase.originIdToNodesMap.get(key)) {
+              const key = ancestor.identifier();
+              if (!uniqueAncestors.has(key)) {
+                  this.addToHistory(phaseId, ancestor, HistoryChange.Lowered);
+                  uniqueAncestors.add(key);
+                  changed = true;
+              }
+          }
+          return changed;
+      }
+      getHistoryChain(phaseId, node) {
+          const leftChain = this.getLeftHistoryChain(phaseId, node);
+          const rightChain = this.getRightHistoryChain(phaseId, node);
+          return new Map([...leftChain, ...rightChain]);
+      }
+      getLeftHistoryChain(phaseId, node) {
+          const leftChain = new Map();
+          for (let i = phaseId; i >= 0; i--) {
+              const phase = this.sourceResolver.getPhase(i);
+              if (!(phase instanceof GraphPhase))
+                  continue;
+              let currentNode = phase.nodeIdToNodeMap[node.identifier()];
+              if (!currentNode) {
+                  const nodeOrigin = node.nodeLabel.origin;
+                  if (nodeOrigin instanceof NodeOrigin) {
+                      currentNode = phase.nodeIdToNodeMap[nodeOrigin.identifier()];
+                  }
+                  if (!currentNode)
+                      return leftChain;
+              }
+              leftChain.set(i, currentNode);
+              node = currentNode;
+          }
+          return leftChain;
+      }
+      getRightHistoryChain(phaseId, node) {
+          const rightChain = new Map();
+          for (let i = phaseId + 1; i < this.sourceResolver.phases.length; i++) {
+              const phase = this.sourceResolver.getPhase(i);
+              if (!(phase instanceof GraphPhase))
+                  continue;
+              const currentNode = phase.nodeIdToNodeMap[node.identifier()];
+              if (!currentNode)
+                  return rightChain;
+              rightChain.set(i, currentNode);
+              node = currentNode;
+          }
+          return rightChain;
+      }
+      addToHistory(phaseId, node, change) {
+          if (!this.phaseIdToHistory.has(phaseId)) {
+              this.phaseIdToHistory.set(phaseId, new PhaseHistory(phaseId));
+          }
+          this.phaseIdToHistory.get(phaseId).addChange(node, change);
+          this.maxNodeWidth = Math.max(this.maxNodeWidth, node.labelBox.width);
+      }
+      clear() {
+          this.phaseIdToHistory.clear();
+          this.maxNodeWidth = 0;
+          this.maxPhaseNameWidth = 0;
+          this.svg.selectAll("*").remove();
+      }
+      getWidth() {
+          const scrollWidth = HISTORY_SCROLLBAR_WIDTH / 2 + HISTORY_SCROLLBAR_WIDTH;
+          const indentWidth = 2 * HISTORY_CONTENT_INDENT;
+          const labelWidth = this.labelBox.width + 3 * this.labelBox.height;
+          const phaseNameWidth = this.maxPhaseNameWidth + indentWidth + scrollWidth;
+          const contentWidth = this.labelBox.height * 0.75 + indentWidth + scrollWidth
+              + (this.maxNodeWidth * this.getCoefficient("history-item-tspan-font-size"));
+          return Math.max(labelWidth, phaseNameWidth, contentWidth);
+      }
+      getHeight() {
+          return window.screen.availHeight * HISTORY_DEFAULT_HEIGHT_PERCENT;
+      }
+      getHistoryChangeColor(historyChange) {
+          switch (historyChange) {
+              case HistoryChange.Current:
+                  return "rgb(255, 167, 0)";
+              case HistoryChange.Emerged:
+                  return "rgb(160, 83, 236)";
+              case HistoryChange.Lowered:
+                  return "rgb(0, 255, 0)";
+              case HistoryChange.InplaceUpdated:
+                  return "rgb(57, 57, 208)";
+              case HistoryChange.Removed:
+                  return "rgb(255, 0, 0)";
+              case HistoryChange.Survived:
+                  return "rgb(7, 253, 232)";
+          }
+      }
+      traceToConsole() {
+          const keys = Array.from(this.phaseIdToHistory.keys()).sort((a, b) => a - b);
+          for (const key of keys) {
+              console.log(`${key} ${this.sourceResolver.getPhaseNameById(key)}`);
+              const phaseHistory = this.phaseIdToHistory.get(key);
+              for (const record of phaseHistory.nodeIdToRecord.values()) {
+                  console.log(record.toString(), record.node);
+              }
+          }
+      }
+  }
+  class PhaseHistory {
+      constructor(phaseId) {
+          this.phaseId = phaseId;
+          this.nodeIdToRecord = new Map();
+      }
+      addChange(node, change) {
+          const key = node.identifier();
+          if (!this.nodeIdToRecord.has(key)) {
+              this.nodeIdToRecord.set(key, new HistoryRecord(node));
+          }
+          this.nodeIdToRecord.get(key).addChange(change);
+      }
+      hasChanges() {
+          for (const record of this.nodeIdToRecord.values()) {
+              if (record.hasChanges())
+                  return true;
+          }
+          return false;
+      }
+  }
+  class HistoryRecord {
+      constructor(node) {
+          this.node = node;
+          this.changes = new Set();
+      }
+      addChange(change) {
+          this.changes.add(change);
+      }
+      hasChanges() {
+          return this.changes.size > 1 ||
+              (this.changes.size == 1 && !this.changes.has(HistoryChange.Current));
+      }
+      toString() {
+          return Array.from(this.changes.values()).sort().map(i => HistoryChange[i]).join(", ");
+      }
+  }
+  var HistoryChange;
+  (function (HistoryChange) {
+      HistoryChange[HistoryChange["Current"] = 0] = "Current";
+      HistoryChange[HistoryChange["Emerged"] = 1] = "Emerged";
+      HistoryChange[HistoryChange["Lowered"] = 2] = "Lowered";
+      HistoryChange[HistoryChange["InplaceUpdated"] = 3] = "InplaceUpdated";
+      HistoryChange[HistoryChange["Removed"] = 4] = "Removed";
+      HistoryChange[HistoryChange["Survived"] = 5] = "Survived";
+  })(HistoryChange || (HistoryChange = {}));
+
   // Copyright 2017 the V8 project authors. All rights reserved.
   window.onload = function () {
       let multiview;
       let disassemblyView;
       let sourceViews = new Array();
+      let historyView;
       let selectionBroker;
       let sourceResolver;
       const resizer = new Resizer(() => multiview?.onresize(), 75, 75);
@@ -15148,6 +15603,7 @@
               document.getElementById("ranges").style.visibility = "hidden";
               document.getElementById("show-hide-ranges").style.visibility = "hidden";
               disassemblyView?.hide();
+              historyView?.hide();
               sourceViews = new Array();
               sourceResolver = new SourceResolver();
               selectionBroker = new SelectionBroker(sourceResolver);
@@ -15181,6 +15637,8 @@
               }
               multiview = new GraphMultiView(INTERMEDIATE_PANE_ID, selectionBroker, sourceResolver);
               multiview.show();
+              historyView = new HistoryView(HISTORY_ID, selectionBroker, sourceResolver, multiview.displayPhaseByName.bind(multiview));
+              historyView.show();
           }
           catch (err) {
               if (window.confirm("Error: Exception during load of TurboFan JSON file:\n" +
