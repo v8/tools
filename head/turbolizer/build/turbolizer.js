@@ -169,6 +169,7 @@
   (function (PhaseType) {
       PhaseType["Graph"] = "graph";
       PhaseType["TurboshaftGraph"] = "turboshaft_graph";
+      PhaseType["TurboshaftCustomData"] = "turboshaft_custom_data";
       PhaseType["Disassembly"] = "disassembly";
       PhaseType["Instructions"] = "instructions";
       PhaseType["Sequence"] = "sequence";
@@ -1258,21 +1259,38 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  class TurboshaftCustomDataPhase extends Phase {
+      constructor(name, dataTarget, dataJSON) {
+          super(name, PhaseType.TurboshaftCustomData);
+          this.dataTarget = dataTarget;
+          this.data = new Array();
+          this.parseDataFromJSON(dataJSON);
+      }
+      parseDataFromJSON(dataJSON) {
+          if (!dataJSON)
+              return;
+          for (const item of dataJSON) {
+              this.data[item.key] = item.value;
+          }
+      }
+  }
+  var DataTarget;
+  (function (DataTarget) {
+      DataTarget["Nodes"] = "operations";
+      DataTarget["Blocks"] = "blocks";
+  })(DataTarget || (DataTarget = {}));
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphNode extends Node$1 {
-      constructor(id, title, block, opPropertiesType, properties) {
+      constructor(id, title, block, opPropertiesType) {
           super(id);
           this.title = title;
           this.block = block;
           this.opPropertiesType = opPropertiesType;
-          this.properties = properties;
-          this.propertiesBox = measureText(this.properties);
           this.visible = true;
       }
-      getHeight(showProperties) {
-          if (this.properties && showProperties) {
-              return this.labelBox.height + this.propertiesBox.height;
-          }
-          return this.labelBox.height;
+      getHeight(showCustomData) {
+          return showCustomData ? this.labelBox.height * 2 : this.labelBox.height;
       }
       getWidth() {
           return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.labelBox.width);
@@ -1289,20 +1307,12 @@
           if (this.outputs.length > 0) {
               title += `\nOutputs: ${this.outputs.map(i => i.target.id).join(", ")}`;
           }
-          const opPropertiesStr = this.properties.length > 0 ? this.properties : "No op properties";
-          return `${title}\n${opPropertiesStr}`;
+          return title;
       }
       getInlineLabel() {
           if (this.inputs.length == 0)
               return `${this.id} ${this.title}`;
           return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(",")})`;
-      }
-      getReadableProperties(blockWidth) {
-          if (blockWidth > this.propertiesBox.width)
-              return this.properties;
-          const widthOfOneSymbol = Math.floor(this.propertiesBox.width / this.properties.length);
-          const lengthOfReadableProperties = Math.floor(blockWidth / widthOfOneSymbol);
-          return `${this.properties.slice(0, lengthOfReadableProperties - 3)}..`;
       }
   }
   var OpPropertiesType;
@@ -1325,14 +1335,14 @@
           this.nodes = new Array();
           this.visible = true;
       }
-      getHeight(showProperties) {
+      getHeight(showCustomData) {
           if (this.collapsed)
               return this.labelBox.height + this.collapsedLabelBox.height;
-          if (this.showProperties != showProperties) {
+          if (this.showCustomData != showCustomData) {
               this.height = this.nodes.reduce((accumulator, node) => {
-                  return accumulator + node.getHeight(showProperties);
+                  return accumulator + node.getHeight(showCustomData);
               }, this.labelBox.height);
-              this.showProperties = showProperties;
+              this.showCustomData = showCustomData;
           }
           return this.height;
       }
@@ -1349,7 +1359,7 @@
       compressHeight() {
           if (this.collapsed) {
               this.height = this.getHeight(null);
-              this.showProperties = null;
+              this.showCustomData = null;
           }
       }
       getRankIndent() {
@@ -1395,6 +1405,7 @@
       constructor(name, dataJson) {
           super(name, PhaseType.TurboshaftGraph);
           this.stateType = GraphStateType$1.NeedToFullRebuild;
+          this.customData = new TurboshaftCustomData();
           this.nodeIdToNodeMap = new Array();
           this.blockIdToBlockMap = new Array();
           this.rendered = false;
@@ -1424,7 +1435,7 @@
       parseNodesFromJSON(nodesJson) {
           for (const nodeJson of nodesJson) {
               const block = this.blockIdToBlockMap[nodeJson.block_id];
-              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.op_properties_type, nodeJson.properties);
+              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.op_properties_type);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
@@ -1452,6 +1463,39 @@
           this.nodes = new Array();
           this.edges = new Array();
           this.blocks = new Array();
+      }
+  }
+  class TurboshaftCustomData {
+      constructor() {
+          this.nodes = new Map();
+          this.blocks = new Map();
+      }
+      addCustomData(customDataPhase) {
+          switch (customDataPhase.dataTarget) {
+              case DataTarget.Nodes:
+                  this.nodes.set(customDataPhase.name, customDataPhase);
+                  break;
+              case DataTarget.Blocks:
+                  this.blocks.set(customDataPhase.name, customDataPhase);
+                  break;
+              default:
+                  throw "Unsupported turboshaft custom data target type";
+          }
+      }
+      getTitle(key, dataTarget) {
+          switch (dataTarget) {
+              case DataTarget.Nodes:
+                  return this.concatCustomData(key, this.nodes);
+              case DataTarget.Blocks:
+                  return this.concatCustomData(key, this.blocks);
+          }
+      }
+      concatCustomData(key, items) {
+          let customData = "";
+          for (const [name, dataPhase] of items.entries()) {
+              customData += `\n${name}: ${dataPhase.data[key] ?? ""}`;
+          }
+          return customData;
       }
   }
 
@@ -1541,6 +1585,7 @@
       }
       parsePhases(phasesJson) {
           const nodeLabelMap = new Array();
+          let lastTurboshaftGraphPhase = null;
           for (const [, genericPhase] of Object.entries(phasesJson)) {
               switch (genericPhase.type) {
                   case PhaseType.Disassembly:
@@ -1589,6 +1634,12 @@
                       const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, castedTurboshaftGraph.data);
                       this.phaseNames.set(turboshaftGraphPhase.name, this.phases.length);
                       this.phases.push(turboshaftGraphPhase);
+                      lastTurboshaftGraphPhase = turboshaftGraphPhase;
+                      break;
+                  case PhaseType.TurboshaftCustomData:
+                      const castedCustomData = camelize(genericPhase);
+                      const customDataPhase = new TurboshaftCustomDataPhase(castedCustomData.name, castedCustomData.dataTarget, castedCustomData.data);
+                      lastTurboshaftGraphPhase?.customData?.addCustomData(customDataPhase);
                       break;
                   default:
                       throw "Unsupported phase type";
@@ -11424,6 +11475,11 @@
                   return false;
               })];
       }
+      createImgToggleInput(id, title, initState, onClick) {
+          const input = this.createImgInput(id, title, onClick);
+          input.classList.toggle("button-input-toggled", initState);
+          return input;
+      }
       deleteContent() {
           for (const item of this.toolbox.querySelectorAll(".graph-toolbox-item")) {
               item.parentElement.removeChild(item);
@@ -11450,11 +11506,6 @@
           input.addEventListener("click", onClick);
           return input;
       }
-      createImgToggleInput(id, title, initState, onClick) {
-          const input = this.createImgInput(id, title, onClick);
-          input.classList.toggle("button-input-toggled", initState);
-          return input;
-      }
   }
   class MovableViewState {
       get hideDead() {
@@ -11469,11 +11520,11 @@
       set showTypes(value) {
           storageSetItem("toggle-types", value);
       }
-      get showProperties() {
-          return storageGetItem("toggle-properties", false);
+      get showCustomData() {
+          return storageGetItem("toggle-custom-data", false);
       }
-      set showProperties(value) {
-          storageSetItem("toggle-properties", value);
+      set showCustomData(value) {
+          storageSetItem("toggle-custom-data", value);
       }
       get cacheLayout() {
           return storageGetItem("toggle-cache-layout", true);
@@ -13411,6 +13462,7 @@
           super(graphPhase);
           this.blockMap = graphPhase.blockIdToBlockMap;
           this.nodeMap = graphPhase.nodeIdToNodeMap;
+          this.customData = graphPhase.customData;
       }
       *blocks(func = (b) => true) {
           for (const block of this.blockMap) {
@@ -13448,7 +13500,7 @@
               }
           }
       }
-      redetermineGraphBoundingBox(showProperties) {
+      redetermineGraphBoundingBox(showCustomData) {
           this.minGraphX = 0;
           this.maxGraphNodeX = 1;
           this.minGraphY = 0;
@@ -13457,7 +13509,7 @@
               this.minGraphX = Math.min(this.minGraphX, block.x);
               this.maxGraphNodeX = Math.max(this.maxGraphNodeX, block.x + block.getWidth());
               this.minGraphY = Math.min(this.minGraphY, block.y - NODE_INPUT_WIDTH);
-              this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showProperties)
+              this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showCustomData)
                   + NODE_INPUT_WIDTH);
           }
           this.maxGraphX = this.maxGraphNodeX + this.maxBackEdgeNumber * MINIMUM_EDGE_SEPARATION;
@@ -13468,10 +13520,26 @@
               [this.maxGraphX + this.width / 2, this.maxGraphY + this.height / 2]
           ];
       }
-      getRanksMaxBlockHeight(showProperties) {
+      hasCustomData(customData, dataTarget) {
+          switch (dataTarget) {
+              case DataTarget.Nodes:
+                  return this.customData.nodes.has(customData);
+              case DataTarget.Blocks:
+                  return this.customData.blocks.has(customData);
+          }
+      }
+      getCustomData(customData, key, dataTarget) {
+          switch (dataTarget) {
+              case DataTarget.Nodes:
+                  return this.customData.nodes.get(customData).data[key];
+              case DataTarget.Blocks:
+                  return this.customData.blocks.get(customData).data[key];
+          }
+      }
+      getRanksMaxBlockHeight(showCustomData) {
           const ranksMaxBlockHeight = new Array();
           for (const block of this.blocks()) {
-              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.getHeight(showProperties));
+              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.getHeight(showCustomData));
           }
           return ranksMaxBlockHeight;
       }
@@ -13484,10 +13552,10 @@
           this.layoutOccupation = new LayoutOccupation(graph);
           this.maxRank = 0;
       }
-      rebuild(showProperties) {
+      rebuild(showCustomData) {
           switch (this.graph.graphPhase.stateType) {
               case GraphStateType$1.NeedToFullRebuild:
-                  this.fullRebuild(showProperties);
+                  this.fullRebuild(showCustomData);
                   break;
               case GraphStateType$1.Cached:
                   this.cachedRebuild();
@@ -13497,7 +13565,7 @@
           }
           this.graph.graphPhase.rendered = true;
       }
-      fullRebuild(showProperties) {
+      fullRebuild(showCustomData) {
           this.startTime = performance.now();
           this.maxRank = 0;
           this.visitOrderWithinRank = 0;
@@ -13505,8 +13573,8 @@
           this.initWorkList(blocks);
           const visited = new Array();
           blocks.forEach((block) => this.dfsRankOrder(visited, block));
-          const rankSets = this.getRankSets(showProperties);
-          this.placeBlocks(rankSets, showProperties);
+          const rankSets = this.getRankSets(showCustomData);
+          this.placeBlocks(rankSets, showCustomData);
           this.calculateBackEdgeNumbers();
           this.graph.graphPhase.stateType = GraphStateType$1.Cached;
       }
@@ -13588,8 +13656,8 @@
               block.visitOrderWithinRank = ++this.visitOrderWithinRank;
           }
       }
-      getRankSets(showProperties) {
-          const ranksMaxBlockHeight = this.graph.getRanksMaxBlockHeight(showProperties);
+      getRankSets(showCustomData) {
+          const ranksMaxBlockHeight = this.graph.getRanksMaxBlockHeight(showCustomData);
           const rankSets = new Array();
           for (const block of this.graph.blocks()) {
               block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
@@ -13604,13 +13672,13 @@
           }
           return rankSets;
       }
-      placeBlocks(rankSets, showProperties) {
+      placeBlocks(rankSets, showCustomData) {
           // Iterate backwards from highest to lowest rank, placing blocks so that they
           // spread out from the "center" as much as possible while still being
           // compact and not overlapping live input lines.
           rankSets.reverse().forEach((rankSet) => {
               for (const block of rankSet) {
-                  this.layoutOccupation.clearOutputs(block, showProperties);
+                  this.layoutOccupation.clearOutputs(block, showCustomData);
               }
               this.traceOccupation("After clearing outputs");
               let placedCount = 0;
@@ -13627,7 +13695,7 @@
               this.layoutOccupation.clearOccupied();
               this.traceOccupation("After clearing blocks");
               for (const block of rankSet) {
-                  this.layoutOccupation.occupyInputs(block, showProperties);
+                  this.layoutOccupation.occupyInputs(block, showCustomData);
               }
               this.traceOccupation("After occupying inputs and determining bounding box");
           });
@@ -13682,9 +13750,9 @@
           this.addImgInput("collapse-selected", "collapse selected blocks", partial(this.changeSelectedCollapsingAction, this, true));
           this.addImgInput("uncollapse-selected", "uncollapse selected blocks", partial(this.changeSelectedCollapsingAction, this, false));
           this.addImgInput("zoom-selection", "zoom selection", partial(this.zoomSelectionAction, this));
-          this.addToggleImgInput("toggle-properties", "toggle properties", this.state.showProperties, partial(this.togglePropertiesAction, this));
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
           this.phaseName = data.name;
+          this.addCustomDataSelect(data.customData);
           const adaptedSelection = this.createGraph(data, rememberedSelection);
           this.broker.addNodeHandler(this.nodeSelectionHandler);
           this.broker.addBlockHandler(this.blockSelectionHandler);
@@ -13700,7 +13768,8 @@
                   this.viewWholeGraph();
               }
           }
-          if (this.graphLayout.graph.graphPhase.propertiesShowed != this.state.showProperties) {
+          const customDataShowed = this.graph.graphPhase.customDataShowed;
+          if (customDataShowed != null && customDataShowed != this.nodesCustomDataShowed()) {
               this.compressLayoutAction(this);
           }
       }
@@ -13785,9 +13854,9 @@
               const filterFunction = (node) => {
                   if (!onlyVisible)
                       node.block.collapsed = false;
-                  return (!onlyVisible || !node.block.collapsed) && (reg.exec(node.displayLabel) !== null ||
-                      (this.state.showProperties && reg.exec(node.properties)) ||
-                      reg.exec(node.getTitle()));
+                  const customDataTitle = this.graph.customData.getTitle(node.id, DataTarget.Nodes);
+                  return (!onlyVisible || !node.block.collapsed) &&
+                      reg.exec(`${node.getTitle()}${customDataTitle}`);
               };
               const selection = this.searchNodes(filterFunction, e, onlyVisible);
               this.nodeSelectionHandler.select(selection, true);
@@ -13799,7 +13868,7 @@
           e.stopPropagation();
       }
       hide() {
-          this.graphLayout.graph.graphPhase.propertiesShowed = this.state.showProperties;
+          this.graph.graphPhase.customDataShowed = this.nodesCustomDataShowed();
           this.broker.deleteBlockHandler(this.blockSelectionHandler);
           super.hide();
       }
@@ -13901,11 +13970,42 @@
               ? "Layout turboshaft graph from cache"
               : "Layout turboshaft graph";
           console.time(layoutMessage);
-          this.graphLayout.rebuild(this.state.showProperties);
-          const extent = this.graph.redetermineGraphBoundingBox(this.state.showProperties);
+          this.graphLayout.rebuild(this.nodesCustomDataShowed());
+          const extent = this.graph.redetermineGraphBoundingBox(this.nodesCustomDataShowed());
           this.panZoom.translateExtent(extent);
           this.minScale();
           console.timeEnd(layoutMessage);
+      }
+      addCustomDataSelect(customData) {
+          const keys = Array.from(customData.nodes.keys());
+          if (keys.length == 0)
+              return;
+          const select = document.createElement("select");
+          select.setAttribute("id", "custom-data-select");
+          select.setAttribute("class", "graph-toolbox-item");
+          select.setAttribute("title", "custom data");
+          const checkBox = this.createImgToggleInput("toggle-custom-data", "toggle custom data visibility", this.state.showCustomData, partial(this.toggleCustomDataAction, this));
+          for (const key of keys) {
+              const option = document.createElement("option");
+              option.text = key;
+              select.add(option);
+          }
+          const storageKey = this.customDataStorageKey();
+          const indexOfSelected = keys.indexOf(storageGetItem(storageKey, null, false));
+          if (indexOfSelected != -1) {
+              select.selectedIndex = indexOfSelected;
+          }
+          else {
+              storageSetItem(storageKey, keys[0]);
+          }
+          const view = this;
+          select.onchange = function () {
+              const selectedCustomData = select.options[this.selectedIndex].text;
+              storageSetItem(storageKey, selectedCustomData);
+              view.updateGraphVisibility();
+          };
+          this.toolbox.appendChild(select);
+          this.toolbox.appendChild(checkBox);
       }
       updateBlockLocation(block) {
           this.visibleBlocks
@@ -13915,15 +14015,13 @@
           this.visibleEdges
               .selectAll("path")
               .filter(edge => edge.target === block || edge.source === block)
-              .attr("d", edge => edge.generatePath(this.graph, this.state.showProperties));
+              .attr("d", edge => edge.generatePath(this.graph, this.nodesCustomDataShowed()));
       }
       updateVisibleBlocksAndEdges() {
           const view = this;
           const iconsPath = "img/turboshaft/";
           // select existing edges
-          const filteredEdges = [
-              ...this.graph.blocksEdges(_ => this.graph.isRendered())
-          ];
+          const filteredEdges = [...view.graph.blocksEdges(_ => view.graph.isRendered())];
           const selEdges = view.visibleEdges
               .selectAll("path")
               .data(filteredEdges, edge => edge.toString());
@@ -13946,9 +14044,7 @@
           const newAndOldEdges = newEdges.merge(selEdges);
           newAndOldEdges.classed("hidden", edge => !edge.isVisible());
           // select existing blocks
-          const filteredBlocks = [
-              ...this.graph.blocks(_ => this.graph.isRendered())
-          ];
+          const filteredBlocks = [...view.graph.blocks(_ => view.graph.isRendered())];
           const allBlocks = view.visibleBlocks
               .selectAll(".turboshaft-block");
           const selBlocks = allBlocks.data(filteredBlocks, block => block.toString());
@@ -13991,7 +14087,7 @@
               .attr("rx", TURBOSHAFT_BLOCK_BORDER_RADIUS)
               .attr("ry", TURBOSHAFT_BLOCK_BORDER_RADIUS)
               .attr("width", block => block.getWidth())
-              .attr("height", block => block.getHeight(view.state.showProperties));
+              .attr("height", block => block.getHeight(view.nodesCustomDataShowed()));
           newBlocks.each(function (block) {
               const svg = select(this);
               svg
@@ -14000,7 +14096,9 @@
                   .attr("text-anchor", "middle")
                   .attr("x", block.getWidth() / 2)
                   .append("tspan")
-                  .text(block.displayLabel);
+                  .text(block.displayLabel)
+                  .append("title")
+                  .text(view.graph.customData.getTitle(block.id, DataTarget.Blocks));
               svg
                   .append("text")
                   .classed("block-collapsed-label", true)
@@ -14028,12 +14126,12 @@
               .classed("selected", block => view.state.blocksSelection.isSelected(block))
               .attr("transform", block => `translate(${block.x},${block.y})`)
               .select("rect")
-              .attr("height", block => block.getHeight(view.state.showProperties));
+              .attr("height", block => block.getHeight(view.nodesCustomDataShowed()));
           newAndOldBlocks.select("image")
               .attr("xlink:href", block => `${iconsPath}collapse_${block.collapsed ? "down" : "up"}.svg`);
           newAndOldBlocks.select(".block-collapsed-label")
               .attr("visibility", block => block.collapsed ? "visible" : "hidden");
-          newAndOldEdges.attr("d", edge => edge.generatePath(this.graph, view.state.showProperties));
+          newAndOldEdges.attr("d", edge => edge.generatePath(view.graph, view.nodesCustomDataShowed()));
       }
       appendInlineNodes(svg, block) {
           const state = this.state;
@@ -14051,6 +14149,9 @@
           let nodeY = block.labelBox.height;
           const blockWidth = block.getWidth();
           const view = this;
+          const customData = this.graph.customData;
+          const storageKey = this.customDataStorageKey();
+          const selectedCustomData = storageGetItem(storageKey, null, false);
           newNodes.each(function (node) {
               const nodeSvg = select(this);
               nodeSvg
@@ -14062,7 +14163,7 @@
                   .append("tspan")
                   .text(node.displayLabel)
                   .append("title")
-                  .text(node.getTitle());
+                  .text(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
               nodeSvg
                   .on("mouseenter", (node) => {
                   view.visibleNodes.data(node.inputs.map(edge => edge.source), source => source.toString())
@@ -14087,44 +14188,55 @@
                   event.stopPropagation();
               });
               nodeY += node.labelBox.height;
-              if (node.properties) {
+              if (view.graph.customData.nodes.size > 0) {
+                  const customData = view.graph.getCustomData(selectedCustomData, node.id, DataTarget.Nodes);
                   nodeSvg
                       .append("text")
                       .attr("dx", TURBOSHAFT_NODE_X_INDENT)
-                      .classed("inline-node-properties", true)
+                      .classed("inline-node-custom-data", true)
                       .attr("dy", nodeY)
                       .append("tspan")
-                      .text(node.getReadableProperties(blockWidth))
+                      .text(view.getReadableString(customData, blockWidth))
                       .append("title")
-                      .text(node.properties);
-                  nodeY += node.propertiesBox.height;
+                      .text(customData);
+                  nodeY += node.labelBox.height;
               }
           });
           newNodes.merge(selNodes)
               .classed("selected", node => state.selection.isSelected(node));
       }
       updateInlineNodes() {
+          const view = this;
           const state = this.state;
+          const storageKey = this.customDataStorageKey();
+          const selectedCustomData = storageGetItem(storageKey, null, false);
           let totalHeight = 0;
           let blockId = 0;
-          this.visibleNodes.each(function (node) {
+          view.visibleNodes.each(function (node) {
+              const nodeSvg = select(this);
+              const showCustomData = view.nodesCustomDataShowed();
               if (blockId != node.block.id) {
                   blockId = node.block.id;
                   totalHeight = 0;
               }
-              totalHeight += node.getHeight(state.showProperties);
-              const nodeSvg = select(this);
-              const nodeY = state.showProperties && node.properties
-                  ? totalHeight - node.labelBox.height
-                  : totalHeight;
+              totalHeight += node.getHeight(showCustomData);
+              const nodeY = showCustomData ? totalHeight - node.labelBox.height : totalHeight;
               nodeSvg
                   .select(".inline-node-label")
                   .classed("selected", node => state.selection.isSelected(node))
                   .attr("dy", nodeY)
                   .attr("visibility", !node.block.collapsed ? "visible" : "hidden");
-              nodeSvg
-                  .select(".inline-node-properties")
-                  .attr("visibility", !node.block.collapsed && state.showProperties ? "visible" : "hidden");
+              const svgNodeCustomData = nodeSvg
+                  .select(".inline-node-custom-data")
+                  .attr("visibility", !node.block.collapsed && showCustomData ? "visible" : "hidden");
+              if (!node.block.collapsed && showCustomData) {
+                  const customData = view.graph.getCustomData(selectedCustomData, node.id, DataTarget.Nodes);
+                  svgNodeCustomData
+                      .select("tspan")
+                      .text(view.getReadableString(customData, node.block.width))
+                      .append("title")
+                      .text(customData);
+              }
           });
       }
       appendInputAndOutputBubbles(svg, block) {
@@ -14139,7 +14251,7 @@
           }
           if (block.outputs.length > 0) {
               const x = block.getOutputX();
-              const y = block.getHeight(this.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
+              const y = block.getHeight(this.nodesCustomDataShowed()) + DEFAULT_NODE_BUBBLE_RADIUS;
               svg.append("circle")
                   .classed("filledBubbleStyle", true)
                   .attr("id", `ob,${block.id}`)
@@ -14149,12 +14261,12 @@
       }
       updateInputAndOutputBubbles() {
           const view = this;
-          this.visibleBubbles.each(function () {
+          view.visibleBubbles.each(function () {
               const components = this.id.split(",");
               if (components[0] === "ob") {
                   const from = view.graph.blockMap[components[1]];
                   const x = from.getOutputX();
-                  const y = from.getHeight(view.state.showProperties) + DEFAULT_NODE_BUBBLE_RADIUS;
+                  const y = from.getHeight(view.nodesCustomDataShowed()) + DEFAULT_NODE_BUBBLE_RADIUS;
                   this.setAttribute("transform", `translate(${x},${y})`);
               }
           });
@@ -14175,8 +14287,8 @@
                       maxX = maxX ? Math.max(maxX, block.x + block.getWidth()) : block.x + block.getWidth();
                       minY = minY ? Math.min(minY, block.y) : block.y;
                       maxY = maxY
-                          ? Math.max(maxY, block.y + block.getHeight(this.state.showProperties))
-                          : block.y + block.getHeight(this.state.showProperties);
+                          ? Math.max(maxY, block.y + block.getHeight(this.nodesCustomDataShowed()))
+                          : block.y + block.getHeight(this.nodesCustomDataShowed());
                   }
                   if (blockHasSelection) {
                       hasSelection = true;
@@ -14202,6 +14314,27 @@
           ];
           this.blockSelectionHandler.select(selectedBlocks, true);
       }
+      nodesCustomDataShowed() {
+          const storageKey = this.customDataStorageKey();
+          const selectedCustomData = storageGetItem(storageKey, null, false);
+          if (selectedCustomData == null)
+              return false;
+          return this.graph.hasCustomData(selectedCustomData, DataTarget.Nodes) &&
+              this.state.showCustomData;
+      }
+      customDataStorageKey() {
+          return `${this.phaseName}-selected-custom-data`;
+      }
+      getReadableString(str, maxWidth) {
+          if (!str)
+              return "";
+          const strBox = measureText(str);
+          if (maxWidth > strBox.width)
+              return str;
+          const widthOfOneSymbol = Math.floor(strBox.width / str.length);
+          const lengthOfReadableProperties = Math.floor(maxWidth / widthOfOneSymbol);
+          return `${str.slice(0, lengthOfReadableProperties - 3)}..`;
+      }
       // Actions (handlers of toolbox menu and hotkeys events)
       layoutAction(view) {
           view.updateGraphStateType(GraphStateType.NeedToFullRebuild);
@@ -14221,7 +14354,7 @@
           for (const block of view.graph.blocks()) {
               block.compressHeight();
           }
-          const ranksMaxBlockHeight = view.graph.getRanksMaxBlockHeight(view.state.showProperties);
+          const ranksMaxBlockHeight = view.graph.getRanksMaxBlockHeight(view.nodesCustomDataShowed());
           for (const block of view.graph.blocks()) {
               block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
                   return accumulator + current;
@@ -14243,21 +14376,23 @@
           view.viewSelection();
           view.focusOnSvg();
       }
-      togglePropertiesAction(view) {
-          view.state.showProperties = !view.state.showProperties;
+      toggleCustomDataAction(view) {
+          view.state.showCustomData = !view.state.showCustomData;
           const ranksMaxBlockHeight = new Array();
           for (const block of view.graph.blocks()) {
               ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.collapsed
                   ? block.height
-                  : block.getHeight(view.state.showProperties));
+                  : block.getHeight(view.nodesCustomDataShowed()));
           }
           for (const block of view.graph.blocks()) {
               block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
                   return accumulator + current;
               }, block.getRankIndent());
           }
-          const element = document.getElementById("toggle-properties");
-          element.classList.toggle("button-input-toggled", view.state.showProperties);
+          const element = document.getElementById("toggle-custom-data");
+          element.classList.toggle("button-input-toggled", view.state.showCustomData);
+          const extent = view.graph.redetermineGraphBoundingBox(view.state.showCustomData);
+          view.panZoom.translateExtent(extent);
           view.adaptiveUpdateGraphVisibility();
       }
       toggleLayoutCachingAction(view) {
@@ -14292,7 +14427,8 @@
           const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
           if (!node)
               return;
-          copyToClipboard(node.getTitle());
+          const customData = this.graph.customData;
+          copyToClipboard(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
       }
       selectNodesOfSelectedBlocks() {
           let selectedNodes = new Array();
@@ -15290,6 +15426,7 @@
                   this.historyList
                       .append("text")
                       .classed("history-item history-item-record", true)
+                      .classed("current-history-item", record.changes.has(HistoryChange.Current))
                       .attr("dy", recordY)
                       .attr("dx", this.labelBox.height * 0.75)
                       .append("tspan")
@@ -15473,7 +15610,12 @@
               this.phaseIdToHistory.set(phaseId, new PhaseHistory(phaseId));
           }
           this.phaseIdToHistory.get(phaseId).addChange(node, change);
-          this.maxNodeWidth = Math.max(this.maxNodeWidth, node.labelBox.width);
+          if (change == HistoryChange.Current) {
+              this.maxNodeWidth = Math.max(this.maxNodeWidth, node.labelBox.width * 1.07);
+          }
+          else {
+              this.maxNodeWidth = Math.max(this.maxNodeWidth, node.labelBox.width);
+          }
       }
       clear() {
           this.phaseIdToHistory.clear();
@@ -15642,7 +15784,7 @@
           }
           catch (err) {
               if (window.confirm("Error: Exception during load of TurboFan JSON file:\n" +
-                  `error: ${err.message} \nDo you want to clear session storage?`)) {
+                  `error: ${err} \nDo you want to clear session storage?`)) {
                   window.sessionStorage.clear();
               }
               return;
