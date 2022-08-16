@@ -1257,6 +1257,20 @@
           return `${this.sourceName}:${this.functionName}`;
       }
   }
+  class BytecodeSource {
+      constructor(sourceId, functionName, data, constantPool) {
+          this.sourceId = sourceId;
+          this.functionName = functionName;
+          this.data = data;
+          this.constantPool = constantPool;
+      }
+  }
+  class BytecodeSourceData {
+      constructor(offset, disassembly) {
+          this.offset = offset;
+          this.disassembly = disassembly;
+      }
+  }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftCustomDataPhase extends Phase {
@@ -1506,6 +1520,8 @@
           this.nodePositionMap = new Array();
           // Maps source ids to source objects.
           this.sources = new Array();
+          // Maps bytecode source ids to bytecode source objects.
+          this.bytecodeSources = new Map();
           // Maps inlining ids to inlining objects.
           this.inlinings = new Array();
           // Maps source position keys to inlinings.
@@ -1552,6 +1568,19 @@
           // This is a fallback if the JSON is incomplete (e.g. due to compiler crash).
           if (!this.sources[-1]) {
               this.sources[-1] = mainFunc;
+          }
+      }
+      setBytecodeSources(bytecodeSourcesJson) {
+          if (!bytecodeSourcesJson)
+              return;
+          for (const [sourceId, source] of Object.entries(bytecodeSourcesJson)) {
+              const bytecodeSource = source.bytecodeSource;
+              const data = new Array();
+              for (const bytecode of Object.values(bytecodeSource.data)) {
+                  data.push(new BytecodeSourceData(bytecode.offset, bytecode.disassembly));
+              }
+              const numSourceId = Number(sourceId);
+              this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, source.functionName, data, bytecodeSource.constantPool));
           }
       }
       setNodePositionMap(mapJson) {
@@ -1948,6 +1977,11 @@
           super(idOrContainer);
       }
   }
+  var CodeMode;
+  (function (CodeMode) {
+      CodeMode["MainSource"] = "main function";
+      CodeMode["InlinedSource"] = "inlined function";
+  })(CodeMode || (CodeMode = {}));
 
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
@@ -14593,11 +14627,6 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
-  var CodeMode;
-  (function (CodeMode) {
-      CodeMode["MainSource"] = "main function";
-      CodeMode["InlinedSource"] = "inlined function";
-  })(CodeMode || (CodeMode = {}));
   class CodeView extends View {
       constructor(parent, broker, sourceFunction, sourceResolver, codeMode) {
           super(parent);
@@ -15708,11 +15737,89 @@
       HistoryChange[HistoryChange["Survived"] = 5] = "Survived";
   })(HistoryChange || (HistoryChange = {}));
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class BytecodeSourceView extends View {
+      constructor(parent, broker, sourceFunction, sourceResolver, codeMode) {
+          super(parent);
+          this.broker = broker;
+          this.source = sourceFunction;
+          this.sourceResolver = sourceResolver;
+          this.codeMode = codeMode;
+          this.bytecodeOffsetToHtmlElement = new Map();
+          this.initializeCode();
+      }
+      createViewElement() {
+          return createElement("div", "bytecode-source-container");
+      }
+      initializeCode() {
+          const view = this;
+          const source = this.source;
+          const bytecodeContainer = this.divNode;
+          bytecodeContainer.classList.add(view.getSourceClass());
+          const bytecodeHeader = createElement("div", "code-header");
+          bytecodeHeader.setAttribute("id", view.getBytecodeHeaderHtmlElementName());
+          const codeFileFunction = createElement("div", "code-file-function", source.functionName);
+          bytecodeHeader.appendChild(codeFileFunction);
+          const codeMode = createElement("div", "code-mode", view.codeMode);
+          bytecodeHeader.appendChild(codeMode);
+          const clearElement = document.createElement("div");
+          clearElement.style.clear = "both";
+          bytecodeHeader.appendChild(clearElement);
+          bytecodeContainer.appendChild(bytecodeHeader);
+          const codePre = createElement("pre", "prettyprint linenums");
+          codePre.setAttribute("id", view.getBytecodeHtmlElementName());
+          bytecodeContainer.appendChild(codePre);
+          bytecodeHeader.onclick = () => {
+              codePre.style.display = codePre.style.display === "none" ? "block" : "none";
+          };
+          const sourceList = createElement("ol", "linenums");
+          for (const bytecodeSource of view.source.data) {
+              const currentLine = createElement("li", `L${bytecodeSource.offset}`);
+              currentLine.setAttribute("id", `li${bytecodeSource.offset}`);
+              view.insertLineContent(currentLine, bytecodeSource.disassembly);
+              view.insertLineNumber(currentLine, bytecodeSource.offset);
+              view.bytecodeOffsetToHtmlElement.set(bytecodeSource.offset, currentLine);
+              sourceList.appendChild(currentLine);
+          }
+          codePre.appendChild(sourceList);
+          if (view.source.constantPool.length === 0)
+              return;
+          const constantList = createElement("ol", "linenums constants");
+          const constantListHeader = createElement("li", "");
+          view.insertLineContent(constantListHeader, `Constant pool (size = ${view.source.constantPool.length})`);
+          constantList.appendChild(constantListHeader);
+          for (const [idx, constant] of view.source.constantPool.entries()) {
+              const currentLine = createElement("li", `C${idx}`);
+              view.insertLineContent(currentLine, `${idx}: ${constant}`);
+              constantList.appendChild(currentLine);
+          }
+          codePre.appendChild(constantList);
+      }
+      getBytecodeHeaderHtmlElementName() {
+          return `source-pre-${this.source.sourceId}-header`;
+      }
+      getBytecodeHtmlElementName() {
+          return `source-pre-${this.source.sourceId}`;
+      }
+      getSourceClass() {
+          return this.codeMode == CodeMode.MainSource ? "main-source" : "inlined-source";
+      }
+      insertLineContent(lineElement, content) {
+          const lineContentElement = createElement("span", "", content);
+          lineElement.appendChild(lineContentElement);
+      }
+      insertLineNumber(lineElement, lineNumber) {
+          const lineNumberElement = createElement("div", "line-number", String(lineNumber));
+          lineElement.insertBefore(lineNumberElement, lineElement.firstChild);
+      }
+  }
+
   // Copyright 2017 the V8 project authors. All rights reserved.
   window.onload = function () {
       let multiview;
       let disassemblyView;
       let sourceViews = new Array();
+      let bytecodeSourceViews = new Array();
       let historyView;
       let selectionBroker;
       let sourceResolver;
@@ -15739,6 +15846,7 @@
           }
           try {
               sourceViews.forEach(sv => sv.hide());
+              bytecodeSourceViews.forEach(bsv => bsv.hide());
               multiview?.hide();
               multiview = null;
               document.getElementById("ranges").innerHTML = "";
@@ -15747,6 +15855,7 @@
               disassemblyView?.hide();
               historyView?.hide();
               sourceViews = new Array();
+              bytecodeSourceViews = new Array();
               sourceResolver = new SourceResolver();
               selectionBroker = new SelectionBroker(sourceResolver);
               const jsonObj = JSON.parse(txtRes);
@@ -15754,6 +15863,7 @@
               sourceResolver.setInlinings(jsonObj.inlinings);
               sourceResolver.setSourceLineToBytecodePosition(jsonObj.sourceLineToBytecodePosition);
               sourceResolver.setSources(jsonObj.sources, mainFunction);
+              sourceResolver.setBytecodeSources(jsonObj.bytecodeSources);
               sourceResolver.setNodePositionMap(jsonObj.nodePositions);
               sourceResolver.parsePhases(jsonObj.phases);
               const [sourceTab, sourceContainer] = sourceTabs.addTabAndContent("Source");
@@ -15766,6 +15876,17 @@
                   const sourceView = new CodeView(sourceContainer, selectionBroker, source, sourceResolver, CodeMode.InlinedSource);
                   sourceView.show();
                   sourceViews.push(sourceView);
+              }
+              if (sourceResolver.bytecodeSources.size > 0) {
+                  const [_, bytecodeContainer] = sourceTabs.addTabAndContent("Bytecode");
+                  bytecodeContainer.classList.add("viewpane", "scrollable");
+                  const bytecodeSources = Array.from(sourceResolver.bytecodeSources.values()).reverse();
+                  for (const source of bytecodeSources) {
+                      const codeMode = source.sourceId == -1 ? CodeMode.MainSource : CodeMode.InlinedSource;
+                      const bytecodeSourceView = new BytecodeSourceView(bytecodeContainer, selectionBroker, source, sourceResolver, codeMode);
+                      bytecodeSourceView.show();
+                      bytecodeSourceViews.push(bytecodeSourceView);
+                  }
               }
               const [disassemblyTab, disassemblyContainer] = disassemblyTabs.addTabAndContent("Disassembly");
               disassemblyContainer.classList.add("viewpane", "scrollable");
