@@ -118,6 +118,7 @@ for version, branch, sha in BRANCHES:
 
     stamp = branch_dir / '.sha'
     stamp.write_text(sha)
+    continue
 
     git('switch', '--force', '--detach', sha)
     git('clean', '--force', '-d')
@@ -140,12 +141,12 @@ for version, branch, sha in BRANCHES:
 with Step("Update versions.txt"):
   versions_file = OUT_DIR / 'versions.txt'
   with open(versions_file, mode='w') as f:
-    versions = list(OUT_DIR.glob('v*'))
+    versions = OUT_DIR.glob('v*')
+    versions = list(filter(lambda file: file.name != 'versions.txt', versions))
     versions.sort(
       key=lambda file: list(map(int, file.name[1:].split('.')))
     )
-    # write all but the last filename (=versions.txt)
-    for version_dir in versions[:-1]:
+    for version_dir in versions:
       f.write(version_dir.name)
       f.write('\n')
   run("cp", DESTINATION / "index.html.template", OUT_DIR / "index.html")
