@@ -142,7 +142,7 @@ with Step("Update versions.txt"):
   with open(versions_file, mode='w') as f:
     versions = list(OUT_DIR.glob('v*'))
     versions.sort(
-      key=lambda file: map(int, file.name[1:].split('.'))
+      key=lambda file: list(map(int, file.name[1:].split('.')))
     )
     # write all but the last filename (=versions.txt)
     for version_dir in versions[:-1]:
