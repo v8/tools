@@ -6,62 +6,112 @@ found in the LICENSE file. -->
 <head>
   <meta charset="UTF-8">
   <link rel="icon" href="favicon.ico">
-  <title>V8 Tools Page</title>
+  <title>V8 Tools Versions</title>
 <style>
-body {
-  font-family: sans-serif;
-  color: white;
-  margin-left: 5%;
-  margin-right: 5%;
-  background-color: #000000;
-  text-align: center;
+:root {
+  --blue: #4285f4;
+  --darkgray: #464646;
+  --lightgray: #a6a6a6;
+  --white: #fff;
+  --black: #000;
+  --darkestgray: #232323;
+  --nearwhite: #fefefe;
+  --darkblue: #0a50c2;
+  --lightestgray: #d6d6d6;
+  --lightyellow: #fdeeb5;
+  --yellow: #fad956;
+  --orange: #f8a602;
+  --offset: 2em;
 }
-dl a {
-  background-color: #BB86FC;
-  color: black;
-  padding: 15px 25px;
-  text-decoration: none;
-  display: inline-block;
-  border-radius: 2px;
-}
-dl a:hover, a:active {
-  background-color: white;
-  color:black;
-}
-dl div {
-  display: inline-block;
-  text-align: center;
-  padding: 10px 25px 10px 25px ;
-  margin: 5px;
-  transition: background-color 0.5s;
-  background-color: #121212;
-  border-radius: 10px;
 
-}
-dl div.head { 
-  width: calc(100% - 60px);
-}
-dl div:hover {
-  background-color: #222;
-}
-dd {
-  padding: 15px 0 0 0;
+body, fieldset, h1, h2, h3, html, nav ul, nav ul li {
+  list-style: none;
   margin: 0;
+  padding: 0;
 }
-dt {
-  padding: 15px 0 0 0;
-  margin: 0;
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background-color: var(--black);
+  color: var(--lightestgray);
+  font: 100%/1.6 sans-serif;
+}
+header, body {
+  padding: 0 1em;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 860px;
+}
+header {
+  text-align: center;
+  background: var(--blue);
+  color: var(--nearwhite);
+  height: 6.5em;
+  position: relative;
+  vertical-align: middle;
+}
+footer, main {
+  padding: 1em var(--offset);
+}
+footer a, main a {
+  border-bottom: 1px solid var(--yelloy);
+  color: var(--yellow);
+  padding: 2px 2px 1px;
+}
+main {
+  background: var(--darkestgray);
+}
+footer {
+  background: var(--darkgray);
+}
+h1 {
+  display: block;
+  font-size: 2em;
+  font-weight: bold;
+  line-height: 3em;
+}
+.v8 {
+  background: url(http://v8.dev/_img/v8-outline.svg) no-repeat 50%;
+  background-size: 80%;
+  bottom: 0;
+  font-size: 1rem;
+  height: 6.5em;
+  overflow: hidden;
+  padding: 1em;
+  position: absolute;
+  text-indent: -9999em;
+  left: 1em;
+  width: 6.5em;
+}
+a {
+  text-decoration: none;
 }
 </style>
 </head>
 <body>
-  <h1>Welcome to the V8 Tools Version Page</h1>
-  <dl id="container">
-    <div class="head">
-      <dt><a href="./head">HEAD</a></dt>
-      <dd>The latest version of V8 tools.</dd>
-    </div>
-  </dl>
+  <header>
+  <h1><a class=v8 href="https://v8.dev">V8</a> Tools Versions</h1>
+  </header>
+  <main id=main>
+    <h2>Latest Version</h2>
+    <p>
+    Open tools pages for <a href="./head">HEAD</a>.
+    </p>
+
+    <h2>Older Versions</h2>
+    <p>
+      Open tools page for:
+      <select id="versions" onchange="gotoVersion(this)">
+        <option></option>
+      </select>
+    </p>
+
+  </main>
   <footer>
     <p>
     The sources of this page live on <a href="https://github.com/v8/tools">github</a>.
@@ -74,25 +124,25 @@ dt {
     .then(data => addVersionLinks(data));
 
   function addVersionLinks(versions) {
-    let container = document.querySelector("#container");
+    const select = document.getElementById("versions");
     versions
       .trimEnd()
       .split("\n")
       .reverse()
       .forEach(version => {
-        let versionNumber = version.substring(1);
-        let div = document.createElement("div");
-        let dt = document.createElement("dt");
-        let a = document.createElement('a');
-        a.href = version;
-        a.innerText = versionNumber;
-        dt.appendChild(a);
-        div.appendChild(dt);
-        let dd = document.createElement('dd');
-        dd.innerText = `Tools for version ${versionNumber}.`;
-        div.appendChild(dd);
-        container.appendChild(div);
+        const versionNumber = version.substring(1);
+        const option = document.createElement("option");
+        option.value = version;
+        option.innerHTML = `Version ${versionNumber}`;
+        select.appendChild(option);
     });
+  }
+
+  function gotoVersion(selectNode) {
+    const version = selectNode.options[selectNode.selectedIndex].value;
+    if (version.length > 0) {
+      window.location.href = `/${version}`;
+    }
   }
 </script>
 </html>
