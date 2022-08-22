@@ -4,6 +4,16 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file. -->
 <html lang="en">
 <head>
+  
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EQNXD43G9N"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-EQNXD43G9N');
+</script>
+
   <meta charset="UTF-8">
   <link rel="icon" href="favicon.ico">
   <title>V8 Tools Versions</title>
@@ -100,12 +110,12 @@ a {
   <main id=main>
     <h2>Latest Version</h2>
     <p>
-    Open tools page for <a href="./head">HEAD</a>.
+    Open the most recent tools for <a href="./head">HEAD</a>.
     </p>
 
-    <h2>Older Versions</h2>
+    <h2>Other Versions</h2>
     <p>
-      Open tools page for:
+      Open tools for:
       <select id="versions" onchange="gotoVersion(this)">
         <option></option>
       </select>
