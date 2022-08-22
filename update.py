@@ -108,6 +108,7 @@ def filter_by_stamp(values):
 with Step("Fetch Filtered Branches"):
   # Fetch only the required branches
   BRANCHES = list(filter(filter_by_stamp, BRANCHES))
+  BRANCHES = BRANCHES[-2:]
   git("fetch", "--depth=1", "origin",
       *(branch for version, branch, sha in BRANCHES))
 
@@ -118,7 +119,6 @@ for version, branch, sha in BRANCHES:
 
     stamp = branch_dir / '.sha'
     stamp.write_text(sha)
-    continue
 
     git('switch', '--force', '--detach', sha)
     git('clean', '--force', '-d')
@@ -133,11 +133,12 @@ for version, branch, sha in BRANCHES:
         try:
           run('npm', 'install', cwd=turbolizer_dir)
           run('npm', 'run-script', 'build', cwd=turbolizer_dir)
-          # We don't need to deply the node_modules
-          run('rm', '-rf', turbolizer_dir / node_modules)
+          # We don't need to deploy the cached node_modules folder
+          run('rm', '-rf', turbolizer_dir / "node_modules")
         except Exception as e:
           print(f'Error occured: {e}')
 
+INDEX_HTML = OUT_DIR / "index.html"
 with Step("Update versions.txt"):
   versions_file = OUT_DIR / 'versions.txt'
   with open(versions_file, mode='w') as f:
@@ -149,4 +150,31 @@ with Step("Update versions.txt"):
     for version_dir in versions:
       f.write(version_dir.name)
       f.write('\n')
-  run("cp", DESTINATION / "index.html.template", OUT_DIR / "index.html")
+  run("cp", DESTINATION / "index.html.template",INDEX_HTML )
+
+
+GTAG = """
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EQNXD43G9N"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-EQNXD43G9N');
+</script>
+"""
+PLACEHOLDER = "<!-- ANALYTICS_PLACEHOLDER -->"
+
+def inject_analytics(html_file):
+  with html_file.open() as f:
+    contents = f.read()
+  contents = contents.replace(PLACEHOLDER, GTAG)
+  with html_file.open('w+') as f:
+    f.write(contents)
+
+with Step("Inject Analytics"):
+  inject_analytics(INDEX_HTML)
+  for version, branch, sha in BRANCHES:
+    branch_dir = branch_dir / version
+    for html_file in OUT_DIR.glob("**/*.html"):
+      inject_analytics(html_file)
