@@ -161,8 +161,10 @@
           this.type = type;
       }
       isGraph() {
-          return this.type == PhaseType.Graph ||
-              this.type == PhaseType.TurboshaftGraph;
+          return this.type == PhaseType.Graph || this.type == PhaseType.TurboshaftGraph;
+      }
+      isDynamic() {
+          return this.isGraph() || this.type == PhaseType.Schedule || this.type == PhaseType.Sequence;
       }
   }
   var PhaseType;
@@ -185,13 +187,14 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class NodeLabel {
-      constructor(id, label, title, live, properties, sourcePosition, origin, opcode, control, opinfo, type) {
+      constructor(id, label, title, live, properties, sourcePosition, bytecodePosition, origin, opcode, control, opinfo, type) {
           this.id = id;
           this.label = label;
           this.title = title;
           this.live = live;
           this.properties = properties;
           this.sourcePosition = sourcePosition;
+          this.bytecodePosition = bytecodePosition;
           this.origin = origin;
           this.opcode = opcode;
           this.control = control;
@@ -250,9 +253,10 @@
       }
   }
   class NodeOrigin extends Origin {
-      constructor(nodeId, phase, reducer) {
+      constructor(nodeId, node, phase, reducer) {
           super(phase, reducer);
           this.nodeId = nodeId;
+          this.node = node;
       }
       identifier() {
           return `${this.nodeId}`;
@@ -271,48 +275,6 @@
       }
       toString() {
           return `Bytecode line ${this.bytecodePosition} in phase '${this.phase}/${this.reducer}'`;
-      }
-  }
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
-  class InliningPosition {
-      constructor(sourceId, inliningPosition) {
-          this.sourceId = sourceId;
-          this.inliningPosition = inliningPosition;
-      }
-  }
-  class SourcePosition {
-      constructor(scriptOffset, inliningId) {
-          this.scriptOffset = scriptOffset;
-          this.inliningId = inliningId;
-      }
-      lessOrEquals(other) {
-          if (this.inliningId == other.inliningId) {
-              return this.scriptOffset - other.scriptOffset;
-          }
-          return this.inliningId - other.inliningId;
-      }
-      equals(other) {
-          return this.inliningId == other.inliningId && this.scriptOffset == other.scriptOffset;
-      }
-      isValid() {
-          return typeof this.scriptOffset !== undefined && typeof this.inliningId !== undefined;
-      }
-      toString() {
-          return `SP:${this.inliningId}:${this.scriptOffset}`;
-      }
-  }
-  class BytecodePosition {
-      constructor(bytecodePosition) {
-          this.bytecodePosition = bytecodePosition;
-      }
-      isValid() {
-          return typeof this.bytecodePosition !== undefined;
-      }
-      toString() {
-          return `BCP:${this.bytecodePosition}`;
       }
   }
 
@@ -463,6 +425,16 @@
       getTitle() {
           return this.nodeLabel.getTitle();
       }
+      getHistoryLabel() {
+          return `${this.id} ${this.nodeLabel.opcode}`;
+      }
+      getNodeOrigin() {
+          const origin = this.nodeLabel.origin;
+          return origin instanceof NodeOrigin ? origin : null;
+      }
+      getInplaceUpdatePhase() {
+          return this?.nodeLabel?.inplaceUpdatePhase;
+      }
       getDisplayLabel() {
           return this.nodeLabel.getDisplayLabel();
       }
@@ -570,118 +542,6 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
-  class GraphPhase extends Phase {
-      constructor(name, highestNodeId, dataJson, nodeLabelMap) {
-          super(name, PhaseType.Graph);
-          this.highestNodeId = highestNodeId;
-          this.data = new GraphData();
-          this.stateType = GraphStateType.NeedToFullRebuild;
-          this.nodeIdToNodeMap = new Array();
-          this.originIdToNodesMap = new Map();
-          this.rendered = false;
-          this.parseDataFromJSON(dataJson, nodeLabelMap);
-          this.nodeLabelMap = nodeLabelMap?.slice();
-      }
-      parseDataFromJSON(dataJson, nodeLabelMap) {
-          this.data = new GraphData();
-          this.nodeIdToNodeMap = this.parseNodesFromJSON(dataJson.nodes, nodeLabelMap);
-          this.parseEdgesFromJSON(dataJson.edges);
-      }
-      parseNodesFromJSON(nodesJSON, nodeLabelMap) {
-          const nodeIdToNodeMap = new Array();
-          for (const node of nodesJSON) {
-              let origin = null;
-              const jsonOrigin = node.origin;
-              if (jsonOrigin) {
-                  if (jsonOrigin.nodeId) {
-                      origin = new NodeOrigin(jsonOrigin.nodeId, jsonOrigin.phase, jsonOrigin.reducer);
-                  }
-                  else {
-                      origin = new BytecodeOrigin(jsonOrigin.bytecodePosition, jsonOrigin.phase, jsonOrigin.reducer);
-                  }
-              }
-              let sourcePosition = null;
-              if (node.sourcePosition) {
-                  const scriptOffset = node.sourcePosition.scriptOffset;
-                  const inliningId = node.sourcePosition.inliningId;
-                  sourcePosition = new SourcePosition(scriptOffset, inliningId);
-              }
-              const label = new NodeLabel(node.id, node.label, node.title, node.live, node.properties, sourcePosition, origin, node.opcode, node.control, node.opinfo, node.type);
-              const previous = nodeLabelMap[label.id];
-              if (!label.equals(previous)) {
-                  if (previous !== undefined) {
-                      label.setInplaceUpdatePhase(this.name);
-                  }
-                  nodeLabelMap[label.id] = label;
-              }
-              const newNode = new GraphNode(label);
-              this.data.nodes.push(newNode);
-              nodeIdToNodeMap[newNode.identifier()] = newNode;
-              if (origin) {
-                  const identifier = origin.identifier();
-                  if (!this.originIdToNodesMap.has(identifier)) {
-                      this.originIdToNodesMap.set(identifier, new Array());
-                  }
-                  this.originIdToNodesMap.get(identifier).push(newNode);
-              }
-          }
-          return nodeIdToNodeMap;
-      }
-      parseEdgesFromJSON(edgesJSON) {
-          for (const edge of edgesJSON) {
-              const target = this.nodeIdToNodeMap[edge.target];
-              const source = this.nodeIdToNodeMap[edge.source];
-              const newEdge = new GraphEdge(target, edge.index, source, edge.type);
-              this.data.edges.push(newEdge);
-              target.inputs.push(newEdge);
-              source.outputs.push(newEdge);
-              if (edge.type === "control") {
-                  source.cfg = true;
-              }
-          }
-      }
-  }
-  class GraphData {
-      constructor() {
-          this.nodes = new Array();
-          this.edges = new Array();
-      }
-  }
-  var GraphStateType;
-  (function (GraphStateType) {
-      GraphStateType[GraphStateType["NeedToFullRebuild"] = 0] = "NeedToFullRebuild";
-      GraphStateType[GraphStateType["Cached"] = 1] = "Cached";
-  })(GraphStateType || (GraphStateType = {}));
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
-  class DisassemblyPhase extends Phase {
-      constructor(name, data, blockIdToOffsetJson) {
-          super(name, PhaseType.Disassembly);
-          this.data = data;
-          this.blockIdToOffset = new Array();
-          this.blockStartPCtoBlockIds = new Map();
-          this.parseBlockIdToOffsetFromJSON(blockIdToOffsetJson);
-      }
-      hasBlockStartInfo() {
-          return this.blockIdToOffset.length > 0;
-      }
-      getBlockIdsForOffset(offset) {
-          return this.blockStartPCtoBlockIds.get(offset);
-      }
-      parseBlockIdToOffsetFromJSON(blockIdToOffsetJson) {
-          if (!blockIdToOffsetJson)
-              return;
-          for (const [blockId, offset] of Object.entries(blockIdToOffsetJson)) {
-              this.blockIdToOffset[blockId] = offset;
-              if (!this.blockStartPCtoBlockIds.has(offset)) {
-                  this.blockStartPCtoBlockIds.set(offset, new Array());
-              }
-              this.blockStartPCtoBlockIds.get(offset).push(Number(blockId));
-          }
-      }
-  }
-
-  // Copyright 2022 the V8 project authors. All rights reserved.
   class InstructionsPhase extends Phase {
       constructor(name = "") {
           super(name, PhaseType.Instructions);
@@ -700,6 +560,19 @@
               }
           }
           return -1;
+      }
+      merge(other) {
+          if (!other)
+              return;
+          if (this.name == "")
+              this.name = "merged data";
+          this.nodeIdToInstructionRange = new Array();
+          this.blockIdToInstructionRange = other.blockIdToInstructionRange;
+          this.instructionOffsetToPCOffset = other.instructionOffsetToPCOffset;
+          this.codeOffsetsInfo = other.codeOffsetsInfo;
+          this.instructionToPCOffset = other.instructionToPCOffset;
+          this.pcOffsetToInstructions = other.pcOffsetToInstructions;
+          this.pcOffsets = other.pcOffsets;
       }
       instructionToPcOffsets(instruction) {
           return this.instructionToPCOffset[instruction];
@@ -909,6 +782,216 @@
   })(InstructionKind || (InstructionKind = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class InliningPosition {
+      constructor(sourceId, inliningPosition) {
+          this.sourceId = sourceId;
+          this.inliningPosition = inliningPosition;
+      }
+  }
+  class SourcePosition {
+      constructor(scriptOffset, inliningId) {
+          this.scriptOffset = scriptOffset;
+          this.inliningId = inliningId;
+      }
+      lessOrEquals(other) {
+          if (this.inliningId == other.inliningId) {
+              return this.scriptOffset - other.scriptOffset;
+          }
+          return this.inliningId - other.inliningId;
+      }
+      equals(other) {
+          return this.inliningId == other.inliningId && this.scriptOffset == other.scriptOffset;
+      }
+      isValid() {
+          return typeof this.scriptOffset !== undefined && typeof this.inliningId !== undefined;
+      }
+      toString() {
+          return `SP:${this.inliningId}:${this.scriptOffset}`;
+      }
+  }
+  class BytecodePosition {
+      constructor(bytecodePosition, inliningId) {
+          this.bytecodePosition = bytecodePosition;
+          this.inliningId = inliningId;
+      }
+      isValid() {
+          return typeof this.bytecodePosition !== undefined;
+      }
+      toString() {
+          return `BCP:${this.inliningId}:${this.bytecodePosition}`;
+      }
+  }
+  class PositionsContainer {
+      constructor() {
+          this.nodeIdToSourcePositionMap = new Array();
+          this.nodeIdToBytecodePositionMap = new Array();
+          this.sourcePositionToNodes = new Map();
+          this.bytecodePositionToNodes = new Map();
+      }
+      addSourcePosition(nodeIdentifier, sourcePosition) {
+          this.nodeIdToSourcePositionMap[nodeIdentifier] = sourcePosition;
+          const key = sourcePosition.toString();
+          if (!this.sourcePositionToNodes.has(key)) {
+              this.sourcePositionToNodes.set(key, new Array());
+          }
+          const nodes = this.sourcePositionToNodes.get(key);
+          if (!nodes.includes(nodeIdentifier))
+              nodes.push(nodeIdentifier);
+      }
+      addBytecodePosition(nodeIdentifier, bytecodePosition) {
+          this.nodeIdToBytecodePositionMap[nodeIdentifier] = bytecodePosition;
+          const key = bytecodePosition.toString();
+          if (!this.bytecodePositionToNodes.has(key)) {
+              this.bytecodePositionToNodes.set(key, new Array());
+          }
+          const nodes = this.bytecodePositionToNodes.get(key);
+          if (!nodes.includes(nodeIdentifier))
+              nodes.push(nodeIdentifier);
+      }
+      merge(nodes, replacements) {
+          for (const node of nodes) {
+              const sourcePosition = node.sourcePosition;
+              const bytecodePosition = node.bytecodePosition;
+              const nodeId = replacements.has(node.id) ? replacements.get(node.id) : node.id;
+              if (sourcePosition && !this.nodeIdToSourcePositionMap[nodeId]) {
+                  this.addSourcePosition(String(nodeId), sourcePosition);
+              }
+              if (bytecodePosition && !this.nodeIdToBytecodePositionMap[nodeId]) {
+                  this.addBytecodePosition(String(nodeId), bytecodePosition);
+              }
+          }
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class GraphPhase extends Phase {
+      constructor(name, dataJson, nodeMap, sources, inlinings) {
+          super(name, PhaseType.Graph);
+          this.data = new GraphData();
+          this.stateType = GraphStateType.NeedToFullRebuild;
+          this.instructionsPhase = new InstructionsPhase();
+          this.nodeIdToNodeMap = new Array();
+          this.originIdToNodesMap = new Map();
+          this.positions = new PositionsContainer();
+          this.highestNodeId = 0;
+          this.rendered = false;
+          this.parseDataFromJSON(dataJson, nodeMap, sources, inlinings);
+      }
+      parseDataFromJSON(dataJson, nodeMap, sources, inlinings) {
+          this.data = new GraphData();
+          this.parseNodesFromJSON(dataJson.nodes, nodeMap, sources, inlinings);
+          this.parseEdgesFromJSON(dataJson.edges);
+      }
+      parseNodesFromJSON(nodesJSON, nodeMap, sources, inlinings) {
+          for (const node of nodesJSON) {
+              let sourcePosition = null;
+              const sourcePositionJson = node.sourcePosition;
+              if (sourcePositionJson) {
+                  const scriptOffset = sourcePositionJson.scriptOffset;
+                  const inliningId = sourcePositionJson.inliningId;
+                  sourcePosition = new SourcePosition(scriptOffset, inliningId);
+              }
+              let origin = null;
+              let bytecodePosition = null;
+              const originJson = node.origin;
+              if (originJson) {
+                  const nodeId = originJson.nodeId;
+                  if (nodeId) {
+                      origin = new NodeOrigin(nodeId, nodeMap[nodeId], originJson.phase, originJson.reducer);
+                      bytecodePosition = nodeMap[nodeId]?.nodeLabel.bytecodePosition;
+                  }
+                  else {
+                      origin = new BytecodeOrigin(originJson.bytecodePosition, originJson.phase, originJson.reducer);
+                      const inliningId = sourcePosition ? sourcePosition.inliningId : -1;
+                      bytecodePosition = new BytecodePosition(originJson.bytecodePosition, inliningId);
+                  }
+              }
+              const label = new NodeLabel(node.id, node.label, node.title, node.live, node.properties, sourcePosition, bytecodePosition, origin, node.opcode, node.control, node.opinfo, node.type);
+              const newNode = new GraphNode(label);
+              this.data.nodes.push(newNode);
+              this.highestNodeId = Math.max(this.highestNodeId, newNode.id);
+              this.nodeIdToNodeMap[newNode.identifier()] = newNode;
+              const previous = nodeMap[newNode.id];
+              if (!newNode.equals(previous)) {
+                  if (previous)
+                      newNode.nodeLabel.setInplaceUpdatePhase(this.name);
+                  nodeMap[newNode.id] = newNode;
+              }
+              if (origin && origin instanceof NodeOrigin) {
+                  const identifier = origin.identifier();
+                  if (!this.originIdToNodesMap.has(identifier)) {
+                      this.originIdToNodesMap.set(identifier, new Array());
+                  }
+                  this.originIdToNodesMap.get(identifier).push(newNode);
+              }
+              if (sourcePosition) {
+                  const inlining = inlinings[sourcePosition.inliningId];
+                  if (inlining)
+                      sources[inlining.sourceId].sourcePositions.push(sourcePosition);
+                  this.positions.addSourcePosition(newNode.identifier(), sourcePosition);
+              }
+              if (bytecodePosition) {
+                  this.positions.addBytecodePosition(newNode.identifier(), bytecodePosition);
+              }
+          }
+      }
+      parseEdgesFromJSON(edgesJSON) {
+          for (const edge of edgesJSON) {
+              const target = this.nodeIdToNodeMap[edge.target];
+              const source = this.nodeIdToNodeMap[edge.source];
+              const newEdge = new GraphEdge(target, edge.index, source, edge.type);
+              this.data.edges.push(newEdge);
+              target.inputs.push(newEdge);
+              source.outputs.push(newEdge);
+              if (edge.type === "control") {
+                  source.cfg = true;
+              }
+          }
+      }
+  }
+  class GraphData {
+      constructor() {
+          this.nodes = new Array();
+          this.edges = new Array();
+      }
+  }
+  var GraphStateType;
+  (function (GraphStateType) {
+      GraphStateType[GraphStateType["NeedToFullRebuild"] = 0] = "NeedToFullRebuild";
+      GraphStateType[GraphStateType["Cached"] = 1] = "Cached";
+  })(GraphStateType || (GraphStateType = {}));
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  class DisassemblyPhase extends Phase {
+      constructor(name, data, blockIdToOffsetJson) {
+          super(name, PhaseType.Disassembly);
+          this.data = data;
+          this.blockIdToOffset = new Array();
+          this.blockStartPCtoBlockIds = new Map();
+          this.parseBlockIdToOffsetFromJSON(blockIdToOffsetJson);
+      }
+      hasBlockStartInfo() {
+          return this.blockIdToOffset.length > 0;
+      }
+      getBlockIdsForOffset(offset) {
+          return this.blockStartPCtoBlockIds.get(offset);
+      }
+      parseBlockIdToOffsetFromJSON(blockIdToOffsetJson) {
+          if (!blockIdToOffsetJson)
+              return;
+          for (const [blockId, offset] of Object.entries(blockIdToOffsetJson)) {
+              this.blockIdToOffset[blockId] = offset;
+              if (!this.blockStartPCtoBlockIds.has(offset)) {
+                  this.blockStartPCtoBlockIds.set(offset, new Array());
+              }
+              this.blockStartPCtoBlockIds.get(offset).push(Number(blockId));
+          }
+      }
+  }
+
+  // Copyright 2022 the V8 project authors. All rights reserved.
   class SchedulePhase extends Phase {
       constructor(name, dataJson) {
           super(name, PhaseType.Schedule);
@@ -963,6 +1046,8 @@
               }
           ];
           this.data = new ScheduleData();
+          this.instructionsPhase = new InstructionsPhase();
+          this.positions = new PositionsContainer();
           this.parseScheduleFromJSON(dataJson);
       }
       parseScheduleFromJSON(dataJson) {
@@ -1016,6 +1101,8 @@
   class SequencePhase extends Phase {
       constructor(name, blocksJSON, registerAllocationJSON) {
           super(name, PhaseType.Sequence);
+          this.instructionsPhase = new InstructionsPhase();
+          this.positions = new PositionsContainer();
           this.parseBlocksFromJSON(blocksJSON);
           this.parseRegisterAllocationFromJSON(registerAllocationJSON);
       }
@@ -1243,15 +1330,15 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class Source {
-      constructor(sourceName, functionName, sourceText, sourceId, backwardsCompatibility, sourcePositions, startPosition, endPosition) {
+      constructor(sourceName, functionName, sourceText, sourceId, backwardsCompatibility, startPosition, endPosition) {
           this.sourceName = sourceName;
           this.functionName = functionName;
           this.sourceText = sourceText;
           this.sourceId = sourceId;
           this.backwardsCompatibility = backwardsCompatibility;
-          this.sourcePositions = sourcePositions ?? new Array();
           this.startPosition = startPosition;
           this.endPosition = endPosition;
+          this.sourcePositions = new Array();
       }
       toString() {
           return `${this.sourceName}:${this.functionName}`;
@@ -1296,10 +1383,13 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphNode extends Node$1 {
-      constructor(id, title, block, opPropertiesType) {
+      constructor(id, title, block, sourcePosition, bytecodePosition, origin, opPropertiesType) {
           super(id);
           this.title = title;
           this.block = block;
+          this.sourcePosition = sourcePosition;
+          this.bytecodePosition = bytecodePosition;
+          this.origin = origin;
           this.opPropertiesType = opPropertiesType;
           this.visible = true;
       }
@@ -1315,6 +1405,9 @@
       }
       getTitle() {
           let title = `${this.id} ${this.title} ${this.opPropertiesType}`;
+          if (this.origin) {
+              title += `\nOrigin: ${this.origin.toString()}`;
+          }
           if (this.inputs.length > 0) {
               title += `\nInputs: ${this.inputs.map(i => i.source.id).join(", ")}`;
           }
@@ -1323,10 +1416,23 @@
           }
           return title;
       }
+      getHistoryLabel() {
+          return `${this.id} ${this.title}`;
+      }
+      getNodeOrigin() {
+          return this.origin;
+      }
       getInlineLabel() {
           if (this.inputs.length == 0)
               return `${this.id} ${this.title}`;
           return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(",")})`;
+      }
+      equals(that) {
+          if (!that)
+              return false;
+          if (this.id !== that.id)
+              return false;
+          return this.title === that.title;
       }
   }
   var OpPropertiesType;
@@ -1416,19 +1522,23 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphPhase extends Phase {
-      constructor(name, dataJson) {
+      constructor(name, dataJson, nodeMap, sources, inlinings) {
           super(name, PhaseType.TurboshaftGraph);
           this.stateType = GraphStateType$1.NeedToFullRebuild;
+          this.instructionsPhase = new InstructionsPhase();
           this.customData = new TurboshaftCustomData();
           this.nodeIdToNodeMap = new Array();
           this.blockIdToBlockMap = new Array();
+          this.originIdToNodesMap = new Map();
+          this.positions = new PositionsContainer();
+          this.highestNodeId = 0;
           this.rendered = false;
-          this.parseDataFromJSON(dataJson);
+          this.parseDataFromJSON(dataJson, nodeMap, sources, inlinings);
       }
-      parseDataFromJSON(dataJson) {
+      parseDataFromJSON(dataJson, nodeMap, sources, inlinings) {
           this.data = new TurboshaftGraphData();
           this.parseBlocksFromJSON(dataJson.blocks);
-          this.parseNodesFromJSON(dataJson.nodes);
+          this.parseNodesFromJSON(dataJson.nodes, nodeMap, sources, inlinings);
           this.parseEdgesFromJSON(dataJson.edges);
       }
       parseBlocksFromJSON(blocksJson) {
@@ -1446,13 +1556,54 @@
               }
           }
       }
-      parseNodesFromJSON(nodesJson) {
+      parseNodesFromJSON(nodesJson, nodeMap, sources, inlinings) {
           for (const nodeJson of nodesJson) {
               const block = this.blockIdToBlockMap[nodeJson.block_id];
-              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, nodeJson.op_properties_type);
+              let sourcePosition = null;
+              const sourcePositionJson = nodeJson.sourcePosition;
+              if (sourcePositionJson) {
+                  const scriptOffset = sourcePositionJson.scriptOffset;
+                  const inliningId = sourcePositionJson.inliningId;
+                  sourcePosition = new SourcePosition(scriptOffset, inliningId);
+              }
+              let origin = null;
+              let bytecodePosition = null;
+              const originJson = nodeJson.origin;
+              if (originJson) {
+                  const nodeId = originJson.nodeId;
+                  const originNode = nodeMap[nodeId];
+                  origin = new NodeOrigin(nodeId, originNode, originJson.phase, originJson.reducer);
+                  if (originNode) {
+                      if (originNode instanceof GraphNode) {
+                          bytecodePosition = originNode.nodeLabel.bytecodePosition;
+                      }
+                      else {
+                          bytecodePosition = originNode.bytecodePosition;
+                      }
+                  }
+              }
+              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_properties_type);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
+              this.highestNodeId = Math.max(this.highestNodeId, node.id);
+              if (origin) {
+                  const identifier = origin.identifier();
+                  if (!this.originIdToNodesMap.has(identifier)) {
+                      this.originIdToNodesMap.set(identifier, new Array());
+                  }
+                  this.originIdToNodesMap.get(identifier).push(node);
+              }
+              nodeMap[node.id] = node;
+              if (sourcePosition) {
+                  const inlining = inlinings[sourcePosition.inliningId];
+                  if (inlining)
+                      sources[inlining.sourceId].sourcePositions.push(sourcePosition);
+                  this.positions.addSourcePosition(node.identifier(), sourcePosition);
+              }
+              if (bytecodePosition) {
+                  this.positions.addBytecodePosition(node.identifier(), bytecodePosition);
+              }
           }
           for (const block of this.blockIdToBlockMap) {
               block.initCollapsedLabel();
@@ -1507,7 +1658,9 @@
       concatCustomData(key, items) {
           let customData = "";
           for (const [name, dataPhase] of items.entries()) {
-              customData += `\n${name}: ${dataPhase.data[key] ?? ""}`;
+              if (dataPhase.data[key] && dataPhase.data[key].length > 0) {
+                  customData += `\n${name}: ${dataPhase.data[key]}`;
+              }
           }
           return customData;
       }
@@ -1516,8 +1669,6 @@
   // Copyright 2018 the V8 project authors. All rights reserved.
   class SourceResolver {
       constructor() {
-          // Maps node ids to source positions.
-          this.nodePositionMap = new Array();
           // Maps source ids to source objects.
           this.sources = new Array();
           // Maps bytecode source ids to bytecode source objects.
@@ -1526,23 +1677,22 @@
           this.inlinings = new Array();
           // Maps source position keys to inlinings.
           this.inliningsMap = new Map();
-          // Maps source position keys to node ids.
-          this.positionToNodes = new Map();
           // Maps phase ids to phases.
           this.phases = new Array();
           // Maps phase names to phaseIds.
           this.phaseNames = new Map();
-          this.instructionsPhase = new InstructionsPhase();
           // Maps line numbers to source positions
           this.linePositionMap = new Map();
+          // Maps node ids to node origin
+          this.finalNodeOrigins = new Array();
       }
       getMainFunction(jsonObj) {
           const fncJson = jsonObj.function;
           // Backwards compatibility.
           if (typeof fncJson === "string") {
-              return new Source(null, null, jsonObj.source, -1, true, new Array(), jsonObj.sourcePosition, jsonObj.sourcePosition + jsonObj.source.length);
+              return new Source(null, null, jsonObj.source, -1, true, jsonObj.sourcePosition, jsonObj.sourcePosition + jsonObj.source.length);
           }
-          return new Source(fncJson.sourceName, fncJson.functionName, fncJson.sourceText, fncJson.sourceId, false, new Array(), fncJson.startPosition, fncJson.endPosition);
+          return new Source(fncJson.sourceName, fncJson.functionName, fncJson.sourceText, fncJson.sourceId, false, fncJson.startPosition, fncJson.endPosition);
       }
       setInlinings(inliningsJson) {
           if (inliningsJson) {
@@ -1561,7 +1711,7 @@
       setSources(sourcesJson, mainFunc) {
           if (sourcesJson) {
               for (const [sourceId, source] of Object.entries(sourcesJson)) {
-                  const src = new Source(source.sourceName, source.functionName, source.sourceText, source.sourceId, source.backwardsCompatibility, new Array(), source.startPosition, source.endPosition);
+                  const src = new Source(source.sourceName, source.functionName, source.sourceText, source.sourceId, source.backwardsCompatibility, source.startPosition, source.endPosition);
                   this.sources[sourceId] = src;
               }
           }
@@ -1583,38 +1733,19 @@
               this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, source.functionName, data, bytecodeSource.constantPool));
           }
       }
-      setNodePositionMap(mapJson) {
-          if (!mapJson)
+      setFinalNodeOrigins(nodeOriginsJson) {
+          if (!nodeOriginsJson)
               return;
-          if (typeof mapJson[0] !== "object") {
-              const alternativeMap = new Map();
-              for (const [nodeId, scriptOffset] of Object.entries(mapJson)) {
-                  alternativeMap[nodeId] = new SourcePosition(scriptOffset, -1);
-              }
-              mapJson = alternativeMap;
-          }
-          for (const [nodeId, sourcePosition] of Object.entries(mapJson)) {
-              if (sourcePosition === undefined) {
-                  console.warn(`Undefined source position for node id ${nodeId}`);
-              }
-              const inlining = this.inlinings[sourcePosition.inliningId];
-              const sp = new SourcePosition(sourcePosition.scriptOffset, sourcePosition.inliningId);
-              if (inlining)
-                  this.sources[inlining.sourceId].sourcePositions.push(sp);
-              this.nodePositionMap[nodeId] = sp;
-              const key = sp.toString();
-              if (!this.positionToNodes.has(key)) {
-                  this.positionToNodes.set(key, new Array());
-              }
-              this.positionToNodes.get(key).push(nodeId);
-          }
-          for (const [, source] of Object.entries(this.sources)) {
-              source.sourcePositions = sortUnique(source.sourcePositions, (a, b) => a.lessOrEquals(b), (a, b) => a.equals(b));
+          for (const [nodeId, nodeOrigin] of Object.entries(nodeOriginsJson)) {
+              this.finalNodeOrigins[nodeId] = new NodeOrigin(nodeOrigin.nodeId, null, nodeOrigin.phase, nodeOrigin.reducer);
           }
       }
       parsePhases(phasesJson) {
-          const nodeLabelMap = new Array();
+          const instructionsPhase = new InstructionsPhase();
+          const selectedDynamicPhases = new Array();
+          const nodeMap = new Array();
           let lastTurboshaftGraphPhase = null;
+          let lastGraphPhase = null;
           for (const [, genericPhase] of Object.entries(phasesJson)) {
               switch (genericPhase.type) {
                   case PhaseType.Disassembly:
@@ -1627,43 +1758,57 @@
                       const schedulePhase = new SchedulePhase(castedSchedule.name, castedSchedule.data);
                       this.phaseNames.set(schedulePhase.name, this.phases.length);
                       this.phases.push(schedulePhase);
+                      selectedDynamicPhases.push(schedulePhase);
+                      if (lastGraphPhase instanceof GraphPhase) {
+                          schedulePhase.positions = lastGraphPhase.positions;
+                      }
+                      else {
+                          const oldIdToNewIdMap = this.getOldIdToNewIdMap(this.phases.length - 1);
+                          schedulePhase.positions.merge(lastGraphPhase.data.nodes, oldIdToNewIdMap);
+                      }
+                      schedulePhase.instructionsPhase = instructionsPhase;
                       break;
                   case PhaseType.Sequence:
                       const castedSequence = camelize(genericPhase);
                       const sequencePhase = new SequencePhase(castedSequence.name, castedSequence.blocks, castedSequence.registerAllocation);
+                      const prevPhase = this.getDynamicPhase(this.phases.length - 1);
+                      sequencePhase.positions = prevPhase.positions;
+                      sequencePhase.instructionsPhase = prevPhase.instructionsPhase;
                       this.phaseNames.set(sequencePhase.name, this.phases.length);
                       this.phases.push(sequencePhase);
                       break;
                   case PhaseType.Instructions:
                       const castedInstructions = genericPhase;
-                      if (this.instructionsPhase.name === "") {
-                          this.instructionsPhase.name = castedInstructions.name;
+                      if (instructionsPhase.name === "") {
+                          instructionsPhase.name = castedInstructions.name;
                       }
                       else {
-                          this.instructionsPhase.name += `, ${castedInstructions.name}`;
+                          instructionsPhase.name += `, ${castedInstructions.name}`;
                       }
-                      this.instructionsPhase.parseNodeIdToInstructionRangeFromJSON(castedInstructions
+                      instructionsPhase.parseNodeIdToInstructionRangeFromJSON(castedInstructions
                           ?.nodeIdToInstructionRange);
-                      this.instructionsPhase.parseBlockIdToInstructionRangeFromJSON(castedInstructions
+                      instructionsPhase.parseBlockIdToInstructionRangeFromJSON(castedInstructions
                           ?.blockIdToInstructionRange);
-                      this.instructionsPhase.parseInstructionOffsetToPCOffsetFromJSON(castedInstructions
+                      instructionsPhase.parseInstructionOffsetToPCOffsetFromJSON(castedInstructions
                           ?.instructionOffsetToPCOffset);
-                      this.instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions
-                          ?.codeOffsetsInfo);
+                      instructionsPhase.parseCodeOffsetsInfoFromJSON(castedInstructions?.codeOffsetsInfo);
                       break;
                   case PhaseType.Graph:
                       const castedGraph = genericPhase;
-                      const graphPhase = new GraphPhase(castedGraph.name, 0, castedGraph.data, nodeLabelMap);
-                      this.recordOrigins(graphPhase);
+                      const graphPhase = new GraphPhase(castedGraph.name, castedGraph.data, nodeMap, this.sources, this.inlinings);
                       this.phaseNames.set(graphPhase.name, this.phases.length);
                       this.phases.push(graphPhase);
+                      selectedDynamicPhases.push(graphPhase);
+                      lastGraphPhase = graphPhase;
                       break;
                   case PhaseType.TurboshaftGraph:
                       const castedTurboshaftGraph = genericPhase;
-                      const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, castedTurboshaftGraph.data);
+                      const turboshaftGraphPhase = new TurboshaftGraphPhase(castedTurboshaftGraph.name, castedTurboshaftGraph.data, nodeMap, this.sources, this.inlinings);
                       this.phaseNames.set(turboshaftGraphPhase.name, this.phases.length);
                       this.phases.push(turboshaftGraphPhase);
+                      selectedDynamicPhases.push(turboshaftGraphPhase);
                       lastTurboshaftGraphPhase = turboshaftGraphPhase;
+                      lastGraphPhase = turboshaftGraphPhase;
                       break;
                   case PhaseType.TurboshaftCustomData:
                       const castedCustomData = camelize(genericPhase);
@@ -1674,11 +1819,45 @@
                       throw "Unsupported phase type";
               }
           }
+          this.sortSourcePositions();
+          this.instructionsPhase = instructionsPhase;
+          if (!lastTurboshaftGraphPhase) {
+              for (const phase of selectedDynamicPhases) {
+                  if (!phase.isDynamic())
+                      continue;
+                  phase.instructionsPhase = instructionsPhase;
+              }
+              return;
+          }
+          if (instructionsPhase.name == "")
+              return;
+          // Adapting 'nodeIdToInstructionRange' array to fix Turboshaft's nodes recreation
+          this.adaptInstructionsPhases(selectedDynamicPhases);
       }
       sourcePositionsToNodeIds(sourcePositions) {
           const nodeIds = new Set();
-          for (const sp of sourcePositions) {
-              const nodeIdsForPosition = this.positionToNodes.get(sp.toString());
+          for (const position of sourcePositions) {
+              const key = position.toString();
+              let nodeIdsForPosition = null;
+              if (position instanceof SourcePosition) {
+                  nodeIdsForPosition = this.positions.sourcePositionToNodes.get(key);
+              }
+              else {
+                  // Wasm support
+                  nodeIdsForPosition = this.positions.bytecodePositionToNodes.get(key);
+              }
+              if (!nodeIdsForPosition)
+                  continue;
+              for (const nodeId of nodeIdsForPosition) {
+                  nodeIds.add(nodeId);
+              }
+          }
+          return nodeIds;
+      }
+      bytecodePositionsToNodeIds(bytecodePositions) {
+          const nodeIds = new Set();
+          for (const position of bytecodePositions) {
+              const nodeIdsForPosition = this.positions.bytecodePositionToNodes.get(position.toString());
               if (!nodeIdsForPosition)
                   continue;
               for (const nodeId of nodeIdsForPosition) {
@@ -1690,16 +1869,33 @@
       nodeIdsToSourcePositions(nodeIds) {
           const sourcePositions = new Map();
           for (const nodeId of nodeIds) {
-              const position = this.nodePositionMap[nodeId];
-              if (!position)
-                  continue;
-              sourcePositions.set(position.toString(), position);
+              const sourcePosition = this.positions.nodeIdToSourcePositionMap[nodeId];
+              if (sourcePosition) {
+                  sourcePositions.set(sourcePosition.toString(), sourcePosition);
+              }
+              // Wasm support
+              if (this.bytecodeSources.size == 0) {
+                  const bytecodePosition = this.positions.nodeIdToBytecodePositionMap[nodeId];
+                  if (bytecodePosition) {
+                      sourcePositions.set(bytecodePosition.toString(), bytecodePosition);
+                  }
+              }
           }
           const sourcePositionArray = new Array();
           for (const sourcePosition of sourcePositions.values()) {
               sourcePositionArray.push(sourcePosition);
           }
           return sourcePositionArray;
+      }
+      nodeIdsToBytecodePositions(nodeIds) {
+          const bytecodePositions = new Map();
+          for (const nodeId of nodeIds) {
+              const position = this.positions.nodeIdToBytecodePositionMap[nodeId];
+              if (!position)
+                  continue;
+              bytecodePositions.set(position.toString(), position);
+          }
+          return Array.from(bytecodePositions.values());
       }
       translateToSourceId(sourceId, location) {
           for (const position of this.getInlineStack(location)) {
@@ -1743,6 +1939,14 @@
       getPhase(phaseId) {
           return this.phases[phaseId];
       }
+      getGraphPhase(phaseId) {
+          const phase = this.phases[phaseId];
+          return phase.isGraph() ? phase : null;
+      }
+      getDynamicPhase(phaseId) {
+          const phase = this.phases[phaseId];
+          return phase.isDynamic() ? phase : null;
+      }
       getPhaseNameById(phaseId) {
           return this.getPhase(phaseId).name;
       }
@@ -1772,7 +1976,7 @@
           if (!sourceLineToBytecodePositionJson)
               return;
           sourceLineToBytecodePositionJson.forEach((position, idx) => {
-              this.addAnyPositionToLine(idx, new BytecodePosition(position));
+              this.addAnyPositionToLine(idx, new BytecodePosition(position, -1));
           });
       }
       getInlineStack(sourcePosition) {
@@ -1792,25 +1996,84 @@
           }
           return inliningStack;
       }
-      recordOrigins(graphPhase) {
-          if (graphPhase.type !== PhaseType.Graph)
-              return;
-          for (const node of graphPhase.data.nodes) {
-              graphPhase.highestNodeId = Math.max(graphPhase.highestNodeId, node.id);
-              const origin = node.nodeLabel.origin;
-              if (origin instanceof BytecodeOrigin) {
-                  const position = new BytecodePosition(origin.bytecodePosition);
-                  this.nodePositionMap[node.id] = position;
-                  const key = position.toString();
-                  if (!this.positionToNodes.has(key)) {
-                      this.positionToNodes.set(key, new Array());
+      sortSourcePositions() {
+          for (const source of Object.values(this.sources)) {
+              source.sourcePositions = sortUnique(source.sourcePositions, (a, b) => a.lessOrEquals(b), (a, b) => a.equals(b));
+          }
+      }
+      adaptInstructionsPhases(dynamicPhases) {
+          const seaOfNodesInstructions = new InstructionsPhase("sea of nodes");
+          for (let phaseId = dynamicPhases.length - 2; phaseId >= 0; phaseId--) {
+              const phase = dynamicPhases[phaseId];
+              const prevPhase = dynamicPhases[phaseId + 1];
+              if (phase.type == PhaseType.TurboshaftGraph && prevPhase.type == PhaseType.Schedule) {
+                  phase.instructionsPhase.merge(prevPhase.instructionsPhase);
+                  const oldIdToNewIdMap = this.getOldIdToNewIdMap(phaseId + 1);
+                  const maxNodeId = phase.highestNodeId;
+                  for (let nodeId = 0; nodeId <= maxNodeId; nodeId++) {
+                      const prevNodeId = oldIdToNewIdMap.has(nodeId) ? oldIdToNewIdMap.get(nodeId) : nodeId;
+                      phase.instructionsPhase.nodeIdToInstructionRange[nodeId] =
+                          prevPhase.instructionsPhase.getInstruction(prevNodeId);
                   }
-                  const nodes = this.positionToNodes.get(key);
-                  const identifier = node.identifier();
-                  if (!nodes.includes(identifier))
-                      nodes.push(identifier);
+              }
+              else if (phase.type == PhaseType.TurboshaftGraph &&
+                  prevPhase.type == PhaseType.TurboshaftGraph) {
+                  phase.instructionsPhase.merge(prevPhase.instructionsPhase);
+                  const maxNodeId = phase.highestNodeId;
+                  const originIdToNodesMap = prevPhase.originIdToNodesMap;
+                  for (let nodeId = 0; nodeId <= maxNodeId; nodeId++) {
+                      const nodes = originIdToNodesMap.get(String(nodeId));
+                      const prevNodeId = nodes?.length > 0 ? nodes[0]?.id : nodeId;
+                      phase.instructionsPhase.nodeIdToInstructionRange[nodeId] =
+                          prevPhase.instructionsPhase.getInstruction(prevNodeId);
+                  }
+              }
+              else if (phase.type == PhaseType.Schedule && prevPhase.type == PhaseType.TurboshaftGraph) {
+                  seaOfNodesInstructions.merge(prevPhase.instructionsPhase);
+                  phase.instructionsPhase = seaOfNodesInstructions;
+                  const originIdToNodesMap = prevPhase.originIdToNodesMap;
+                  for (const [originId, nodes] of originIdToNodesMap.entries()) {
+                      if (!originId || nodes.length == 0)
+                          continue;
+                      phase.instructionsPhase.nodeIdToInstructionRange[originId] =
+                          prevPhase.instructionsPhase.getInstruction(nodes[0].id);
+                  }
+              }
+              else if (phase.type == PhaseType.Graph && prevPhase.type == PhaseType.Graph) {
+                  phase.instructionsPhase = seaOfNodesInstructions;
+                  const prevGraphPhase = prevPhase;
+                  for (const [originId, nodes] of prevGraphPhase.originIdToNodesMap.entries()) {
+                      if (!originId || nodes.length == 0)
+                          continue;
+                      for (const node of nodes) {
+                          if (!phase.instructionsPhase.nodeIdToInstructionRange[originId]) {
+                              if (!prevPhase.instructionsPhase.nodeIdToInstructionRange[node.id])
+                                  continue;
+                              phase.instructionsPhase.nodeIdToInstructionRange[originId] =
+                                  prevPhase.instructionsPhase.getInstruction(node.id);
+                          }
+                          else {
+                              break;
+                          }
+                      }
+                  }
+              }
+              else {
+                  phase.instructionsPhase = seaOfNodesInstructions;
               }
           }
+      }
+      getOldIdToNewIdMap(phaseId) {
+          // This function works with final node origins (we can have overwriting for Turboshaft IR)
+          const oldIdToNewIdMap = new Map();
+          for (const [newId, nodeOrigin] of this.finalNodeOrigins.entries()) {
+              if (!nodeOrigin)
+                  continue;
+              if (nodeOrigin.phase === this.phases[phaseId].name) {
+                  oldIdToNewIdMap.set(nodeOrigin.nodeId, newId);
+              }
+          }
+          return oldIdToNewIdMap;
       }
   }
 
@@ -1826,6 +2089,7 @@
           this.blockHandlers = new Array();
           this.instructionHandlers = new Array();
           this.sourcePositionHandlers = new Array();
+          this.bytecodeOffsetHandlers = new Array();
           this.registerAllocationHandlers = new Array();
       }
       addHistoryHandler(handler) {
@@ -1858,6 +2122,10 @@
           this.allHandlers.push(handler);
           this.sourcePositionHandlers.push(handler);
       }
+      addBytecodeOffsetHandler(handler) {
+          this.allHandlers.push(handler);
+          this.bytecodeOffsetHandlers.push(handler);
+      }
       addRegisterAllocatorHandler(handler) {
           this.allHandlers.push(handler);
           this.registerAllocationHandlers.push(handler);
@@ -1865,7 +2133,7 @@
       broadcastHistoryShow(from, node, phaseName) {
           for (const handler of this.historyHandlers) {
               if (handler != from)
-                  handler.showTurbofanNodeHistory(node, phaseName);
+                  handler.showNodeHistory(node, phaseName);
           }
       }
       broadcastInstructionSelect(from, instructionOffsets, selected) {
@@ -1874,7 +2142,7 @@
               if (handler != from)
                   handler.brokeredInstructionSelect([instructionOffsets], selected);
           }
-          // Select the lines from the source panel (left panel)
+          // Select the lines from the source and bytecode panels (left panels)
           const pcOffsets = this.sourceResolver.instructionsPhase
               .instructionsToKeyPcOffsets(instructionOffsets);
           for (const offset of pcOffsets) {
@@ -1884,10 +2152,15 @@
                   if (handler != from)
                       handler.brokeredSourcePositionSelect(sourcePositions, selected);
               }
+              const bytecodePositions = this.sourceResolver.nodeIdsToBytecodePositions(nodes);
+              for (const handler of this.bytecodeOffsetHandlers) {
+                  if (handler != from)
+                      handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
+              }
           }
           // The middle panel lines have already been selected so there's no need to reselect them.
       }
-      broadcastSourcePositionSelect(from, sourcePositions, selected) {
+      broadcastSourcePositionSelect(from, sourcePositions, selected, selectedNodes) {
           sourcePositions = sourcePositions.filter(sourcePosition => {
               if (!sourcePosition.isValid()) {
                   console.warn("Invalid source position");
@@ -1906,6 +2179,41 @@
               if (handler != from)
                   handler.brokeredNodeSelect(nodes, selected);
           }
+          // Select bytecode source panel (left panel)
+          const bytecodePositions = selectedNodes
+              ? this.sourceResolver.nodeIdsToBytecodePositions(selectedNodes)
+              : this.sourceResolver.nodeIdsToBytecodePositions(nodes);
+          for (const handler of this.bytecodeOffsetHandlers) {
+              if (handler != from)
+                  handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
+          }
+          this.selectInstructionsAndRegisterAllocations(from, nodes, selected);
+      }
+      broadcastBytecodePositionsSelect(from, bytecodePositions, selected) {
+          bytecodePositions = bytecodePositions.filter(bytecodePosition => {
+              if (!bytecodePosition.isValid()) {
+                  console.warn("Invalid bytecode position");
+                  return false;
+              }
+              return true;
+          });
+          // Select the lines from the bytecode panel (left panel)
+          for (const handler of this.bytecodeOffsetHandlers) {
+              if (handler != from)
+                  handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
+          }
+          // Select the nodes (middle panel)
+          const nodes = this.sourceResolver.bytecodePositionsToNodeIds(bytecodePositions);
+          for (const handler of this.nodeHandlers) {
+              if (handler != from)
+                  handler.brokeredNodeSelect(nodes, selected);
+          }
+          // Select the lines from the source panel (left panel)
+          const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
+          for (const handler of this.sourcePositionHandlers) {
+              if (handler != from)
+                  handler.brokeredSourcePositionSelect(sourcePositions, selected);
+          }
           this.selectInstructionsAndRegisterAllocations(from, nodes, selected);
       }
       broadcastNodeSelect(from, nodes, selected) {
@@ -1919,6 +2227,12 @@
           for (const handler of this.sourcePositionHandlers) {
               if (handler != from)
                   handler.brokeredSourcePositionSelect(sourcePositions, selected);
+          }
+          // Select bytecode source panel (left panel)
+          const bytecodePositions = this.sourceResolver.nodeIdsToBytecodePositions(nodes);
+          for (const handler of this.bytecodeOffsetHandlers) {
+              if (handler != from)
+                  handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
           }
           this.selectInstructionsAndRegisterAllocations(from, nodes, selected);
       }
@@ -11509,6 +11823,12 @@
                   return false;
               })];
       }
+      showHoveredNodeHistory() {
+          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
+          if (!node)
+              return;
+          this.broker.broadcastHistoryShow(null, node, this.phaseName);
+      }
       createImgToggleInput(id, title, initState, onClick) {
           const input = this.createImgInput(id, title, onClick);
           input.classList.toggle("button-input-toggled", initState);
@@ -11593,7 +11913,11 @@
   class GraphView extends MovableView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
-          this.state.selection = new SelectionMap(node => node.identifier(), node => node.nodeLabel?.origin?.identifier());
+          this.state.selection = new SelectionMap(node => node.identifier(), node => {
+              if (node instanceof GraphNode)
+                  return node.nodeLabel?.origin?.identifier();
+              return node?.origin?.identifier();
+          });
           this.nodeSelectionHandler = this.initializeNodeSelectionHandler();
           this.svg.on("click", () => this.nodeSelectionHandler.clear());
           this.visibleEdges = this.graphElement.append("g");
@@ -11922,16 +12246,19 @@
           return {
               select: function (selectedNodes, selected) {
                   const locations = new Array();
+                  const nodes = new Set();
                   for (const node of selectedNodes) {
                       if (node.nodeLabel.sourcePosition) {
                           locations.push(node.nodeLabel.sourcePosition);
+                          nodes.add(node.identifier());
                       }
-                      if (node.nodeLabel.origin && node.nodeLabel.origin instanceof BytecodeOrigin) {
-                          locations.push(new BytecodePosition(node.nodeLabel.origin.bytecodePosition));
+                      if (node.nodeLabel.bytecodePosition) {
+                          locations.push(node.nodeLabel.bytecodePosition);
+                          nodes.add(node.identifier());
                       }
                   }
                   view.state.selection.select(selectedNodes, selected);
-                  view.broker.broadcastSourcePositionSelect(this, locations, selected);
+                  view.broker.broadcastSourcePositionSelect(this, locations, selected, nodes);
                   view.updateGraphVisibility();
               },
               clear: function () {
@@ -11952,10 +12279,10 @@
                           continue;
                       node.visible = true;
                       node.inputs.forEach(edge => {
-                          edge.visible = edge.visible || view.state.selection.isSelected(edge.source);
+                          edge.visible = edge.visible || edge.source.visible;
                       });
                       node.outputs.forEach(edge => {
-                          edge.visible = edge.visible || view.state.selection.isSelected(edge.target);
+                          edge.visible = edge.visible || edge.target.visible;
                       });
                   }
                   view.updateGraphVisibility();
@@ -12204,12 +12531,6 @@
           const allVisibleNodes = [...this.graph.nodes(node => node.visible)];
           this.state.selection.select(allVisibleNodes, true);
           this.updateGraphVisibility();
-      }
-      showHoveredNodeHistory() {
-          const node = this.graph.nodeMap[this.hoveredNodeIdentifier];
-          if (!node)
-              return;
-          this.broker.broadcastHistoryShow(null, node, this.phaseName);
       }
       selectOrigins() {
           const selection = new SelectionStorage();
@@ -13790,8 +14111,11 @@
           const adaptedSelection = this.createGraph(data, rememberedSelection);
           this.broker.addNodeHandler(this.nodeSelectionHandler);
           this.broker.addBlockHandler(this.blockSelectionHandler);
-          if (adaptedSelection.isAdapted()) {
-              this.attachSelection(adaptedSelection);
+          const countOfSelectedItems = adaptedSelection.isAdapted()
+              ? this.attachSelection(adaptedSelection)
+              : 0;
+          if (countOfSelectedItems > 0) {
+              this.updateGraphVisibility();
               this.viewSelection();
           }
           else {
@@ -13833,6 +14157,9 @@
                   else {
                       eventHandled = false;
                   }
+                  break;
+              case 72: // 'h'
+                  this.showHoveredNodeHistory();
                   break;
               case 73: // 'i'
                   this.selectNodesOfSelectedBlocks();
@@ -13940,7 +14267,16 @@
           const view = this;
           return {
               select: function (selectedNodes, selected) {
+                  const sourcePositions = new Array();
+                  const nodes = new Set();
+                  for (const node of selectedNodes) {
+                      if (node.sourcePosition) {
+                          sourcePositions.push(node.sourcePosition);
+                          nodes.add(node.identifier());
+                      }
+                  }
                   view.state.selection.select(selectedNodes, selected);
+                  view.broker.broadcastSourcePositionSelect(this, sourcePositions, selected, nodes);
                   view.updateGraphVisibility();
               },
               clear: function () {
@@ -14037,6 +14373,7 @@
               const selectedCustomData = select.options[this.selectedIndex].text;
               storageSetItem(storageKey, selectedCustomData);
               view.updateGraphVisibility();
+              view.updateInlineNodesCustomData();
           };
           this.toolbox.appendChild(select);
           this.toolbox.appendChild(checkBox);
@@ -14242,13 +14579,11 @@
       updateInlineNodes() {
           const view = this;
           const state = this.state;
-          const storageKey = this.customDataStorageKey();
-          const selectedCustomData = storageGetItem(storageKey, null, false);
+          const showCustomData = this.nodesCustomDataShowed();
           let totalHeight = 0;
           let blockId = 0;
           view.visibleNodes.each(function (node) {
               const nodeSvg = select(this);
-              const showCustomData = view.nodesCustomDataShowed();
               if (blockId != node.block.id) {
                   blockId = node.block.id;
                   totalHeight = 0;
@@ -14260,17 +14595,25 @@
                   .classed("selected", node => state.selection.isSelected(node))
                   .attr("dy", nodeY)
                   .attr("visibility", !node.block.collapsed ? "visible" : "hidden");
-              const svgNodeCustomData = nodeSvg
+              nodeSvg
                   .select(".inline-node-custom-data")
                   .attr("visibility", !node.block.collapsed && showCustomData ? "visible" : "hidden");
-              if (!node.block.collapsed && showCustomData) {
-                  const customData = view.graph.getCustomData(selectedCustomData, node.id, DataTarget.Nodes);
-                  svgNodeCustomData
-                      .select("tspan")
-                      .text(view.getReadableString(customData, node.block.width))
-                      .append("title")
-                      .text(customData);
-              }
+          });
+      }
+      updateInlineNodesCustomData() {
+          const view = this;
+          const storageKey = this.customDataStorageKey();
+          const selectedCustomData = storageGetItem(storageKey, null, false);
+          if (!this.nodesCustomDataShowed())
+              return;
+          view.visibleNodes.each(function (node) {
+              const customData = view.graph.getCustomData(selectedCustomData, node.id, DataTarget.Nodes);
+              select(this)
+                  .select(".inline-node-custom-data")
+                  .select("tspan")
+                  .text(view.getReadableString(customData, node.block.width))
+                  .append("title")
+                  .text(customData);
           });
       }
       appendInputAndOutputBubbles(svg, block) {
@@ -14336,7 +14679,7 @@
       }
       attachSelection(selection) {
           if (!(selection instanceof SelectionStorage))
-              return;
+              return 0;
           this.nodeSelectionHandler.clear();
           this.blockSelectionHandler.clear();
           const selectedNodes = [
@@ -14347,6 +14690,7 @@
               ...this.graph.blocks(block => selection.adaptedBocks.has(this.state.blocksSelection.stringKey(block)))
           ];
           this.blockSelectionHandler.select(selectedBlocks, true);
+          return selectedNodes.length + selectedBlocks.length;
       }
       nodesCustomDataShowed() {
           const storageKey = this.customDataStorageKey();
@@ -14428,6 +14772,7 @@
           const extent = view.graph.redetermineGraphBoundingBox(view.state.showCustomData);
           view.panZoom.translateExtent(extent);
           view.adaptiveUpdateGraphVisibility();
+          view.updateInlineNodesCustomData();
       }
       toggleLayoutCachingAction(view) {
           view.state.cacheLayout = !view.state.cacheLayout;
@@ -14436,7 +14781,7 @@
       }
       // Hotkeys handlers
       selectAllNodes() {
-          this.state.selection.select(this.graph.nodeMap, true);
+          this.nodeSelectionHandler.select(this.graph.nodeMap, true);
           this.updateGraphVisibility();
       }
       collapseUnusedBlocks(usedNodes) {
@@ -14473,7 +14818,7 @@
               block.collapsed = false;
               selectedNodes = selectedNodes.concat(block.nodes);
           }
-          this.state.selection.select(selectedNodes, true);
+          this.nodeSelectionHandler.select(selectedNodes, true);
           this.updateGraphVisibility();
       }
   }
@@ -14541,18 +14886,20 @@
           const lastPhaseIndex = storageGetItem("lastSelectedPhase");
           const initialPhaseIndex = this.sourceResolver.repairPhaseId(lastPhaseIndex);
           this.selectMenu.selectedIndex = initialPhaseIndex;
-          this.displayPhase(this.sourceResolver.getPhase(initialPhaseIndex));
+          this.displayPhase(this.sourceResolver.getDynamicPhase(initialPhaseIndex));
       }
       displayPhaseByName(phaseName, selection) {
           this.currentPhaseView.hide();
           const phaseId = this.sourceResolver.getPhaseIdByName(phaseName);
           this.selectMenu.selectedIndex = phaseId;
-          this.displayPhase(this.sourceResolver.getPhase(phaseId), selection);
+          this.displayPhase(this.sourceResolver.getDynamicPhase(phaseId), selection);
       }
       onresize() {
           this.currentPhaseView?.onresize();
       }
       displayPhase(phase, selection) {
+          this.sourceResolver.positions = phase.positions;
+          this.sourceResolver.instructionsPhase = phase.instructionsPhase;
           if (phase.type == PhaseType.Graph) {
               this.displayPhaseView(this.graph, phase, selection);
           }
@@ -14574,8 +14921,8 @@
       displayNextGraphPhase() {
           let nextPhaseIndex = this.selectMenu.selectedIndex + 1;
           while (nextPhaseIndex < this.sourceResolver.phases.length) {
-              const nextPhase = this.sourceResolver.getPhase(nextPhaseIndex);
-              if (nextPhase.isGraph()) {
+              const nextPhase = this.sourceResolver.getDynamicPhase(nextPhaseIndex);
+              if (nextPhase && nextPhase.isGraph()) {
                   this.selectMenu.selectedIndex = nextPhaseIndex;
                   storageSetItem("lastSelectedPhase", nextPhaseIndex);
                   this.displayPhase(nextPhase);
@@ -14587,8 +14934,8 @@
       displayPreviousGraphPhase() {
           let previousPhaseIndex = this.selectMenu.selectedIndex - 1;
           while (previousPhaseIndex >= 0) {
-              const previousPhase = this.sourceResolver.getPhase(previousPhaseIndex);
-              if (previousPhase.isGraph()) {
+              const previousPhase = this.sourceResolver.getDynamicPhase(previousPhaseIndex);
+              if (previousPhase && previousPhase.isGraph()) {
                   this.selectMenu.selectedIndex = previousPhaseIndex;
                   storageSetItem("lastSelectedPhase", previousPhaseIndex);
                   this.displayPhase(previousPhase);
@@ -14603,7 +14950,8 @@
           for (const phase of view.sourceResolver.phases) {
               const optionElement = document.createElement("option");
               let maxNodeId = "";
-              if (phase instanceof GraphPhase && phase.highestNodeId != 0) {
+              if ((phase instanceof GraphPhase || phase instanceof TurboshaftGraphPhase)
+                  && phase.highestNodeId != 0) {
                   maxNodeId = ` ${phase.highestNodeId}`;
               }
               optionElement.text = `${phase.name}${maxNodeId}`;
@@ -14612,7 +14960,7 @@
           this.selectMenu.onchange = function () {
               const phaseIndex = this.selectedIndex;
               storageSetItem("lastSelectedPhase", phaseIndex);
-              view.displayPhase(view.sourceResolver.getPhase(phaseIndex));
+              view.displayPhase(view.sourceResolver.getDynamicPhase(phaseIndex));
           };
       }
       hideCurrentPhase() {
@@ -15369,7 +15717,7 @@
       initializeNodeSelectionHandler() {
           const view = this;
           return {
-              showTurbofanNodeHistory: function (node, phaseName) {
+              showNodeHistory: function (node, phaseName) {
                   view.clear();
                   view.node = node;
                   const phaseId = view.sourceResolver.getPhaseIdByName(phaseName);
@@ -15525,7 +15873,7 @@
           scrollBar.call(dragBehaviour);
       }
       setLabel() {
-          this.label = `${this.node.id} ${this.node.nodeLabel.opcode}`;
+          this.label = this.node.getHistoryLabel();
           const coefficient = this.getCoefficient("history-tspan-font-size");
           this.labelBox = measureText(this.label, coefficient);
       }
@@ -15540,8 +15888,8 @@
           let prevNode = null;
           let first = true;
           for (let i = 0; i < this.sourceResolver.phases.length; i++) {
-              const phase = this.sourceResolver.getPhase(i);
-              if (!(phase instanceof GraphPhase))
+              const phase = this.sourceResolver.getGraphPhase(i);
+              if (!phase)
                   continue;
               const phaseNameMeasure = measureText(phase.name, coefficient);
               this.maxPhaseNameWidth = Math.max(this.maxPhaseNameWidth, phaseNameMeasure.width);
@@ -15555,11 +15903,12 @@
               if (prevNode && !prevNode.equals(node) &&
                   phase.originIdToNodesMap.has(prevNode.identifier())) {
                   const prevNodeCurrentState = phase.nodeIdToNodeMap[prevNode.identifier()];
-                  const inplaceUpdate = prevNodeCurrentState?.nodeLabel?.inplaceUpdatePhase;
                   if (!prevNodeCurrentState) {
                       this.addToHistory(i, prevNode, HistoryChange.Removed);
                   }
-                  else if (!prevNodeCurrentState?.equals(node) && inplaceUpdate == phase.name) {
+                  else if (!this.nodeEquals(prevNodeCurrentState, node) &&
+                      prevNodeCurrentState instanceof GraphNode &&
+                      prevNodeCurrentState.getInplaceUpdatePhase() == phase.name) {
                       this.addToHistory(i, prevNodeCurrentState, HistoryChange.InplaceUpdated);
                   }
                   else if (node.identifier() != prevNode.identifier()) {
@@ -15571,7 +15920,7 @@
                   prevNode = null;
                   continue;
               }
-              if (node.nodeLabel.inplaceUpdatePhase && node.nodeLabel.inplaceUpdatePhase == phase.name) {
+              if (node instanceof GraphNode && node.getInplaceUpdatePhase() == phase.name) {
                   this.addToHistory(i, node, HistoryChange.InplaceUpdated);
               }
               if (first) {
@@ -15603,13 +15952,13 @@
       getLeftHistoryChain(phaseId, node) {
           const leftChain = new Map();
           for (let i = phaseId; i >= 0; i--) {
-              const phase = this.sourceResolver.getPhase(i);
-              if (!(phase instanceof GraphPhase))
+              const phase = this.sourceResolver.getGraphPhase(i);
+              if (!phase)
                   continue;
               let currentNode = phase.nodeIdToNodeMap[node.identifier()];
               if (!currentNode) {
-                  const nodeOrigin = node.nodeLabel.origin;
-                  if (nodeOrigin instanceof NodeOrigin) {
+                  const nodeOrigin = node.getNodeOrigin();
+                  if (nodeOrigin) {
                       currentNode = phase.nodeIdToNodeMap[nodeOrigin.identifier()];
                   }
                   if (!currentNode)
@@ -15623,8 +15972,8 @@
       getRightHistoryChain(phaseId, node) {
           const rightChain = new Map();
           for (let i = phaseId + 1; i < this.sourceResolver.phases.length; i++) {
-              const phase = this.sourceResolver.getPhase(i);
-              if (!(phase instanceof GraphPhase))
+              const phase = this.sourceResolver.getGraphPhase(i);
+              if (!phase)
                   continue;
               const currentNode = phase.nodeIdToNodeMap[node.identifier()];
               if (!currentNode)
@@ -15645,6 +15994,17 @@
           else {
               this.maxNodeWidth = Math.max(this.maxNodeWidth, node.labelBox.width);
           }
+      }
+      nodeEquals(first, second) {
+          if (!first || !second)
+              return false;
+          if ((first instanceof GraphNode && second instanceof GraphNode)) {
+              return first.equals(second);
+          }
+          else if (first instanceof TurboshaftGraphNode && second instanceof TurboshaftGraphNode) {
+              return first.equals(second);
+          }
+          return first.getHistoryLabel() == second.getHistoryLabel();
       }
       clear() {
           this.phaseIdToHistory.clear();
@@ -15746,6 +16106,9 @@
           this.sourceResolver = sourceResolver;
           this.codeMode = codeMode;
           this.bytecodeOffsetToHtmlElement = new Map();
+          this.bytecodeOffsetSelection = new SelectionMap((offset) => String(offset));
+          this.bytecodeOffsetSelectionHandler = this.initializeBytecodeOffsetSelectionHandler();
+          this.broker.addBytecodeOffsetHandler(this.bytecodeOffsetSelectionHandler);
           this.initializeCode();
       }
       createViewElement() {
@@ -15795,6 +16158,41 @@
           }
           codePre.appendChild(constantList);
       }
+      initializeBytecodeOffsetSelectionHandler() {
+          const view = this;
+          const broker = this.broker;
+          return {
+              select: function (offsets, selected) {
+                  const bytecodePositions = new Array();
+                  for (const offset of offsets) {
+                      bytecodePositions.push(new BytecodePosition(offset, view.source.sourceId));
+                  }
+                  view.bytecodeOffsetSelection.select(offsets, selected);
+                  view.updateSelection();
+                  broker.broadcastBytecodePositionsSelect(this, bytecodePositions, selected);
+              },
+              clear: function () {
+                  view.bytecodeOffsetSelection.clear();
+                  view.updateSelection();
+                  broker.broadcastClear(this);
+              },
+              brokeredBytecodeOffsetSelect: function (positions, selected) {
+                  const offsets = new Array();
+                  const firstSelect = view.bytecodeOffsetSelection.isEmpty();
+                  for (const position of positions) {
+                      if (position.inliningId == view.source.sourceId) {
+                          offsets.push(position.bytecodePosition);
+                      }
+                  }
+                  view.bytecodeOffsetSelection.select(offsets, selected);
+                  view.updateSelection(firstSelect);
+              },
+              brokeredClear: function () {
+                  view.bytecodeOffsetSelection.clear();
+                  view.updateSelection();
+              },
+          };
+      }
       getBytecodeHeaderHtmlElementName() {
           return `source-pre-${this.source.sourceId}-header`;
       }
@@ -15804,12 +16202,33 @@
       getSourceClass() {
           return this.codeMode == CodeMode.MainSource ? "main-source" : "inlined-source";
       }
+      updateSelection(scrollIntoView = false) {
+          const mkVisible = new ViewElements(this.divNode.parentNode);
+          for (const [offset, element] of this.bytecodeOffsetToHtmlElement.entries()) {
+              const key = this.bytecodeOffsetSelection.stringKey(offset);
+              const isSelected = this.bytecodeOffsetSelection.isKeySelected(key);
+              mkVisible.consider(element, isSelected);
+              element.classList.toggle("selected", isSelected);
+          }
+          mkVisible.apply(scrollIntoView);
+      }
+      onSelectBytecodeOffset(offset, doClear) {
+          if (doClear) {
+              this.bytecodeOffsetSelectionHandler.clear();
+          }
+          this.bytecodeOffsetSelectionHandler.select([offset], undefined);
+      }
       insertLineContent(lineElement, content) {
           const lineContentElement = createElement("span", "", content);
           lineElement.appendChild(lineContentElement);
       }
       insertLineNumber(lineElement, lineNumber) {
+          const view = this;
           const lineNumberElement = createElement("div", "line-number", String(lineNumber));
+          lineNumberElement.onclick = function (e) {
+              e.stopPropagation();
+              view.onSelectBytecodeOffset(lineNumber, !e.shiftKey);
+          };
           lineElement.insertBefore(lineNumberElement, lineElement.firstChild);
       }
   }
@@ -15864,7 +16283,7 @@
               sourceResolver.setSourceLineToBytecodePosition(jsonObj.sourceLineToBytecodePosition);
               sourceResolver.setSources(jsonObj.sources, mainFunction);
               sourceResolver.setBytecodeSources(jsonObj.bytecodeSources);
-              sourceResolver.setNodePositionMap(jsonObj.nodePositions);
+              sourceResolver.setFinalNodeOrigins(jsonObj.nodeOrigins);
               sourceResolver.parsePhases(jsonObj.phases);
               const [sourceTab, sourceContainer] = sourceTabs.addTabAndContent("Source");
               sourceContainer.classList.add("viewpane", "scrollable");
