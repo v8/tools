@@ -14270,6 +14270,8 @@
                   const sourcePositions = new Array();
                   const nodes = new Set();
                   for (const node of selectedNodes) {
+                      if (!node)
+                          continue;
                       if (node.sourcePosition) {
                           sourcePositions.push(node.sourcePosition);
                           nodes.add(node.identifier());
@@ -15809,9 +15811,11 @@
                       .append("tspan")
                       .text(record.node.displayLabel)
                       .on("click", () => {
-                      const selectionStorage = new SelectionStorage();
-                      selectionStorage.adaptNode(record.node.identifier());
-                      this.showPhaseByName(phaseName, selectionStorage);
+                      if (!record.changes.has(HistoryChange.Removed)) {
+                          const selectionStorage = new SelectionStorage();
+                          selectionStorage.adaptNode(record.node.identifier());
+                          this.showPhaseByName(phaseName, selectionStorage);
+                      }
                   })
                       .append("title")
                       .text(record.node.getTitle());
@@ -15897,10 +15901,14 @@
               if (!node && prevNode) {
                   this.addToHistory(i, prevNode, HistoryChange.Removed);
               }
-              if (node && phase.originIdToNodesMap.has(node.identifier())) {
+              if (phase.type == PhaseType.Graph && node &&
+                  phase.originIdToNodesMap.has(node.identifier())) {
                   this.addHistoryAncestors(node.identifier(), phase, uniqueAncestors);
               }
-              if (prevNode && !prevNode.equals(node) &&
+              if (phase.type == PhaseType.TurboshaftGraph && node?.getNodeOrigin().phase == phase.name) {
+                  this.addToHistory(i, node, HistoryChange.Lowered);
+              }
+              if (phase.type == PhaseType.Graph && prevNode && !prevNode.equals(node) &&
                   phase.originIdToNodesMap.has(prevNode.identifier())) {
                   const prevNodeCurrentState = phase.nodeIdToNodeMap[prevNode.identifier()];
                   if (!prevNodeCurrentState) {
@@ -15911,7 +15919,7 @@
                       prevNodeCurrentState.getInplaceUpdatePhase() == phase.name) {
                       this.addToHistory(i, prevNodeCurrentState, HistoryChange.InplaceUpdated);
                   }
-                  else if (node.identifier() != prevNode.identifier()) {
+                  else if (node?.identifier() != prevNode.identifier()) {
                       this.addToHistory(i, prevNodeCurrentState, HistoryChange.Survived);
                   }
                   this.addHistoryAncestors(prevNode.identifier(), phase, uniqueAncestors);
@@ -15955,7 +15963,10 @@
               const phase = this.sourceResolver.getGraphPhase(i);
               if (!phase)
                   continue;
-              let currentNode = phase.nodeIdToNodeMap[node.identifier()];
+              const nodeKey = node instanceof GraphNode || i == phaseId || node.origin.phase == phase.name
+                  ? node.identifier()
+                  : node.origin.identifier();
+              let currentNode = phase.nodeIdToNodeMap[nodeKey];
               if (!currentNode) {
                   const nodeOrigin = node.getNodeOrigin();
                   if (nodeOrigin) {
@@ -15975,7 +15986,25 @@
               const phase = this.sourceResolver.getGraphPhase(i);
               if (!phase)
                   continue;
-              const currentNode = phase.nodeIdToNodeMap[node.identifier()];
+              let currentNode = null;
+              if (phase.type == PhaseType.TurboshaftGraph) {
+                  const currentNodeState = phase.nodeIdToNodeMap[node.identifier()];
+                  if (node.equals(currentNodeState)) {
+                      currentNode = currentNodeState;
+                  }
+                  else {
+                      const nodes = phase.originIdToNodesMap.get(node.identifier());
+                      if (nodes?.length == 1 && nodes[0].getNodeOrigin().phase == phase.name) {
+                          currentNode = nodes[0];
+                      }
+                      else if (nodes?.length > 1) {
+                          return rightChain;
+                      }
+                  }
+              }
+              else {
+                  currentNode = phase.nodeIdToNodeMap[node.identifier()];
+              }
               if (!currentNode)
                   return rightChain;
               rightChain.set(i, currentNode);
