@@ -4,7 +4,16 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file. -->
 <html lang="en">
 <head>
-  <!-- ANALYTICS_PLACEHOLDER -->
+  
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EQNXD43G9N"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-EQNXD43G9N');
+</script>
+
   <meta charset="UTF-8">
   <link rel="icon" href="favicon.ico">
   <title>V8 Tools Versions</title>
@@ -99,9 +108,11 @@ a {
   <h1><a class=v8 href="https://v8.dev">V8</a> Tools Versions</h1>
   </header>
   <main id=main>
-    <h2>Latest Version</h2>
+    <h2>Latest Versions </h2>
     <p>
-    Open the most recent tools for <a href="./head">HEAD</a>.
+      Open the most recent tools for <a href="./head">HEAD</a>.
+      <ul id="latestVersions">
+      </ul>
     </p>
 
     <h2>Other Versions</h2>
@@ -126,17 +137,23 @@ a {
 
   function addVersionLinks(versions) {
     const select = document.getElementById("versions");
-    versions
-      .trimEnd()
-      .split("\n")
-      .reverse()
-      .forEach(version => {
+    versions = versions.trimEnd().split("\n").reverse();
+    versions.forEach(version => {
         const versionNumber = version.substring(1);
         const option = document.createElement("option");
         option.value = version;
-        option.innerHTML = `Version ${versionNumber}`;
+        option.innerHTML = `v${versionNumber}`;
         select.appendChild(option);
     });
+    const latestVersionsNode = document.getElementById('latestVersions');
+    for (let i = 0; i < 3; i++) {
+      const version = versions[i];
+      const versionNumber = version.substring(1);
+      const option = document.createElement("option");
+      const li = document.createElement('li')
+      li.innerHTML = `<a href="./${version}">v${versionNumber}</a>`;
+      latestVersionsNode.appendChild(li);
+    }
   }
 
   function gotoVersion(selectNode) {
