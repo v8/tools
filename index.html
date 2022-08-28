@@ -54,13 +54,28 @@ found in the LICENSE file. -->
   </footer>
 </body>
 <script>
+  // V8 8.6 is the first version with an index.html, other tools might have
+  // existed for longer.
+  const kFirstVersionMajor = 8;
+  const kFirstVersionMinor = 6;
+
   fetch('versions.txt')
     .then(response => response.text())
     .then(data => addVersionLinks(data));
 
   function addVersionLinks(versions) {
     const select = document.getElementById("versions");
-    versions = versions.trimEnd().split("\n").reverse();
+    versions = versions
+      .trimEnd().split("\n")
+      .filter(version => {
+        // strip "v" prefix/
+        version = version.substring(1);
+        const [major, minor] = version.split(".").map(e => parseInt(e));
+        if (major == kFirstVersionMajor) {
+          return minor >= kFirstVersionMinor;
+        }
+        return major >= kFirstVersionMajor;
+      }).reverse();
     versions.forEach(version => {
         const versionNumber = version.substring(1);
         const option = document.createElement("option");
