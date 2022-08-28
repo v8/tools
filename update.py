@@ -14,6 +14,8 @@ TOOLS_GIT = DESTINATION
 V8_GIT = DESTINATION / '.v8'
 OUT_DIR = DESTINATION / 'gen'
 OUT_DIR.mkdir(exist_ok=True)
+# V8 8.6 is the first version with tools
+OLDEST_VERSION=(8, 6)
 
 # =============================================================================
 
