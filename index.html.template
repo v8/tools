@@ -8,14 +8,14 @@ found in the LICENSE file. -->
   <meta charset="UTF-8">
   <link rel="icon" href="favicon.ico">
   <title>V8 Tools Versions</title>
-  <link href="http://v8.dev/_css/main.css" rel="stylesheet">
+  <link href="https://v8.dev/_css/main.css" rel="stylesheet">
 </head>
 <body>
   <header id="header">
   <h1><a class=v8 href="https://v8.dev">V8</a></h1>
   <nav>
     <ul>
-      <li><a href="http://v8.dev/tools">Tools</a></li>
+      <li><a href="https://v8.dev/tools">Tools</a></li>
       <li class="current"><a href="https:/v8.dev/tools/versions">Tools Versions</a></li>
       <li><a href="https://v8.dev">Main Page</a></li>
     </ul>
