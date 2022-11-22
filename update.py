@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 import subprocess
-import tempfile
 import os
-import sys
 from pathlib import Path
 
 # =============================================================================
@@ -110,7 +108,9 @@ def filter_by_stamp(values):
 with Step("Fetch Filtered Branches"):
   # Fetch only the required branches
   BRANCHES = list(filter(filter_by_stamp, BRANCHES))
-  BRANCHES = BRANCHES[-2:]
+  # Only update the last 3 branches
+  BRANCHES = BRANCHES[-3:]
+  print(f"BRANCHES {BRANCHES}")
   git("fetch", "--depth=1", "origin",
       *(branch for version, branch, sha in BRANCHES))
 
@@ -177,6 +177,5 @@ def inject_analytics(html_file):
 with Step("Inject Analytics"):
   inject_analytics(INDEX_HTML)
   for version, branch, sha in BRANCHES:
-    branch_dir = branch_dir / version
     for html_file in OUT_DIR.glob("**/*.html"):
       inject_analytics(html_file)
