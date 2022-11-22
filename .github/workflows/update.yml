@@ -25,9 +25,9 @@ jobs:
       - name: Mark the github workspace as safe directory
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
       - name: Checkout main Branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Checkout gh-pages
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           ref: gh-pages
           path: gen
@@ -36,7 +36,7 @@ jobs:
       - name: Prevent auto-deploy
         run: touch -a gen/.nojekyll
       - name: Deploy
-        uses: JamesIves/github-pages-deploy-action@v4.3.0
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: gh-pages
