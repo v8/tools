@@ -1019,10 +1019,9 @@
                   const blockIdStrings = blockIdsString.split(",");
                   predecessors = blockIdStrings.map(n => Number.parseInt(n, 10));
               }
-              const blockRpo = Number.parseInt(match.groups.rpo, 10);
               const blockId = Number.parseInt(match.groups.id, 10);
-              const block = new ScheduleBlock(blockRpo, blockId, match.groups.deferred !== undefined, predecessors.sort());
-              this.data.blocks_rpo[block.rpo] = block;
+              const block = new ScheduleBlock(blockId, match.groups.deferred !== undefined, predecessors.sort());
+              this.data.blocks[block.id] = block;
           };
           this.setGotoSuccessor = match => {
               this.data.lastBlock().successors =
@@ -1038,7 +1037,7 @@
                   process: this.createNode
               },
               {
-                  lineRegexps: [/^\s*---\s*BLOCK\ B(?<rpo>\d+)\ id(?<id>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/],
+                  lineRegexps: [/^\s*---\s*BLOCK\ B(?<id>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/],
                   process: this.createBlock
               },
               {
@@ -1078,8 +1077,7 @@
       }
   }
   class ScheduleBlock {
-      constructor(rpo, id, deferred, predecessors) {
-          this.rpo = rpo;
+      constructor(id, deferred, predecessors) {
           this.id = id;
           this.deferred = deferred;
           this.predecessors = predecessors;
@@ -1090,12 +1088,12 @@
   class ScheduleData {
       constructor() {
           this.nodes = new Array();
-          this.blocks_rpo = new Array();
+          this.blocks = new Array();
       }
       lastBlock() {
-          if (this.blocks_rpo.length == 0)
+          if (this.blocks.length == 0)
               return null;
-          return this.blocks_rpo[this.blocks_rpo.length - 1];
+          return this.blocks[this.blocks.length - 1];
       }
   }
 
@@ -12579,7 +12577,7 @@
       initializeContent(schedule, rememberedSelection) {
           this.divNode.innerHTML = "";
           this.schedule = schedule;
-          this.addBlocks(schedule.data.blocks_rpo);
+          this.addBlocks(schedule.data.blocks);
           this.show();
           if (rememberedSelection) {
               const adaptedSelection = this.adaptSelection(rememberedSelection);
@@ -12632,14 +12630,14 @@
           const scheduleBlock = this.createElement("div", "schedule-block");
           scheduleBlock.classList.toggle("deferred", block.deferred);
           const [start, end] = this.sourceResolver.instructionsPhase
-              .getInstructionRangeForBlock(block.rpo);
+              .getInstructionRangeForBlock(block.id);
           const instrMarker = this.createElement("div", "instr-marker com", "&#8857;");
           instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
-          instrMarker.onclick = this.mkBlockLinkHandler(block.rpo);
+          instrMarker.onclick = this.mkBlockLinkHandler(block.id);
           scheduleBlock.appendChild(instrMarker);
-          const blockRpo_Id = this.createElement("div", "block-id com clickable", String(block.rpo) + " Id:" + String(block.id));
-          blockRpo_Id.onclick = this.mkBlockLinkHandler(block.rpo);
-          scheduleBlock.appendChild(blockRpo_Id);
+          const blockId = this.createElement("div", "block-id com clickable", String(block.id));
+          blockId.onclick = this.mkBlockLinkHandler(block.id);
+          scheduleBlock.appendChild(blockId);
           const blockPred = this.createElement("div", "predecessor-list block-list comma-sep-list");
           for (const pred of block.predecessors) {
               const predEl = this.createElement("div", "block-id com clickable", String(pred));
