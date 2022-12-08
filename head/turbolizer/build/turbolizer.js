@@ -1026,7 +1026,7 @@
               const blockRpo = Number.parseInt(match.groups.rpo, 10);
               const blockId = Number.parseInt(match.groups.id, 10);
               const block = new ScheduleBlock(blockRpo, blockId, match.groups.deferred !== undefined, predecessors.sort());
-              this.data.blocks_rpo[block.rpo] = block;
+              this.data.blocksRpo[block.rpo] = block;
           };
           this.setGotoSuccessor = match => {
               this.data.lastBlock().successors =
@@ -1097,12 +1097,12 @@
   class ScheduleData {
       constructor() {
           this.nodes = new Array();
-          this.blocks_rpo = new Array();
+          this.blocksRpo = new Array();
       }
       lastBlock() {
-          if (this.blocks_rpo.length == 0)
+          if (this.blocksRpo.length == 0)
               return null;
-          return this.blocks_rpo[this.blocks_rpo.length - 1];
+          return this.blocksRpo[this.blocksRpo.length - 1];
       }
   }
 
@@ -12589,7 +12589,7 @@
       initializeContent(schedule, rememberedSelection) {
           this.divNode.innerHTML = "";
           this.schedule = schedule;
-          this.addBlocks(schedule.data.blocks_rpo);
+          this.addBlocks(schedule.data.blocksRpo);
           this.show();
           if (rememberedSelection) {
               const adaptedSelection = this.adaptSelection(rememberedSelection);
@@ -12647,9 +12647,9 @@
           instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
           instrMarker.onclick = this.mkBlockLinkHandler(block.rpo);
           scheduleBlock.appendChild(instrMarker);
-          const blockRpo_Id = this.createElement("div", "block-id com clickable", String(block.rpo) + " Id:" + String(block.id));
-          blockRpo_Id.onclick = this.mkBlockLinkHandler(block.rpo);
-          scheduleBlock.appendChild(blockRpo_Id);
+          const blocksRpoId = this.createElement("div", "block-id com clickable", String(block.rpo) + " Id:" + String(block.id));
+          blocksRpoId.onclick = this.mkBlockLinkHandler(block.rpo);
+          scheduleBlock.appendChild(blocksRpoId);
           const blockPred = this.createElement("div", "predecessor-list block-list comma-sep-list");
           for (const pred of block.predecessors) {
               const predEl = this.createElement("div", "block-id com clickable", String(pred));
