@@ -35,6 +35,7 @@
   const INTERVAL_TEXT_FOR_NONE = "none";
   const INTERVAL_TEXT_FOR_CONST = "const";
   const INTERVAL_TEXT_FOR_STACK = "stack:";
+  const VIRTUAL_REGISTER_ID_PREFIX = "virt_";
   const HISTORY_ID = "history";
   const MULTIVIEW_ID = "multiview";
   const RESIZER_RANGES_ID = "resizer-ranges";
@@ -594,30 +595,35 @@
           }
           return keyPcOffsets;
       }
-      nodesForPCOffset(offset) {
+      instructionsForPCOffset(offset) {
           if (this.pcOffsets.length === 0)
               return new Array();
           for (const key of this.pcOffsets) {
               if (key <= offset) {
-                  const instructions = this.pcOffsetToInstructions.get(key);
-                  const nodes = new Array();
-                  for (const instruction of instructions) {
-                      for (const [nodeId, range] of this.nodeIdToInstructionRange.entries()) {
-                          if (!range)
-                              continue;
-                          const [start, end] = range;
-                          if (start == end && instruction == start) {
-                              nodes.push(String(nodeId));
-                          }
-                          if (start <= instruction && instruction < end) {
-                              nodes.push(String(nodeId));
-                          }
-                      }
-                  }
-                  return nodes;
+                  return this.pcOffsetToInstructions.get(key);
               }
           }
           return new Array();
+      }
+      nodesForInstructions(instructionIds) {
+          const nodes = new Array();
+          for (const instruction of instructionIds) {
+              for (const [nodeId, range] of this.nodeIdToInstructionRange.entries()) {
+                  if (!range)
+                      continue;
+                  const [start, end] = range;
+                  if (start == end && instruction == start) {
+                      nodes.push(String(nodeId));
+                  }
+                  if (start <= instruction && instruction < end) {
+                      nodes.push(String(nodeId));
+                  }
+              }
+          }
+          return nodes;
+      }
+      nodesForPCOffset(offset) {
+          return this.nodesForInstructions(this.instructionsForPCOffset(offset));
       }
       nodesToKeyPcOffsets(nodeIds) {
           let offsets = new Array();
@@ -1132,6 +1138,7 @@
           if (!blocksJSON || blocksJSON.length == 0)
               return;
           this.blocks = new Array();
+          this.instructions = new Array();
           for (const block of blocksJSON) {
               const newBlock = new SequenceBlock(block.id, block.deferred, block.loopHeader, block.loopEnd, block.predecessors, block.successors);
               this.blocks.push(newBlock);
@@ -1158,6 +1165,7 @@
                   newInstruction.gaps.push(newGap);
               }
               this.lastBlock().instructions.push(newInstruction);
+              this.instructions.push(newInstruction);
           }
       }
       parseBlockPhis(phisJSON) {
@@ -1267,26 +1275,32 @@
       getTooltip(registerIndex) {
           switch (this.type) {
               case "none":
-                  return INTERVAL_TEXT_FOR_NONE;
+                  return new RangeToolTip(INTERVAL_TEXT_FOR_NONE, false);
               case "spill_range":
-                  return `${INTERVAL_TEXT_FOR_STACK}${registerIndex}`;
+                  return new RangeToolTip(`${INTERVAL_TEXT_FOR_STACK}${registerIndex}`, true);
               default:
                   if (this.op instanceof SequenceBlockOperand && this.op.type == "constant") {
-                      return INTERVAL_TEXT_FOR_CONST;
+                      new RangeToolTip(INTERVAL_TEXT_FOR_CONST, false);
                   }
                   else {
                       if (this.op instanceof SequenceBlockOperand && this.op.text) {
-                          return this.op.text;
+                          new RangeToolTip(this.op.text, true);
                       }
                       else if (typeof this.op === "string") {
-                          return this.op;
+                          new RangeToolTip(this.op, true);
                       }
                   }
           }
-          return "";
+          return new RangeToolTip("", false);
       }
       isFloatingPoint() {
           return this.op instanceof SequenceBlockOperand && this.op.tooltip.includes("Float");
+      }
+  }
+  class RangeToolTip {
+      constructor(text, isId) {
+          this.text = text;
+          this.isId = isId;
       }
   }
   class SequenceBlockOperand {
@@ -1316,8 +1330,9 @@
       }
   }
   class BytecodeSource {
-      constructor(sourceId, functionName, data, constantPool) {
+      constructor(sourceId, inliningIds, functionName, data, constantPool) {
           this.sourceId = sourceId;
+          this.inliningIds = inliningIds;
           this.functionName = functionName;
           this.data = data;
           this.constantPool = constantPool;
@@ -1671,7 +1686,7 @@
                   const scriptOffset = inlining.inliningPosition.scriptOffset;
                   const inliningId = inlining.inliningPosition.inliningId;
                   const inl = new InliningPosition(inlining.sourceId, new SourcePosition(scriptOffset, inliningId));
-                  this.inlinings[inliningIdStr] = inl;
+                  this.inlinings[Number(inliningIdStr)] = inl;
                   this.inliningsMap.set(inl.inliningPosition.toString(), inl);
               }
           }
@@ -1701,7 +1716,13 @@
                   data.push(new BytecodeSourceData(bytecode.offset, bytecode.disassembly));
               }
               const numSourceId = Number(sourceId);
-              this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, source.functionName, data, bytecodeSource.constantPool));
+              const inliningIds = [];
+              for (let index = -1; index < this.inlinings.length; index += 1) {
+                  const inlining = this.inlinings[index];
+                  if (inlining.sourceId == source.sourceId)
+                      inliningIds.push(index);
+              }
+              this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, inliningIds, source.functionName, data, bytecodeSource.constantPool));
           }
       }
       setFinalNodeOrigins(nodeOriginsJson) {
@@ -2114,22 +2135,23 @@
                   handler.brokeredInstructionSelect([instructionOffsets], selected);
           }
           // Select the lines from the source and bytecode panels (left panels)
-          const pcOffsets = this.sourceResolver.instructionsPhase
-              .instructionsToKeyPcOffsets(instructionOffsets);
-          for (const offset of pcOffsets) {
-              const nodes = this.sourceResolver.instructionsPhase.nodesForPCOffset(offset);
-              const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
-              for (const handler of this.sourcePositionHandlers) {
-                  if (handler != from)
-                      handler.brokeredSourcePositionSelect(sourcePositions, selected);
-              }
-              const bytecodePositions = this.sourceResolver.nodeIdsToBytecodePositions(nodes);
-              for (const handler of this.bytecodeOffsetHandlers) {
-                  if (handler != from)
-                      handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
+          const nodes = this.sourceResolver.instructionsPhase.nodesForInstructions(instructionOffsets);
+          const sourcePositions = this.sourceResolver.nodeIdsToSourcePositions(nodes);
+          for (const handler of this.sourcePositionHandlers) {
+              if (handler != from)
+                  handler.brokeredSourcePositionSelect(sourcePositions, selected);
+          }
+          const bytecodePositions = this.sourceResolver.nodeIdsToBytecodePositions(nodes);
+          for (const handler of this.bytecodeOffsetHandlers) {
+              if (handler != from)
+                  handler.brokeredBytecodeOffsetSelect(bytecodePositions, selected);
+          }
+          // Select the lines from the middle panel for the register allocation phase.
+          for (const b of this.registerAllocationHandlers) {
+              if (b != from) {
+                  b.brokeredRegisterAllocationSelect(instructionOffsets.map(instr => [instr, instr]), selected);
               }
           }
-          // The middle panel lines have already been selected so there's no need to reselect them.
       }
       broadcastSourcePositionSelect(from, sourcePositions, selected, selectedNodes) {
           sourcePositions = sourcePositions.filter(sourcePosition => {
@@ -2242,6 +2264,48 @@
       }
   }
 
+  // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  class ViewElements {
+      constructor(container) {
+          this.container = container;
+          this.scrollTop = undefined;
+      }
+      consider(element, doConsider) {
+          if (!doConsider)
+              return;
+          const newScrollTop = this.computeScrollTop(element);
+          if (isNaN(newScrollTop)) {
+              console.warn("New scroll top value is NaN");
+          }
+          if (this.scrollTop === undefined) {
+              this.scrollTop = newScrollTop;
+          }
+          else {
+              this.scrollTop = Math.min(this.scrollTop, newScrollTop);
+          }
+      }
+      apply(doApply) {
+          if (!doApply || this.scrollTop === undefined)
+              return;
+          this.container.scrollTop = this.scrollTop;
+      }
+      computeScrollTop(element) {
+          const height = this.container.offsetHeight;
+          const margin = Math.floor(height / 4);
+          const pos = element.offsetTop;
+          const currentScrollTop = this.container.scrollTop;
+          if (pos < currentScrollTop + margin) {
+              return Math.max(0, pos - margin);
+          }
+          else if (pos > (currentScrollTop + 3 * margin)) {
+              return Math.max(0, pos - 3 * margin);
+          }
+          return currentScrollTop;
+      }
+  }
+
   // Copyright 2015 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
@@ -2311,6 +2375,14 @@
           }
           return result;
       }
+      selectedKeysAsAbsNumbers() {
+          const result = new Set();
+          for (const key of this.selection.keys()) {
+              const keyNum = Number(key);
+              result.add(keyNum < 0 ? Math.abs(keyNum + 1) : keyNum);
+          }
+          return result;
+      }
       detachSelection() {
           const result = this.selection;
           this.clear();
@@ -2319,49 +2391,45 @@
       [Symbol.iterator]() { return this.selection.values(); }
   }
 
-  // Copyright 2022 the V8 project authors. All rights reserved.
-  // Use of this source code is governed by a BSD-style license that can be
-  // found in the LICENSE file.
-  class ViewElements {
-      constructor(container) {
-          this.container = container;
-          this.scrollTop = undefined;
+  // Copyright 2015 the V8 project authors. All rights reserved.
+  class SelectionMapsHandler {
+      constructor(view, idToHtmlElementsMap) {
+          this.view = view;
+          this.idToHtmlElementsMap = idToHtmlElementsMap;
+          this.current = new SelectionMap(id => String(id));
+          this.previous = new SelectionMap(id => String(id));
       }
-      consider(element, doConsider) {
-          if (!doConsider)
-              return;
-          const newScrollTop = this.computeScrollTop(element);
-          if (isNaN(newScrollTop)) {
-              console.warn("New scroll top value is NaN");
-          }
-          if (this.scrollTop === undefined) {
-              this.scrollTop = newScrollTop;
-          }
-          else {
-              this.scrollTop = Math.min(this.scrollTop, newScrollTop);
-          }
+      clearCurrent() {
+          this.previous.selection = this.current.selection;
+          this.current.clear();
       }
-      apply(doApply) {
-          if (!doApply || this.scrollTop === undefined)
-              return;
-          this.container.scrollTop = this.scrollTop;
+      clearPrevious() {
+          for (const blockId of this.previous.selectedKeys()) {
+              const elements = this.idToHtmlElementsMap.get(blockId);
+              if (!elements)
+                  continue;
+              for (const element of elements) {
+                  element.classList.toggle("selected", false);
+              }
+          }
+          this.previous.clear();
       }
-      computeScrollTop(element) {
-          const height = this.container.offsetHeight;
-          const margin = Math.floor(height / 4);
-          const pos = element.offsetTop;
-          const currentScrollTop = this.container.scrollTop;
-          if (pos < currentScrollTop + margin) {
-              return Math.max(0, pos - margin);
+      selectElements(scrollIntoView, scrollDiv) {
+          const mkVisible = new ViewElements(scrollDiv);
+          for (const id of this.current.selectedKeys()) {
+              const elements = this.idToHtmlElementsMap.get(id);
+              if (!elements)
+                  continue;
+              for (const element of elements) {
+                  if (element.className.substring(0, 5) != "range" && element.getRootNode() == document) {
+                      mkVisible.consider(element, true);
+                  }
+                  element.classList.toggle("selected", true);
+              }
           }
-          else if (pos > (currentScrollTop + 3 * margin)) {
-              return Math.max(0, pos - 3 * margin);
-          }
-          return pos;
+          mkVisible.apply(scrollIntoView);
       }
   }
-
-  // Copyright 2015 the V8 project authors. All rights reserved.
   class TextView extends PhaseView {
       constructor(parent, broker) {
           super(parent);
@@ -2373,15 +2441,16 @@
           this.blockIdToHtmlElementsMap = new Map();
           this.blockIdToNodeIds = new Map();
           this.nodeIdToBlockId = new Array();
-          this.nodeSelection = new SelectionMap(node => String(node));
-          this.blockSelection = new SelectionMap(block => String(block));
-          this.registerAllocationSelection = new SelectionMap(register => String(register));
+          this.nodeSelections = new SelectionMapsHandler(this, this.nodeIdToHtmlElementsMap);
+          this.instructionSelections = new SelectionMapsHandler(this, this.instructionIdToHtmlElementsMap);
+          this.blockSelections = new SelectionMapsHandler(this, this.blockIdToHtmlElementsMap);
           this.nodeSelectionHandler = this.initializeNodeSelectionHandler();
           this.blockSelectionHandler = this.initializeBlockSelectionHandler();
           this.registerAllocationSelectionHandler = this.initializeRegisterAllocationSelectionHandler();
           broker.addNodeHandler(this.nodeSelectionHandler);
           broker.addBlockHandler(this.blockSelectionHandler);
           broker.addRegisterAllocatorHandler(this.registerAllocationSelectionHandler);
+          this.selectionCleared = false;
           this.divNode.addEventListener("click", e => {
               if (!e.shiftKey) {
                   this.nodeSelectionHandler.clear();
@@ -2396,50 +2465,27 @@
           }
           this.show();
       }
-      updateSelection(scrollIntoView = false) {
+      clearSelectionMaps() {
+          this.instructionIdToHtmlElementsMap.clear();
+          this.nodeIdToHtmlElementsMap.clear();
+          this.blockIdToHtmlElementsMap.clear();
+      }
+      updateSelection(scrollIntoView = false, scrollDiv = this.divNode) {
           if (this.divNode.parentNode == null)
               return;
-          const mkVisible = new ViewElements(this.divNode.parentNode);
-          const elementsToSelect = this.divNode.querySelectorAll(`[data-pc-offset]`);
-          for (const el of elementsToSelect) {
-              el.classList.toggle("selected", false);
-          }
-          for (const [blockId, elements] of this.blockIdToHtmlElementsMap.entries()) {
-              const isSelected = this.blockSelection.isSelected(blockId);
-              for (const element of elements) {
-                  mkVisible.consider(element, isSelected);
-                  element.classList.toggle("selected", isSelected);
+          const clearDisassembly = () => {
+              const elementsToSelect = this.divNode.querySelectorAll(`[data-pc-offset]`);
+              for (const el of elementsToSelect) {
+                  el.classList.toggle("selected", false);
               }
-          }
-          for (const key of this.instructionIdToHtmlElementsMap.keys()) {
-              for (const element of this.instructionIdToHtmlElementsMap.get(key)) {
-                  element.classList.toggle("selected", false);
-              }
-          }
-          for (const instrId of this.registerAllocationSelection.selectedKeys()) {
-              const elements = this.instructionIdToHtmlElementsMap.get(instrId);
-              if (!elements)
-                  continue;
-              for (const element of elements) {
-                  mkVisible.consider(element, true);
-                  element.classList.toggle("selected", true);
-              }
-          }
-          for (const key of this.nodeIdToHtmlElementsMap.keys()) {
-              for (const element of this.nodeIdToHtmlElementsMap.get(key)) {
-                  element.classList.toggle("selected", false);
-              }
-          }
-          for (const nodeId of this.nodeSelection.selectedKeys()) {
-              const elements = this.nodeIdToHtmlElementsMap.get(nodeId);
-              if (!elements)
-                  continue;
-              for (const element of elements) {
-                  mkVisible.consider(element, true);
-                  element.classList.toggle("selected", true);
-              }
-          }
-          mkVisible.apply(scrollIntoView);
+          };
+          clearDisassembly();
+          this.blockSelections.clearPrevious();
+          this.instructionSelections.clearPrevious();
+          this.nodeSelections.clearPrevious();
+          this.blockSelections.selectElements(scrollIntoView, scrollDiv);
+          this.instructionSelections.selectElements(scrollIntoView, scrollDiv);
+          this.nodeSelections.selectElements(scrollIntoView, scrollDiv);
       }
       processLine(line) {
           const fragments = new Array();
@@ -2493,8 +2539,19 @@
           }
       }
       removeHtmlElementFromAllMapsIf(condition) {
+          this.clearSelection();
           this.removeHtmlElementFromMapIf(condition, this.nodeIdToHtmlElementsMap);
           this.removeHtmlElementFromMapIf(condition, this.blockIdToHtmlElementsMap);
+          this.removeHtmlElementFromMapIf(condition, this.instructionIdToHtmlElementsMap);
+      }
+      clearSelection() {
+          if (this.selectionCleared)
+              return;
+          this.blockSelections.clearCurrent();
+          this.instructionSelections.clearCurrent();
+          this.nodeSelections.clearCurrent();
+          this.updateSelection();
+          this.selectionCleared = true;
       }
       // instruction-id are the divs for the register allocator phase
       addHtmlElementForInstructionId(anyInstructionId, htmlElement) {
@@ -2518,6 +2575,9 @@
           }
           this.blockIdToHtmlElementsMap.get(blockId).push(htmlElement);
       }
+      getSubId(id) {
+          return -id - 1;
+      }
       createFragment(text, style) {
           const fragment = document.createElement("span");
           if (typeof style.associateData === "function") {
@@ -2535,78 +2595,61 @@
           }
           return fragment;
       }
+      selectionHandlerSelect(selection, ids, selected, scrollIntoView = false) {
+          this.selectionCleared = false;
+          const firstSelect = scrollIntoView ? this.blockSelections.current.isEmpty() : false;
+          selection.select(ids, selected);
+          this.updateSelection(firstSelect);
+      }
+      selectionHandlerClear() {
+          this.clearSelection();
+          this.broker.broadcastClear(this);
+      }
       initializeNodeSelectionHandler() {
           const view = this;
           return {
-              select: function (nodeIds, selected) {
-                  view.nodeSelection.select(nodeIds, selected);
-                  view.updateSelection();
-                  view.broker.broadcastNodeSelect(this, view.nodeSelection.selectedKeys(), selected);
-              },
-              clear: function () {
-                  view.nodeSelection.clear();
-                  view.updateSelection();
-                  view.broker.broadcastClear(this);
+              select: function (nodeIds, selected, scrollIntoView) {
+                  view.selectionHandlerSelect(view.nodeSelections.current, nodeIds, selected, scrollIntoView);
+                  view.broker.broadcastNodeSelect(this, view.nodeSelections.current.selectedKeys(), selected);
               },
               brokeredNodeSelect: function (nodeIds, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
-                  view.nodeSelection.select(nodeIds, selected);
-                  view.updateSelection(firstSelect);
+                  view.selectionHandlerSelect(view.nodeSelections.current, Array.from(nodeIds), selected, false);
               },
-              brokeredClear: function () {
-                  view.nodeSelection.clear();
-                  view.updateSelection();
-              }
+              clear: view.selectionHandlerClear.bind(this),
+              brokeredClear: view.clearSelection.bind(this),
           };
       }
       initializeBlockSelectionHandler() {
           const view = this;
           return {
               select: function (blockIds, selected) {
-                  view.blockSelection.select(blockIds, selected);
-                  view.updateSelection();
-                  view.broker.broadcastBlockSelect(this, blockIds, selected);
-              },
-              clear: function () {
-                  view.blockSelection.clear();
-                  view.updateSelection();
-                  view.broker.broadcastClear(this);
+                  view.selectionHandlerSelect(view.blockSelections.current, blockIds, selected);
+                  view.broker.broadcastBlockSelect(this, Array.from(view.blockSelections.current.selectedKeysAsAbsNumbers()), selected);
               },
               brokeredBlockSelect: function (blockIds, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
-                  view.blockSelection.select(blockIds, selected);
-                  view.updateSelection(firstSelect);
+                  view.selectionHandlerSelect(view.blockSelections.current, blockIds, selected, true);
               },
-              brokeredClear: function () {
-                  view.blockSelection.clear();
-                  view.updateSelection();
-              }
+              clear: view.selectionHandlerClear.bind(this),
+              brokeredClear: view.clearSelection.bind(this),
           };
       }
       initializeRegisterAllocationSelectionHandler() {
           const view = this;
           return {
-              select: function (instructionIds, selected) {
-                  view.registerAllocationSelection.select(instructionIds, selected);
-                  view.updateSelection();
-                  view.broker.broadcastInstructionSelect(null, instructionIds, selected);
-              },
-              clear: function () {
-                  view.registerAllocationSelection.clear();
-                  view.updateSelection();
-                  view.broker.broadcastClear(this);
+              select: function (instructionIds, selected, scrollIntoView) {
+                  view.selectionHandlerSelect(view.instructionSelections.current, instructionIds, selected, scrollIntoView);
+                  view.broker.broadcastInstructionSelect(this, Array.from(view.instructionSelections.current.selectedKeysAsAbsNumbers()), selected);
               },
               brokeredRegisterAllocationSelect: function (instructionsOffsets, selected) {
-                  const firstSelect = view.blockSelection.isEmpty();
+                  view.selectionCleared = false;
+                  const firstSelect = view.blockSelections.current.isEmpty();
                   for (const instructionOffset of instructionsOffsets) {
-                      view.registerAllocationSelection.select(instructionOffset, selected);
+                      view.instructionSelections.current.select(instructionOffset, selected);
                   }
                   view.updateSelection(firstSelect);
               },
-              brokeredClear: function () {
-                  view.registerAllocationSelection.clear();
-                  view.updateSelection();
-              }
+              clear: view.selectionHandlerClear.bind(this),
+              brokeredClear: view.clearSelection.bind(this),
           };
       }
       clearText() {
@@ -2659,8 +2702,10 @@
           return pane;
       }
       updateSelection(scrollIntoView = false) {
-          super.updateSelection(scrollIntoView);
-          const selectedKeys = this.nodeSelection.selectedKeys();
+          if (this.divNode.parentNode == null)
+              return;
+          super.updateSelection(scrollIntoView, this.divNode.parentNode);
+          const selectedKeys = this.nodeSelections.current.selectedKeys();
           const keyPcOffsets = [
               ...this.sourceResolver.instructionsPhase.nodesToKeyPcOffsets(selectedKeys)
           ];
@@ -2669,12 +2714,15 @@
                   keyPcOffsets.push(key);
               }
           }
+          const mkVisible = new ViewElements(this.divNode.parentElement);
           for (const keyPcOffset of keyPcOffsets) {
               const elementsToSelect = this.divNode.querySelectorAll(`[data-pc-offset='${keyPcOffset}']`);
               for (const el of elementsToSelect) {
+                  mkVisible.consider(el, true);
                   el.classList.toggle("selected", true);
               }
           }
+          mkVisible.apply(scrollIntoView);
       }
       processLine(line) {
           let fragments = super.processLine(line);
@@ -2784,7 +2832,7 @@
               select: function (instructionIds, selected) {
                   view.offsetSelection.select(instructionIds, selected);
                   view.updateSelection();
-                  broker.broadcastBlockSelect(this, instructionIds, selected);
+                  broker.broadcastInstructionSelect(this, instructionIds.map(id => Number(id)), selected);
               },
               clear: function () {
                   view.offsetSelection.clear();
@@ -2820,10 +2868,21 @@
                   e.stopPropagation();
                   if (!e.shiftKey)
                       this.nodeSelectionHandler.clear();
-                  this.nodeSelectionHandler.select(nodes, true);
+                  this.nodeSelectionHandler.select(nodes, true, false);
               }
               else {
-                  this.updateSelection();
+                  const instructions = this.sourceResolver.instructionsPhase.instructionsForPCOffset(offset);
+                  if (instructions.length > 0) {
+                      e.stopPropagation();
+                      if (!e.shiftKey)
+                          this.instructionSelectionHandler.clear();
+                      this.instructionSelectionHandler
+                          .brokeredInstructionSelect(instructions.map(instr => [instr, instr]), true);
+                      this.broker.broadcastInstructionSelect(this, instructions, true);
+                  }
+                  else {
+                      this.updateSelection();
+                  }
               }
           }
           return undefined;
@@ -2834,8 +2893,8 @@
           if (blockId !== undefined) {
               const blockIds = blockId.split(",");
               if (!e.shiftKey)
-                  this.nodeSelectionHandler.clear();
-              this.blockSelectionHandler.select(blockIds, true);
+                  this.blockSelectionHandler.clear();
+              this.blockSelectionHandler.select(blockIds.map(id => Number(id)), true, false);
           }
       }
       addDisassemblyToolbox() {
@@ -11880,11 +11939,13 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class SelectionStorage {
-      constructor(nodes, blocks) {
+      constructor(nodes, blocks, instructions) {
           this.nodes = nodes ?? new Map();
           this.blocks = blocks ?? new Map();
+          this.instructions = instructions ?? new Map();
           this.adaptedNodes = new Set();
           this.adaptedBocks = new Set();
+          this.adaptedInstructions = new Set();
       }
       adaptNode(nodeKey) {
           this.adaptedNodes.add(nodeKey);
@@ -11892,8 +11953,12 @@
       adaptBlock(blockKey) {
           this.adaptedBocks.add(blockKey);
       }
+      adaptInstruction(instrId) {
+          this.adaptedInstructions.add(instrId);
+      }
       isAdapted() {
-          return this.adaptedNodes.size != 0 || this.adaptedBocks.size != 0;
+          return this.adaptedNodes.size != 0 || this.adaptedBocks.size != 0
+              || this.adaptedInstructions.size != 0;
       }
   }
 
@@ -11974,7 +12039,7 @@
               if (!event.shiftKey) {
                   view.nodeSelectionHandler.clear();
               }
-              view.nodeSelectionHandler.select([edge.source, edge.target], true);
+              view.nodeSelectionHandler.select([edge.source, edge.target], true, false);
           })
               .attr("adjacentToHover", "false")
               .classed("value", edge => edge.type === "value" || edge.type === "context")
@@ -12035,7 +12100,7 @@
               .on("click", node => {
               if (!event.shiftKey)
                   view.nodeSelectionHandler.clear();
-              view.nodeSelectionHandler.select([node], undefined);
+              view.nodeSelectionHandler.select([node], undefined, false);
               event.stopPropagation();
           })
               .call(view.drag);
@@ -12184,7 +12249,7 @@
                       reg.exec(node.nodeLabel.opcode) !== null);
               };
               const selection = this.searchNodes(filterFunction, e, onlyVisible);
-              this.nodeSelectionHandler.select(selection, true);
+              this.nodeSelectionHandler.select(selection, true, false);
               this.connectVisibleSelectedElements(this.state.selection);
               this.updateGraphVisibility();
               searchInput.blur();
@@ -12232,7 +12297,7 @@
       initializeNodeSelectionHandler() {
           const view = this;
           return {
-              select: function (selectedNodes, selected) {
+              select: function (selectedNodes, selected, scrollIntoView) {
                   const locations = new Array();
                   const nodes = new Set();
                   for (const node of selectedNodes) {
@@ -12396,7 +12461,7 @@
               ...this.graph.nodes(node => selection.has(this.state.selection.stringKey(node))
                   && (!this.state.hideDead || node.isLive()))
           ];
-          this.nodeSelectionHandler.select(selected, true);
+          this.nodeSelectionHandler.select(selected, true, false);
           return selected;
       }
       viewSelection() {
@@ -12544,7 +12609,7 @@
           }
           else if (origins.length > 0) {
               this.nodeSelectionHandler.clear();
-              this.nodeSelectionHandler.select(origins, true);
+              this.nodeSelectionHandler.select(origins, true, false);
           }
       }
   }
@@ -12565,6 +12630,7 @@
       initializeContent(schedule, rememberedSelection) {
           this.divNode.innerHTML = "";
           this.schedule = schedule;
+          this.clearSelectionMaps();
           this.addBlocks(schedule.data.blocksRpo);
           this.show();
           if (rememberedSelection) {
@@ -12573,7 +12639,7 @@
           }
       }
       detachSelection() {
-          return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
+          return new SelectionStorage(this.nodeSelections.current.detachSelection(), this.blockSelections.current.detachSelection());
       }
       adaptSelection(selection) {
           for (const key of selection.nodes.keys())
@@ -12598,7 +12664,7 @@
                   select.push(node.id);
               }
           }
-          this.nodeSelectionHandler.select(select, true);
+          this.nodeSelectionHandler.select(select, true, false);
       }
       addBlocks(blocks) {
           for (const block of blocks) {
@@ -12609,10 +12675,10 @@
       attachSelection(adaptedSelection) {
           if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          this.nodeSelectionHandler.clear();
           this.blockSelectionHandler.clear();
-          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
-          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
+          this.nodeSelectionHandler.clear();
+          this.blockSelectionHandler.select(Array.from(adaptedSelection.adaptedBocks).map(block => Number(block)), true, true);
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true, true);
       }
       createElementForBlock(block) {
           const scheduleBlock = this.createElement("div", "schedule-block");
@@ -12684,7 +12750,7 @@
               if (!e.shiftKey) {
                   view.blockSelectionHandler.clear();
               }
-              view.blockSelectionHandler.select([blockId], true);
+              view.blockSelectionHandler.select([blockId], true, false);
           };
       }
       mkNodeLinkHandler(nodeId) {
@@ -12694,7 +12760,7 @@
               if (!e.shiftKey) {
                   view.nodeSelectionHandler.clear();
               }
-              view.nodeSelectionHandler.select([nodeId], true);
+              view.nodeSelectionHandler.select([nodeId], true, false);
           };
       }
       createElement(tag, cls, content) {
@@ -12825,6 +12891,7 @@
               this.reset(settingName);
               toggleInput.disabled = false;
           };
+          toggleEl.onclick = (e) => { e.stopPropagation(); };
           toggleEl.insertBefore(toggleInput, toggleEl.firstChild);
           return toggleEl;
       }
@@ -12949,30 +13016,41 @@
       // depending on whether that position is the start of an interval or not.
       // RangePair is used to allow the two fixed register live ranges of normal and deferred to be
       // easily combined into a single row.
-      construct(grid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval) {
+      construct(grid, row, registerId, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval) {
           // Construct all of the new intervals.
           const intervalMap = this.elementsForIntervals(registerIndex, ranges);
           if (intervalMap.size == 0)
               return false;
-          const positions = new Array(this.view.instructionRangeHandler.numPositions);
+          const positionsArray = new Array(this.view.instructionRangeHandler.numPositions);
+          const posOffset = this.view.instructionRangeHandler.getPositionFromIndex(0);
+          let blockId = this.view.instructionRangeHandler.getBlockIdFromIndex(0);
           for (let column = 0; column < this.view.instructionRangeHandler.numPositions; ++column) {
               const interval = intervalMap.get(column);
               if (interval === undefined) {
-                  positions[column] = getElementForEmptyPosition(column);
+                  positionsArray[column] = getElementForEmptyPosition(column);
+                  this.view.selectionHandler.addCell(positionsArray[column], row, column + posOffset, blockId, registerId);
+                  if (this.view.blocksData.isBlockBorder(column + posOffset))
+                      ++blockId;
               }
               else {
                   callbackForInterval(column, interval);
                   this.view.intervalsAccessor.addInterval(interval);
-                  const intervalPositionElements = this.view.getPositionElementsFromInterval(interval);
+                  const innerWrapper = this.view.getInnerWrapperFromInterval(interval);
+                  const intervalNodeId = interval.dataset.nodeId;
+                  this.view.selectionHandler.addInterval(interval, innerWrapper, intervalNodeId, registerId);
+                  const intervalPositionElements = innerWrapper.children;
                   for (let j = 0; j < intervalPositionElements.length; ++j) {
                       const intervalColumn = column + j;
                       // Point positions to the new elements.
-                      positions[intervalColumn] = intervalPositionElements[j];
+                      positionsArray[intervalColumn] = intervalPositionElements[j];
+                      this.view.selectionHandler.addCell(positionsArray[intervalColumn], row, intervalColumn + posOffset, blockId, registerId, intervalNodeId);
+                      if (this.view.blocksData.isBlockBorder(intervalColumn + posOffset))
+                          ++blockId;
                   }
                   column += intervalPositionElements.length - 1;
               }
           }
-          grid.setRow(row, positions);
+          grid.setRow(row, positionsArray);
           for (const range of ranges) {
               if (!range)
                   continue;
@@ -13006,16 +13084,16 @@
       }
       elementForInterval(childRange, interval, tooltip, index, isDeferred) {
           const intervalEl = createElement("div", "range-interval");
-          intervalEl.dataset.tooltip = tooltip;
+          intervalEl.dataset.tooltip = tooltip.text;
           const title = `${childRange.id}:${index} ${tooltip}`;
           intervalEl.setAttribute("title", isDeferred ? `deferred: ${title}` : title);
-          this.setIntervalColor(intervalEl, tooltip);
+          this.setIntervalColor(intervalEl, tooltip.text);
           const intervalInnerWrapper = createElement("div", "range-interval-wrapper");
           intervalEl.style.gridColumn = `${(interval.start + 1)} / ${(interval.end + 1)}`;
           const intervalLength = interval.end - interval.start;
           intervalInnerWrapper.style.gridTemplateColumns =
               this.getGridTemplateColumnsValueForInterval(intervalLength);
-          const intervalStringEls = this.elementsForIntervalString(tooltip, intervalLength);
+          const intervalStringEls = this.elementsForIntervalString(tooltip.text, intervalLength);
           intervalEl.appendChild(intervalStringEls.main);
           intervalEl.appendChild(intervalStringEls.behind);
           for (let i = interval.start; i < interval.end; ++i) {
@@ -13028,6 +13106,10 @@
               intervalInnerWrapper.appendChild(positionEl);
           }
           intervalEl.appendChild(intervalInnerWrapper);
+          // Either the tooltip represents the interval id, or a new id is required.
+          const intervalNodeId = tooltip.isId ? tooltip.text
+              : "interval-" + index + "-" + interval.start;
+          intervalEl.dataset.nodeId = intervalNodeId;
           return intervalEl;
       }
       setIntervalColor(interval, tooltip) {
@@ -13222,9 +13304,10 @@
       }
       addVirtualRanges(row) {
           return this.view.instructionRangeHandler.forEachLiveRange(row, (registerIndex, row, registerName, range) => {
-              const rowEl = this.elementForRow(row, registerIndex, [range, undefined]);
+              const registerId = VIRTUAL_REGISTER_ID_PREFIX + registerName;
+              const rowEl = this.elementForRow(row, registerId, registerIndex, [range, undefined]);
               if (rowEl) {
-                  const registerEl = this.elementForRegister(row, registerName, true);
+                  const registerEl = this.elementForRegister(row, registerName, registerId, true);
                   this.addRowToGroup(row, rowEl);
                   this.view.divs.registers.appendChild(registerEl);
                   ++(this.registerTypeHeaderData.virtualCount);
@@ -13235,10 +13318,10 @@
       }
       addFixedRanges(row) {
           row = this.view.instructionRangeHandler.forEachFixedRange(row, (registerIndex, row, registerName, ranges) => {
-              const rowEl = this.elementForRow(row, registerIndex, ranges);
+              const rowEl = this.elementForRow(row, registerName, registerIndex, ranges);
               if (rowEl) {
                   this.registerTypeHeaderData.countFixedRegister(registerName, ranges);
-                  const registerEl = this.elementForRegister(row, registerName, false);
+                  const registerEl = this.elementForRegister(row, registerName, registerName, false);
                   this.addRowToGroup(row, rowEl);
                   this.view.divs.registers.appendChild(registerEl);
                   return true;
@@ -13252,7 +13335,7 @@
       // Each row of positions and intervals associated with a register is contained in a single
       // HTMLElement. RangePair is used to allow the two fixed register live ranges of normal and
       // deferred to be easily combined into a single row.
-      elementForRow(row, registerIndex, ranges) {
+      elementForRow(row, registerId, registerIndex, ranges) {
           const rowEl = createElement("div", "range-positions");
           const getElementForEmptyPosition = (column) => {
               const position = this.view.instructionRangeHandler.getPositionFromIndex(column);
@@ -13269,17 +13352,19 @@
               rowEl.appendChild(interval);
           };
           // Only construct the row if it has any intervals.
-          if (this.view.rowConstructor.construct(this.grid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval)) {
+          if (this.view.rowConstructor.construct(this.grid, row, registerId, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval)) {
+              this.view.selectionHandler.addRow(rowEl, registerId);
               return rowEl;
           }
           return undefined;
       }
-      elementForRegister(row, registerName, isVirtual) {
+      elementForRegister(row, registerName, registerId, isVirtual) {
           const regEl = createElement("div", "range-reg");
           this.view.stringConstructor.setRegisterString(registerName, isVirtual, regEl);
           regEl.dataset.virtual = isVirtual.toString();
           regEl.setAttribute("title", registerName);
           regEl.style.gridColumn = String(row + 1);
+          this.view.selectionHandler.addRegister(regEl, registerId, row);
           return regEl;
       }
       elementForRegisterTypeHeader() {
@@ -13360,18 +13445,22 @@
           element.style.gridTemplateRows = `repeat(${8 * instrCount},
       calc((${this.view.cssVariables.flippedPositionHeight}em +
             ${this.view.cssVariables.blockBorderWidth}px)/2))`;
+          this.view.selectionHandler.addBlock(element, blockId);
           return element;
       }
       elementForInstructionHeader() {
           const headerEl = createElement("div", "range-instruction-ids");
+          let blockId = this.view.instructionRangeHandler.getBlockIdFromIndex(0);
           let instrId = this.view.instructionRangeHandler.getInstructionIdFromIndex(0);
           const instrLimit = instrId + this.view.instructionRangeHandler.numInstructions;
           for (; instrId < instrLimit; ++instrId) {
-              headerEl.appendChild(this.elementForInstruction(instrId));
+              headerEl.appendChild(this.elementForInstruction(instrId, blockId));
+              if (this.view.blocksData.isInstructionIdOnBlockBorder(instrId))
+                  ++blockId;
           }
           return headerEl;
       }
-      elementForInstruction(instrId) {
+      elementForInstruction(instrId, blockId) {
           const isBlockBorder = this.view.blocksData.isInstructionIdOnBlockBorder(instrId);
           const classes = "range-instruction-id range-header-element "
               + (isBlockBorder ? "range-block-border" : "range-instr-border");
@@ -13381,25 +13470,30 @@
           const instrIndex = this.view.instructionRangeHandler.getInstructionIndex(instrId);
           const firstGridCol = (instrIndex * POSITIONS_PER_INSTRUCTION) + 1;
           element.style.gridColumn = `${firstGridCol} / ${(firstGridCol + POSITIONS_PER_INSTRUCTION)}`;
+          this.view.selectionHandler.addInstruction(element, instrId, blockId);
           return element;
       }
       elementForPositionHeader() {
           const headerEl = createElement("div", "range-positions range-positions-header");
+          let blockId = this.view.instructionRangeHandler.getBlockIdFromIndex(0);
           let position = this.view.instructionRangeHandler.getPositionFromIndex(0);
           const lastPos = this.view.instructionRangeHandler.getLastPosition();
           for (; position <= lastPos; ++position) {
               const isBlockBorder = this.view.blocksData.isBlockBorder(position);
-              headerEl.appendChild(this.elementForPosition(position, isBlockBorder));
+              headerEl.appendChild(this.elementForPosition(position, blockId, isBlockBorder));
+              if (isBlockBorder)
+                  ++blockId;
           }
           return headerEl;
       }
-      elementForPosition(position, isBlockBorder) {
+      elementForPosition(position, blockId, isBlockBorder) {
           const classes = "range-position range-header-element " +
               (isBlockBorder ? "range-block-border"
                   : this.view.blocksData.isInstructionBorder(position) ? "range-instr-border"
                       : "range-position-border");
           const element = createElement("div", classes, String(position));
           element.setAttribute("title", String(position));
+          this.view.selectionHandler.addPosition(element, position, blockId);
           return element;
       }
       elementForGrid() {
@@ -13436,16 +13530,16 @@
           const newGrid = new Grid();
           this.view.gridAccessor.addGrid(newGrid);
           let row = 0;
-          row = this.view.instructionRangeHandler.forEachLiveRange(row, (registerIndex, row, _, range) => {
-              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, [range, undefined]);
+          row = this.view.instructionRangeHandler.forEachLiveRange(row, (registerIndex, row, registerName, range) => {
+              this.addnewIntervalsInRange(currentGrid, newGrid, row, VIRTUAL_REGISTER_ID_PREFIX + registerName, registerIndex, [range, undefined]);
               return true;
           });
-          this.view.instructionRangeHandler.forEachFixedRange(row, (registerIndex, row, _, ranges) => {
-              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges);
+          this.view.instructionRangeHandler.forEachFixedRange(row, (registerIndex, row, registerName, ranges) => {
+              this.addnewIntervalsInRange(currentGrid, newGrid, row, registerName, registerIndex, ranges);
               return true;
           });
       }
-      addnewIntervalsInRange(currentGrid, newGrid, row, registerIndex, ranges) {
+      addnewIntervalsInRange(currentGrid, newGrid, row, registerId, registerIndex, ranges) {
           const numReplacements = new Map();
           const getElementForEmptyPosition = (column) => {
               return currentGrid.getCell(row, column);
@@ -13467,7 +13561,7 @@
               interval.classList.add("range-hidden");
               currentInterval.insertAdjacentElement("afterend", interval);
           };
-          this.view.rowConstructor.construct(newGrid, row, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval);
+          this.view.rowConstructor.construct(newGrid, row, registerId, registerIndex, ranges, getElementForEmptyPosition, callbackForInterval);
       }
   }
   // Manages the limitation of how many instructions are shown in the grid.
@@ -13643,6 +13737,143 @@
           return row;
       }
   }
+  // This class works in tandem with the selectionHandlers defined in text-view.ts
+  // rather than updating HTMLElements explicitly itself.
+  class RangeViewSelectionHandler {
+      constructor(rangeView) {
+          this.rangeView = rangeView;
+          this.sequenceView = this.rangeView.sequenceView;
+          // Clear all selections when container is clicked.
+          this.rangeView.divs.container.onclick = (e) => {
+              if (!e.shiftKey)
+                  this.sequenceView.broker.broadcastClear(null);
+          };
+      }
+      addBlock(element, id) {
+          element.onclick = (e) => {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  this.clear();
+              }
+              this.select(null, null, [id], true);
+          };
+          this.sequenceView.addHtmlElementForBlockId(id, element);
+          this.sequenceView.addHtmlElementForBlockId(this.sequenceView.getSubId(id), element);
+      }
+      addInstruction(element, id, blockId) {
+          // Select the block which contains the instruction and all positions and cells
+          // that are within this instruction.=
+          element.onclick = (e) => {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  this.clear();
+              }
+              this.select(null, [id], [this.sequenceView.getSubId(blockId)], true);
+          };
+          this.sequenceView.addHtmlElementForBlockId(blockId, element);
+          this.sequenceView.addHtmlElementForInstructionId(id, element);
+          this.sequenceView.addHtmlElementForInstructionId(this.sequenceView.getSubId(id), element);
+      }
+      addPosition(element, position, blockId) {
+          const instrId = Math.floor(position / POSITIONS_PER_INSTRUCTION);
+          // Select the block and instruction which contains this position.
+          element.onclick = (e) => {
+              e.stopPropagation();
+              if (!e.shiftKey) {
+                  this.clear();
+              }
+              this.select(["position-" + position], [this.sequenceView.getSubId(instrId)], [this.sequenceView.getSubId(blockId)], true);
+          };
+          this.sequenceView.addHtmlElementForBlockId(blockId, element);
+          this.sequenceView.addHtmlElementForInstructionId(instrId, element);
+          this.sequenceView.addHtmlElementForNodeId("position-" + position, element);
+      }
+      addRegister(element, registerId, row) {
+          const rowGroupIndex = (Math.floor(row / ROW_GROUP_SIZE) * 2) + 1;
+          element.onclick = (e) => {
+              e.stopPropagation();
+              if (!this.canSelectRow(row, rowGroupIndex))
+                  return;
+              if (!e.shiftKey) {
+                  this.clear();
+              }
+              // The register also effectively selects the row.
+              this.select([registerId], null, null, true);
+          };
+          this.sequenceView.addHtmlElementForNodeId(registerId, element);
+      }
+      addRow(element, registerId) {
+          // Highlight row when register is selected.
+          this.rangeView.sequenceView.addHtmlElementForNodeId(registerId, element);
+      }
+      addInterval(intervalEl, intervalInnerWrapperEl, intervalNodeId, registerId) {
+          // Highlight interval when the interval is selected.
+          this.sequenceView.addHtmlElementForNodeId(intervalNodeId, intervalEl);
+          // Highlight inner wrapper when row is selected, allowing for different color highlighting.
+          this.sequenceView.addHtmlElementForNodeId(registerId, intervalInnerWrapperEl);
+      }
+      addCell(element, row, position, blockId, registerId, intervalNodeId) {
+          const instrId = Math.floor(position / POSITIONS_PER_INSTRUCTION);
+          // Select the relevant row by the registerId, and the column by position.
+          // Also select the instruction and the block in which the position is in.
+          const select = [registerId, "position-" + position];
+          if (intervalNodeId)
+              select.push(intervalNodeId);
+          const rowGroupIndex = (Math.floor(row / ROW_GROUP_SIZE) * 2) + 1;
+          element.onclick = (e) => {
+              e.stopPropagation();
+              if (!this.canSelectRow(row, rowGroupIndex))
+                  return;
+              if (!e.shiftKey) {
+                  this.clear();
+              }
+              this.select(select, [this.sequenceView.getSubId(instrId)], [this.sequenceView.getSubId(blockId)], true);
+          };
+          this.sequenceView.addHtmlElementForBlockId(blockId, element);
+          this.sequenceView.addHtmlElementForInstructionId(instrId, element);
+          this.sequenceView.addHtmlElementForNodeId("position-" + position, element);
+      }
+      canSelectRow(row, rowGroupIndex) {
+          // Don't select anything if the row group which this row is included in is hidden.
+          if (row >= 0
+              && this.rangeView.divs.grid.children[rowGroupIndex].classList.contains("range-hidden")) {
+              this.rangeView.scrollHandler.syncHidden();
+              return false;
+          }
+          return true;
+      }
+      // Don't call multiple times in a row or the SelectionMapsHandlers will clear their previous
+      // causing the HTMLElements to not be deselected by select.
+      clear() {
+          this.sequenceView.blockSelections.clearCurrent();
+          this.sequenceView.instructionSelections.clearCurrent();
+          this.sequenceView.nodeSelections.clearCurrent();
+          // Mark as cleared so that the HTMLElements are not updated on broadcastClear.
+          // The HTMLElements will be updated when select is called.
+          this.sequenceView.selectionCleared = true;
+          // broadcastClear calls brokeredClear on all SelectionHandlers but that which is passed to it.
+          this.sequenceView.broker.broadcastClear(this.sequenceView.nodeSelectionHandler);
+          this.sequenceView.selectionCleared = false;
+      }
+      select(nodeIds, instrIds, blockIds, selected) {
+          // Add nodeIds and blockIds to selections.
+          if (nodeIds)
+              this.sequenceView.nodeSelections.current.select(nodeIds, selected);
+          if (instrIds)
+              this.sequenceView.instructionSelections.current.select(instrIds, selected);
+          if (blockIds)
+              this.sequenceView.blockSelections.current.select(blockIds, selected);
+          // Update the HTMLElements.
+          this.sequenceView.updateSelection(true);
+          if (nodeIds) {
+              // Broadcast selections to other SelectionHandlers.
+              this.sequenceView.broker.broadcastNodeSelect(this.sequenceView.nodeSelectionHandler, this.sequenceView.nodeSelections.current.selectedKeys(), selected);
+          }
+          if (instrIds) {
+              this.sequenceView.broker.broadcastInstructionSelect(this.sequenceView.registerAllocationSelectionHandler, Array.from(this.sequenceView.instructionSelections.current.selectedKeysAsAbsNumbers()), selected);
+          }
+      }
+  }
   class DisplayResetter {
       constructor(view) {
           this.view = view;
@@ -13715,7 +13946,7 @@
               const intervalEl = interval;
               const spanEl = intervalEl.children[0];
               const spanElBehind = intervalEl.children[1];
-              const intervalLength = this.view.getPositionElementsFromInterval(interval).length;
+              const intervalLength = this.view.getInnerWrapperFromInterval(interval).children.length;
               this.view.stringConstructor.setIntervalString(spanEl, spanElBehind, intervalEl.dataset.tooltip, intervalLength);
               const intervalInnerWrapper = intervalEl.children[2];
               intervalInnerWrapper.style.gridTemplateColumns =
@@ -13861,6 +14092,7 @@
               this.scrollHandler = new ScrollHandler(this);
               this.rowConstructor = new RowConstructor(this);
               this.stringConstructor = new StringConstructor(this);
+              this.selectionHandler = new RangeViewSelectionHandler(this);
               const constructor = new RangeViewConstructor(this);
               constructor.construct();
               this.cssVariables.setVariables(this.instructionRangeHandler.numPositions, this.divs.registers.children.length);
@@ -13919,8 +14151,8 @@
           if (this.divs.registers.children.length && this.isShown)
               this.scrollHandler.syncHidden();
       }
-      getPositionElementsFromInterval(interval) {
-          return interval.children[2].children;
+      getInnerWrapperFromInterval(interval) {
+          return interval.children[2];
       }
   }
 
@@ -13942,13 +14174,15 @@
           return pane;
       }
       detachSelection() {
-          return new SelectionStorage(this.nodeSelection.detachSelection(), this.blockSelection.detachSelection());
+          return new SelectionStorage(this.nodeSelections.current.detachSelection(), this.blockSelections.current.detachSelection(), this.instructionSelections.current.detachSelection());
       }
       adaptSelection(selection) {
           for (const key of selection.nodes.keys())
               selection.adaptedNodes.add(key);
           for (const key of selection.blocks.keys())
               selection.adaptedBocks.add(key);
+          for (const key of selection.instructions.keys())
+              selection.adaptedInstructions.add(Number(key));
           return selection;
       }
       show() {
@@ -14009,15 +14243,17 @@
                   select.push(item);
               }
           }
-          this.nodeSelectionHandler.select(select, true);
+          this.nodeSelectionHandler.select(select, true, false);
       }
       attachSelection(adaptedSelection) {
           if (!(adaptedSelection instanceof SelectionStorage))
               return;
-          this.nodeSelectionHandler.clear();
           this.blockSelectionHandler.clear();
-          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true);
-          this.blockSelectionHandler.select(adaptedSelection.adaptedBocks, true);
+          this.nodeSelectionHandler.clear();
+          this.registerAllocationSelectionHandler.clear();
+          this.blockSelectionHandler.select(Array.from(adaptedSelection.adaptedBocks).map(block => Number(block)), true, true);
+          this.nodeSelectionHandler.select(adaptedSelection.adaptedNodes, true, true);
+          this.registerAllocationSelectionHandler.select(Array.from(adaptedSelection.adaptedInstructions), true, true);
       }
       addBlocks(blocks) {
           for (const block of blocks) {
@@ -14029,6 +14265,9 @@
           const sequenceBlock = createElement("div", "schedule-block");
           sequenceBlock.classList.toggle("deferred", block.deferred);
           const blockIdEl = createElement("div", "block-id com clickable", String(block.id));
+          // Select just the block id when any of the block's instructions or positions
+          // are selected.
+          this.addHtmlElementForBlockId(this.getSubId(block.id), blockIdEl);
           blockIdEl.onclick = this.mkBlockLinkHandler(block.id);
           sequenceBlock.appendChild(blockIdEl);
           const blockPred = createElement("div", "predecessor-list block-list comma-sep-list");
@@ -14104,7 +14343,10 @@
           const instId = createElement("div", "instruction-id", String(instruction.id));
           const offsets = this.sourceResolver.instructionsPhase.instructionToPcOffsets(instruction.id);
           instId.classList.add("clickable");
+          // Select instruction id for both when the instruction is selected and when any of its
+          // positions are selected.
           this.addHtmlElementForInstructionId(instruction.id, instId);
+          this.addHtmlElementForInstructionId(this.getSubId(instruction.id), instId);
           instId.onclick = this.mkInstructionLinkHandler(instruction.id);
           instId.dataset.instructionId = String(instruction.id);
           if (offsets) {
@@ -14683,7 +14925,7 @@
                       reg.exec(`${node.getTitle()}${customDataTitle}`);
               };
               const selection = this.searchNodes(filterFunction, e, onlyVisible);
-              this.nodeSelectionHandler.select(selection, true);
+              this.nodeSelectionHandler.select(selection, true, false);
               this.updateGraphVisibility();
               searchInput.blur();
               this.viewSelection();
@@ -14729,7 +14971,7 @@
       initializeNodeSelectionHandler() {
           const view = this;
           return {
-              select: function (selectedNodes, selected) {
+              select: function (selectedNodes, selected, scrollIntoView) {
                   const sourcePositions = new Array();
                   const nodes = new Set();
                   for (const node of selectedNodes) {
@@ -14767,7 +15009,7 @@
                   view.state.blocksSelection.select(selectedBlocks, selected);
                   const selectedBlocksKeys = new Array();
                   for (const selectedBlock of selectedBlocks) {
-                      selectedBlocksKeys.push(view.state.blocksSelection.stringKey(selectedBlock));
+                      selectedBlocksKeys.push(Number(view.state.blocksSelection.stringKey(selectedBlock)));
                   }
                   view.broker.broadcastBlockSelect(this, selectedBlocksKeys, selected);
                   view.updateGraphVisibility();
@@ -14874,7 +15116,7 @@
               if (!event.shiftKey) {
                   view.blockSelectionHandler.clear();
               }
-              view.blockSelectionHandler.select([edge.source, edge.target], true);
+              view.blockSelectionHandler.select([edge.source, edge.target], true, false);
           })
               .attr("adjacentToHover", "false");
           const newAndOldEdges = newEdges.merge(selEdges);
@@ -14914,7 +15156,7 @@
               .on("click", (block) => {
               if (!event.shiftKey)
                   view.blockSelectionHandler.clear();
-              view.blockSelectionHandler.select([block], undefined);
+              view.blockSelectionHandler.select([block], undefined, false);
               event.stopPropagation();
           })
               .call(view.blockDrag);
@@ -14952,7 +15194,7 @@
                   .on("click", () => {
                   event.stopPropagation();
                   block.collapsed = !block.collapsed;
-                  view.nodeSelectionHandler.select(block.nodes, false);
+                  view.nodeSelectionHandler.select(block.nodes, false, false);
               });
               view.appendInputAndOutputBubbles(svg, block);
               view.appendInlineNodes(svg, block);
@@ -15020,7 +15262,7 @@
                   .on("click", (node) => {
                   if (!event.shiftKey)
                       view.nodeSelectionHandler.clear();
-                  view.nodeSelectionHandler.select([node], undefined);
+                  view.nodeSelectionHandler.select([node], undefined, false);
                   event.stopPropagation();
               });
               nodeY += node.labelBox.height;
@@ -15150,11 +15392,11 @@
           const selectedNodes = [
               ...this.graph.nodes(node => selection.adaptedNodes.has(this.state.selection.stringKey(node)))
           ];
-          this.nodeSelectionHandler.select(selectedNodes, true);
+          this.nodeSelectionHandler.select(selectedNodes, true, false);
           const selectedBlocks = [
               ...this.graph.blocks(block => selection.adaptedBocks.has(this.state.blocksSelection.stringKey(block)))
           ];
-          this.blockSelectionHandler.select(selectedBlocks, true);
+          this.blockSelectionHandler.select(selectedBlocks, true, false);
           return selectedNodes.length + selectedBlocks.length;
       }
       nodesCustomDataShowed() {
@@ -15246,7 +15488,7 @@
       }
       // Hotkeys handlers
       selectAllNodes() {
-          this.nodeSelectionHandler.select(this.graph.nodeMap, true);
+          this.nodeSelectionHandler.select(this.graph.nodeMap, true, false);
           this.updateGraphVisibility();
       }
       collapseUnusedBlocks(usedNodes) {
@@ -15283,7 +15525,7 @@
               block.collapsed = false;
               selectedNodes = selectedNodes.concat(block.nodes);
           }
-          this.nodeSelectionHandler.select(selectedNodes, true);
+          this.nodeSelectionHandler.select(selectedNodes, true, false);
           this.updateGraphVisibility();
       }
   }
@@ -15354,9 +15596,9 @@
           this.displayPhase(this.sourceResolver.getDynamicPhase(initialPhaseIndex));
       }
       displayPhaseByName(phaseName, selection) {
-          this.currentPhaseView.hide();
           const phaseId = this.sourceResolver.getPhaseIdByName(phaseName);
           this.selectMenu.selectedIndex = phaseId;
+          this.currentPhaseView.hide();
           this.displayPhase(this.sourceResolver.getDynamicPhase(phaseId), selection);
       }
       onresize() {
@@ -16666,7 +16908,7 @@
               select: function (offsets, selected) {
                   const bytecodePositions = new Array();
                   for (const offset of offsets) {
-                      bytecodePositions.push(new BytecodePosition(offset, view.source.sourceId));
+                      view.source.inliningIds.forEach(inliningId => bytecodePositions.push(new BytecodePosition(offset, inliningId)));
                   }
                   view.bytecodeOffsetSelection.select(offsets, selected);
                   view.updateSelection();
@@ -16681,7 +16923,7 @@
                   const offsets = new Array();
                   const firstSelect = view.bytecodeOffsetSelection.isEmpty();
                   for (const position of positions) {
-                      if (position.inliningId == view.source.sourceId) {
+                      if (view.source.inliningIds.includes(position.inliningId)) {
                           offsets.push(position.bytecodePosition);
                       }
                   }
