@@ -1290,14 +1290,14 @@
                   return new RangeToolTip(`${INTERVAL_TEXT_FOR_STACK}${registerIndex}`, true);
               default:
                   if (this.op instanceof SequenceBlockOperand && this.op.type == "constant") {
-                      new RangeToolTip(INTERVAL_TEXT_FOR_CONST, false);
+                      return new RangeToolTip(INTERVAL_TEXT_FOR_CONST, false);
                   }
                   else {
                       if (this.op instanceof SequenceBlockOperand && this.op.text) {
-                          new RangeToolTip(this.op.text, true);
+                          return new RangeToolTip(this.op.text, true);
                       }
                       else if (typeof this.op === "string") {
-                          new RangeToolTip(this.op, true);
+                          return new RangeToolTip(this.op, true);
                       }
                   }
           }
@@ -13279,7 +13279,7 @@
       elementForInterval(childRange, interval, tooltip, index, isDeferred) {
           const intervalEl = createElement("div", "range-interval");
           intervalEl.dataset.tooltip = tooltip.text;
-          const title = `${childRange.id}:${index} ${tooltip}`;
+          const title = `${childRange.id}:${index} ${tooltip.text}`;
           intervalEl.setAttribute("title", isDeferred ? `deferred: ${title}` : title);
           this.setIntervalColor(intervalEl, tooltip.text);
           const intervalInnerWrapper = createElement("div", "range-interval-wrapper");
