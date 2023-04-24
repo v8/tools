@@ -1045,7 +1045,11 @@
               }
               const blockRpo = Number.parseInt(match.groups.rpo, 10);
               const blockId = Number.parseInt(match.groups.id, 10);
-              const block = new ScheduleBlock(blockRpo, blockId, match.groups.deferred !== undefined, predecessors.sort());
+              let blockCount = -1;
+              if (match.groups.count !== undefined) {
+                  blockCount = Number.parseInt(match.groups.count, 10);
+              }
+              const block = new ScheduleBlock(blockRpo, blockId, blockCount, match.groups.deferred !== undefined, predecessors.sort());
               this.data.blocksRpo[block.rpo] = block;
           };
           this.setGotoSuccessor = match => {
@@ -1063,6 +1067,7 @@
               },
               {
                   lineRegexps: [
+                      /^\s*---\s*BLOCK\ B(?<rpo>\d+)\ id(?<id>\d+)\ PGO Execution Count:(?<count>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/,
                       /^\s*---\s*BLOCK\ B(?<rpo>\d+)\ id(?<id>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/,
                       /^\s*---\s*BLOCK\ B(?<rpo>\d+)\s*(?<deferred>\(deferred\))?(\ <-\ )?(?<in>[^-]*)?\ ---$/
                   ],
@@ -1105,9 +1110,10 @@
       }
   }
   class ScheduleBlock {
-      constructor(rpo, id, deferred, predecessors) {
+      constructor(rpo, id, count, deferred, predecessors) {
           this.rpo = rpo;
           this.id = id;
+          this.count = count;
           this.deferred = deferred;
           this.predecessors = predecessors;
           this.successors = new Array();
@@ -12705,7 +12711,10 @@
           instrMarker.setAttribute("title", `Instructions range for this block is [${start}, ${end})`);
           instrMarker.onclick = this.mkBlockLinkHandler(block.rpo);
           scheduleBlock.appendChild(instrMarker);
-          const blocksRpoId = this.createElement("div", "block-id com clickable", String(block.rpo) + " Id:" + String(block.id));
+          let displayStr = String(block.rpo) + " Id:" + String(block.id);
+          if (block.count != -1)
+              displayStr += " Count:" + String(block.count);
+          const blocksRpoId = this.createElement("div", "block-id com clickable", displayStr);
           blocksRpoId.onclick = this.mkBlockLinkHandler(block.rpo);
           scheduleBlock.appendChild(blocksRpoId);
           const blockPred = this.createElement("div", "predecessor-list block-list comma-sep-list");
