@@ -1385,14 +1385,14 @@
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphNode extends Node$1 {
-      constructor(id, title, block, sourcePosition, bytecodePosition, origin, opPropertiesType) {
+      constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects) {
           super(id);
           this.title = title;
           this.block = block;
           this.sourcePosition = sourcePosition;
           this.bytecodePosition = bytecodePosition;
           this.origin = origin;
-          this.opPropertiesType = opPropertiesType;
+          this.opEffects = opEffects;
           this.visible = true;
       }
       getHeight(showCustomData) {
@@ -1406,7 +1406,8 @@
           this.labelBox = measureText(this.displayLabel);
       }
       getTitle() {
-          let title = `${this.id} ${this.title} ${this.opPropertiesType}`;
+          let title = `${this.id} ${this.title}`;
+          title += `\nEffects: ${this.opEffects}`;
           if (this.origin) {
               title += `\nOrigin: ${this.origin.toString()}`;
           }
@@ -1437,15 +1438,6 @@
           return this.title === that.title;
       }
   }
-  var OpPropertiesType;
-  (function (OpPropertiesType) {
-      OpPropertiesType["Pure"] = "Pure";
-      OpPropertiesType["Reading"] = "Reading";
-      OpPropertiesType["Writing"] = "Writing";
-      OpPropertiesType["CanDeopt"] = "CanDeopt";
-      OpPropertiesType["AnySideEffects"] = "AnySideEffects";
-      OpPropertiesType["BlockTerminator"] = "BlockTerminator";
-  })(OpPropertiesType || (OpPropertiesType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   class TurboshaftGraphBlock extends Node$1 {
@@ -1584,7 +1576,7 @@
                       }
                   }
               }
-              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_properties_type);
+              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_effects);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
