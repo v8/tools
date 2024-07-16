@@ -360,7 +360,7 @@
               (index % 4) * MINIMUM_EDGE_SEPARATION - DEFAULT_NODE_BUBBLE_RADIUS;
       }
       getOutputApproach(extendHeight) {
-          return this.y + this.outputApproach + this.getHeight(extendHeight) +
+          return this.y + this.outputApproach + this.getHeight(extendHeight, false) +
               +DEFAULT_NODE_BUBBLE_RADIUS;
       }
       compare(other) {
@@ -514,13 +514,13 @@
               ? target.x + target.getWidth() + inputOffset
               : target.x - inputOffset;
       }
-      generatePath(graph, extendHeight) {
+      generatePath(graph, extendHeight, compactView = false) {
           const target = this.target;
           const source = this.source;
           const inputX = target.x + target.getInputX(this.index);
           const inputY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - ARROW_HEAD_HEIGHT;
           const outputX = source.x + source.getOutputX();
-          const outputY = source.y + source.getHeight(extendHeight) + DEFAULT_NODE_BUBBLE_RADIUS;
+          const outputY = source.y + source.getHeight(extendHeight, compactView) + DEFAULT_NODE_BUBBLE_RADIUS;
           let inputApproach = target.getInputApproach(this.index);
           const outputApproach = source.getOutputApproach(extendHeight);
           const horizontalPos = this.getInputHorizontalPosition(graph, extendHeight);
@@ -1384,7 +1384,160 @@
   })(DataTarget || (DataTarget = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
-  class TurboshaftGraphNode extends Node$1 {
+  const SUBSCRIPT_DY = "50px";
+  var Opcode;
+  (function (Opcode) {
+      Opcode["Constant"] = "Constant";
+      Opcode["WordBinop"] = "WordBinop";
+  })(Opcode || (Opcode = {}));
+  var WordRepresentation;
+  (function (WordRepresentation) {
+      WordRepresentation["Word32"] = "Word32";
+      WordRepresentation["Word64"] = "Word64";
+  })(WordRepresentation || (WordRepresentation = {}));
+  function toEnum(type, option) {
+      for (const key of Object.keys(type)) {
+          if (option === type[key]) {
+              const r = (type[key]);
+              return r;
+          }
+      }
+      throw new CompactOperationError(`Option "${option}" not recognized as ${type}`);
+  }
+  class CompactOperationError {
+      constructor(message) {
+          this.message = message;
+      }
+  }
+  class CompactOperationPrinter {
+      IsFullyInlined() { return false; }
+      parseOptions(properties, expectedCount = -1) {
+          if (!properties.startsWith("[") || !properties.endsWith("]")) {
+              throw new CompactOperationError(`Unexpected options format: "${properties}"`);
+          }
+          const options = properties.substring(1, properties.length - 1)
+              .split(",")
+              .map(o => o.trim());
+          if (expectedCount > -1) {
+              if (options.length != expectedCount) {
+                  throw new CompactOperationError(`Unexpected option count: ${options} (expected ${expectedCount})`);
+              }
+          }
+          return options;
+      }
+      sub(text) {
+          return `<tspan class="subscript" dy="${SUBSCRIPT_DY}">${text}</tspan><tspan dy="-${SUBSCRIPT_DY}"> </tspan>`;
+      }
+  }
+  var Constant_Kind;
+  (function (Constant_Kind) {
+      Constant_Kind["Word32"] = "word32";
+      Constant_Kind["Word64"] = "word64";
+  })(Constant_Kind || (Constant_Kind = {}));
+  class CompactOperationPrinter_Constant extends CompactOperationPrinter {
+      constructor(properties) {
+          super();
+          const options = this.parseOptions(properties, 1);
+          // Format of {options[0]} is "kind: value".
+          let [key, value] = options[0].split(":").map(x => x.trim());
+          this.kind = toEnum(Constant_Kind, key);
+          this.value = value;
+      }
+      IsFullyInlined() {
+          return true;
+      }
+      Print(n, input) { return ""; }
+      PrintInLine() {
+          switch (this.kind) {
+              case Constant_Kind.Word32: return `${this.value}${this.sub("w32")}`;
+              case Constant_Kind.Word64: return `${this.value}${this.sub("w64")}`;
+          }
+      }
+  }
+  var WordBinop_Kind;
+  (function (WordBinop_Kind) {
+      WordBinop_Kind["Add"] = "Add";
+      WordBinop_Kind["Mul"] = "Mul";
+      WordBinop_Kind["SignedMulOverflownBits"] = "SignedMulOverflownBits";
+      WordBinop_Kind["UnsignedMulOverflownBits"] = "UnsignedMulOverflownBits";
+      WordBinop_Kind["BitwiseAnd"] = "BitwiseAnd";
+      WordBinop_Kind["BitwiseOr"] = "BitwiseOr";
+      WordBinop_Kind["BitwiseXor"] = "BitwiseXor";
+      WordBinop_Kind["Sub"] = "Sub";
+      WordBinop_Kind["SignedDiv"] = "SignedDiv";
+      WordBinop_Kind["UnsignedDiv"] = "UnsignedDiv";
+      WordBinop_Kind["SignedMod"] = "SignedMod";
+      WordBinop_Kind["UnsignedMod"] = "UnsignedMod";
+  })(WordBinop_Kind || (WordBinop_Kind = {}));
+  class CompactOperationPrinter_WordBinop extends CompactOperationPrinter {
+      constructor(properties) {
+          super();
+          const options = this.parseOptions(properties, 2);
+          this.kind = toEnum(WordBinop_Kind, options[0]);
+          this.rep = toEnum(WordRepresentation, options[1]);
+      }
+      Print(id, input) {
+          let symbol;
+          let subscript = "";
+          switch (this.kind) {
+              case WordBinop_Kind.Add:
+                  symbol = "+";
+                  break;
+              case WordBinop_Kind.Mul:
+                  symbol = "*";
+                  break;
+              case WordBinop_Kind.SignedMulOverflownBits:
+                  symbol = "*";
+                  subscript = "s,of";
+                  break;
+              case WordBinop_Kind.UnsignedMulOverflownBits:
+                  symbol = "*";
+                  subscript = "u,of";
+                  break;
+              case WordBinop_Kind.BitwiseAnd:
+                  symbol = "&";
+                  break;
+              case WordBinop_Kind.BitwiseOr:
+                  symbol = "|";
+                  break;
+              case WordBinop_Kind.BitwiseXor:
+                  symbol = "^";
+                  break;
+              case WordBinop_Kind.Sub:
+                  symbol = "-";
+                  break;
+              case WordBinop_Kind.SignedDiv:
+                  symbol = "/";
+                  subscript = "s";
+                  break;
+              case WordBinop_Kind.UnsignedDiv:
+                  symbol = "/";
+                  subscript = "u";
+                  break;
+              case WordBinop_Kind.SignedMod:
+                  symbol = "%";
+                  subscript = "s";
+                  break;
+              case WordBinop_Kind.UnsignedMod:
+                  symbol = "%";
+                  subscript = "u";
+                  break;
+          }
+          if (subscript.length > 0)
+              subscript += ",";
+          switch (this.rep) {
+              case WordRepresentation.Word32:
+                  subscript += "w32";
+                  break;
+              case WordRepresentation.Word64:
+                  subscript += "w64";
+                  break;
+          }
+          return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
+      }
+      PrintInLine() { return ""; }
+  }
+  class TurboshaftGraphOperation extends Node$1 {
       constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects) {
           super(id);
           this.title = title;
@@ -1394,15 +1547,24 @@
           this.origin = origin;
           this.opEffects = opEffects;
           this.visible = true;
+          this.compactPrinter = null;
       }
-      getHeight(showCustomData) {
+      propertiesChanged(customData) {
+          // The properties have been parsed from the JSON, we need to update
+          // operation printing.
+          const properties = customData.data[this.id];
+          this.compactPrinter = this.parseOperationForCompactRepresentation(properties);
+      }
+      getHeight(showCustomData, compactView) {
+          if (compactView && this.compactPrinter?.IsFullyInlined())
+              return 0;
           return showCustomData ? this.labelBox.height * 2 : this.labelBox.height;
       }
       getWidth() {
           return Math.max(this.inputs.length * NODE_INPUT_WIDTH, this.labelBox.width);
       }
       initDisplayLabel() {
-          this.displayLabel = this.getInlineLabel();
+          this.displayLabel = this.getNonCompactedOperationText();
           this.labelBox = measureText(this.displayLabel);
       }
       getTitle() {
@@ -1428,10 +1590,35 @@
       getNodeOrigin() {
           return this.origin;
       }
-      getInlineLabel() {
-          if (this.inputs.length == 0)
+      printInput(input) {
+          if (input.compactPrinter && input.compactPrinter.IsFullyInlined()) {
+              const s = input.compactPrinter.PrintInLine();
+              return s;
+          }
+          return "v" + input.id.toString();
+      }
+      getNonCompactedOperationText() {
+          if (this.inputs.length == 0) {
               return `${this.id} ${this.title}`;
-          return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(",")})`;
+          }
+          else {
+              return `${this.id} ${this.title}(${this.inputs.map(i => i.source.id).join(", ")})`;
+          }
+      }
+      buildOperationText(compact) {
+          if (!compact) {
+              return this.getNonCompactedOperationText();
+          }
+          const that = this;
+          if (this.compactPrinter) {
+              return this.compactPrinter.Print(this.id, n => that.printInput(this.inputs[n].source));
+          }
+          else if (this.inputs.length == 0) {
+              return `v${this.id} ${this.title}`;
+          }
+          else {
+              return `v${this.id} ${this.title}(${this.inputs.map(input => that.printInput(input.source)).join(", ")})`;
+          }
       }
       equals(that) {
           if (!that)
@@ -1439,6 +1626,25 @@
           if (this.id !== that.id)
               return false;
           return this.title === that.title;
+      }
+      parseOperationForCompactRepresentation(properties) {
+          try {
+              switch (this.title) {
+                  case Opcode.Constant:
+                      return new CompactOperationPrinter_Constant(properties);
+                  case Opcode.WordBinop:
+                      return new CompactOperationPrinter_WordBinop(properties);
+                  default:
+                      return null;
+              }
+          }
+          catch (e) {
+              if (e instanceof CompactOperationError) {
+                  console.error(e.message);
+                  return null;
+              }
+              throw e;
+          }
       }
   }
 
@@ -1452,12 +1658,12 @@
           this.nodes = new Array();
           this.visible = true;
       }
-      getHeight(showCustomData) {
+      getHeight(showCustomData, compactView) {
           if (this.collapsed)
               return this.labelBox.height + this.collapsedLabelBox.height;
-          if (this.showCustomData != showCustomData) {
+          if (this.showCustomData != showCustomData || this.compactView != compactView) {
               this.height = this.nodes.reduce((accumulator, node) => {
-                  return accumulator + node.getHeight(showCustomData);
+                  return accumulator + node.getHeight(showCustomData, compactView);
               }, this.labelBox.height);
               this.showCustomData = showCustomData;
           }
@@ -1475,7 +1681,7 @@
       }
       compressHeight() {
           if (this.collapsed) {
-              this.height = this.getHeight(null);
+              this.height = this.getHeight(null, false);
               this.showCustomData = null;
           }
       }
@@ -1532,6 +1738,14 @@
           this.rendered = false;
           this.parseDataFromJSON(dataJson, nodeMap, sources, inlinings);
       }
+      addCustomData(customDataPhase) {
+          this.customData?.addCustomData(customDataPhase);
+          const propertyName = "Properties";
+          if (customDataPhase.dataTarget === DataTarget.Nodes &&
+              customDataPhase.name === propertyName) {
+              this.data.nodes.forEach(operation => operation.propertiesChanged(customDataPhase));
+          }
+      }
       parseDataFromJSON(dataJson, nodeMap, sources, inlinings) {
           this.data = new TurboshaftGraphData();
           this.parseBlocksFromJSON(dataJson.blocks);
@@ -1579,7 +1793,7 @@
                       }
                   }
               }
-              const node = new TurboshaftGraphNode(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_effects);
+              const node = new TurboshaftGraphOperation(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_effects);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
@@ -1816,7 +2030,7 @@
                   case PhaseType.TurboshaftCustomData:
                       const castedCustomData = camelize(genericPhase);
                       const customDataPhase = new TurboshaftCustomDataPhase(castedCustomData.name, castedCustomData.dataTarget, castedCustomData.data);
-                      lastTurboshaftGraphPhase?.customData?.addCustomData(customDataPhase);
+                      lastTurboshaftGraphPhase?.addCustomData(customDataPhase);
                       break;
                   default:
                       throw "Unsupported phase type";
@@ -12072,6 +12286,12 @@
       set cacheLayout(value) {
           storageSetItem("toggle-cache-layout", value);
       }
+      get compactView() {
+          return storageGetItem("compact-view", true);
+      }
+      set compactView(value) {
+          storageSetItem("compact-view", value);
+      }
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
@@ -15327,6 +15547,7 @@
           this.addToggleImgInput("toggle-cache-layout", "toggle saving graph layout", this.state.cacheLayout, partial(this.toggleLayoutCachingAction, this));
           this.phaseName = data.name;
           this.addCustomDataSelect(data.customData);
+          this.addToggleImgInput("toggle-compact-view", "compact view", this.state.compactView, partial(this.toggleCompactViewAction, this));
           const adaptedSelection = this.createGraph(data, rememberedSelection);
           this.broker.addNodeHandler(this.nodeSelectionHandler);
           this.broker.addBlockHandler(this.blockSelectionHandler);
@@ -15607,7 +15828,7 @@
           this.visibleEdges
               .selectAll("path")
               .filter(edge => edge.target === block || edge.source === block)
-              .attr("d", edge => edge.generatePath(this.graph, this.nodesCustomDataShowed()));
+              .attr("d", edge => edge.generatePath(this.graph, this.nodesCustomDataShowed(), this.state.compactView));
       }
       updateVisibleBlocksAndEdges() {
           const view = this;
@@ -15679,7 +15900,7 @@
               .attr("rx", TURBOSHAFT_BLOCK_BORDER_RADIUS)
               .attr("ry", TURBOSHAFT_BLOCK_BORDER_RADIUS)
               .attr("width", block => block.getWidth())
-              .attr("height", block => block.getHeight(view.nodesCustomDataShowed()));
+              .attr("height", block => block.getHeight(view.nodesCustomDataShowed(), this.state?.compactView));
           newBlocks.each(function (block) {
               const svg = select(this);
               svg
@@ -15718,12 +15939,12 @@
               .classed("selected", block => view.state.blocksSelection.isSelected(block))
               .attr("transform", block => `translate(${block.x},${block.y})`)
               .select("rect")
-              .attr("height", block => block.getHeight(view.nodesCustomDataShowed()));
+              .attr("height", block => block.getHeight(view.nodesCustomDataShowed(), this.state?.compactView));
           newAndOldBlocks.select("image")
               .attr("xlink:href", block => `${iconsPath}collapse_${block.collapsed ? "down" : "up"}.svg`);
           newAndOldBlocks.select(".block-collapsed-label")
               .attr("visibility", block => block.collapsed ? "visible" : "hidden");
-          newAndOldEdges.attr("d", edge => edge.generatePath(view.graph, view.nodesCustomDataShowed()));
+          newAndOldEdges.attr("d", edge => edge.generatePath(view.graph, view.nodesCustomDataShowed(), view.state.compactView));
       }
       appendInlineNodes(svg, block) {
           const state = this.state;
@@ -15753,7 +15974,7 @@
                   .classed("inline-node-label", true)
                   .attr("dy", nodeY)
                   .append("tspan")
-                  .text(node.displayLabel)
+                  .html(node.buildOperationText(state.compactView))
                   .append("title")
                   .text(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
               nodeSvg
@@ -15779,7 +16000,7 @@
                   view.nodeSelectionHandler.select([node], undefined, false);
                   event.stopPropagation();
               });
-              nodeY += node.labelBox.height;
+              nodeY += node.getHeight(false, state.compactView);
               if (view.graph.customData.nodes.size > 0) {
                   const customData = view.graph.getCustomData(selectedCustomData, node.id, DataTarget.Nodes);
                   nodeSvg
@@ -15801,6 +16022,7 @@
           const view = this;
           const state = this.state;
           const showCustomData = this.nodesCustomDataShowed();
+          const customData = this.graph.customData;
           let totalHeight = 0;
           let blockId = 0;
           view.visibleNodes.each(function (node) {
@@ -15809,13 +16031,17 @@
                   blockId = node.block.id;
                   totalHeight = 0;
               }
-              totalHeight += node.getHeight(showCustomData);
+              totalHeight += node.getHeight(showCustomData, state?.compactView);
               const nodeY = showCustomData ? totalHeight - node.labelBox.height : totalHeight;
               nodeSvg
                   .select(".inline-node-label")
                   .classed("selected", node => state.selection.isSelected(node))
                   .attr("dy", nodeY)
-                  .attr("visibility", !node.block.collapsed ? "visible" : "hidden");
+                  .attr("visibility", !node.block.collapsed ? "visible" : "hidden")
+                  .select("tspan")
+                  .html(node.buildOperationText(state.compactView))
+                  .append("title")
+                  .text(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
               nodeSvg
                   .select(".inline-node-custom-data")
                   .attr("visibility", !node.block.collapsed && showCustomData ? "visible" : "hidden");
@@ -15849,7 +16075,7 @@
           }
           if (block.outputs.length > 0) {
               const x = block.getOutputX();
-              const y = block.getHeight(this.nodesCustomDataShowed()) + DEFAULT_NODE_BUBBLE_RADIUS;
+              const y = block.getHeight(this.nodesCustomDataShowed(), this.state?.compactView) + DEFAULT_NODE_BUBBLE_RADIUS;
               svg.append("circle")
                   .classed("filledBubbleStyle", true)
                   .attr("id", `ob,${block.id}`)
@@ -15864,7 +16090,7 @@
               if (components[0] === "ob") {
                   const from = view.graph.blockMap[components[1]];
                   const x = from.getOutputX();
-                  const y = from.getHeight(view.nodesCustomDataShowed()) + DEFAULT_NODE_BUBBLE_RADIUS;
+                  const y = from.getHeight(view.nodesCustomDataShowed(), view.state?.compactView) + DEFAULT_NODE_BUBBLE_RADIUS;
                   this.setAttribute("transform", `translate(${x},${y})`);
               }
           });
@@ -15885,8 +16111,8 @@
                       maxX = maxX ? Math.max(maxX, block.x + block.getWidth()) : block.x + block.getWidth();
                       minY = minY ? Math.min(minY, block.y) : block.y;
                       maxY = maxY
-                          ? Math.max(maxY, block.y + block.getHeight(this.nodesCustomDataShowed()))
-                          : block.y + block.getHeight(this.nodesCustomDataShowed());
+                          ? Math.max(maxY, block.y + block.getHeight(this.nodesCustomDataShowed(), this.state?.compactView))
+                          : block.y + block.getHeight(this.nodesCustomDataShowed(), this.state?.compactView);
                   }
                   if (blockHasSelection) {
                       hasSelection = true;
@@ -15975,13 +16201,22 @@
           view.viewSelection();
           view.focusOnSvg();
       }
+      toggleCompactViewAction(view) {
+          view.state.compactView = !view.state.compactView;
+          const element = document.getElementById("toggle-compact-view");
+          element.classList.toggle("button-input-toggled", view.state.compactView);
+          const extent = view.graph.redetermineGraphBoundingBox(view.state.showCustomData);
+          view.panZoom.translateExtent(extent);
+          view.adaptiveUpdateGraphVisibility();
+          view.updateInlineNodesCustomData();
+      }
       toggleCustomDataAction(view) {
           view.state.showCustomData = !view.state.showCustomData;
           const ranksMaxBlockHeight = new Array();
           for (const block of view.graph.blocks()) {
               ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.collapsed
                   ? block.height
-                  : block.getHeight(view.nodesCustomDataShowed()));
+                  : block.getHeight(view.nodesCustomDataShowed(), this.state?.compactView));
           }
           for (const block of view.graph.blocks()) {
               block.y = ranksMaxBlockHeight.slice(1, block.rank).reduce((accumulator, current) => {
@@ -17258,7 +17493,7 @@
           if ((first instanceof GraphNode && second instanceof GraphNode)) {
               return first.equals(second);
           }
-          else if (first instanceof TurboshaftGraphNode && second instanceof TurboshaftGraphNode) {
+          else if (first instanceof TurboshaftGraphOperation && second instanceof TurboshaftGraphOperation) {
               return first.equals(second);
           }
           return first.getHistoryLabel() == second.getHistoryLabel();
