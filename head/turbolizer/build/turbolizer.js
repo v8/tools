@@ -1389,6 +1389,7 @@
   (function (Opcode) {
       Opcode["Constant"] = "Constant";
       Opcode["WordBinop"] = "WordBinop";
+      Opcode["Comparison"] = "Comparison";
       Opcode["Shift"] = "Shift";
       Opcode["Load"] = "Load";
       Opcode["Store"] = "Store";
@@ -1683,12 +1684,56 @@
           return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
       }
   }
+  var Comparison_Kind;
+  (function (Comparison_Kind) {
+      Comparison_Kind["Equal"] = "Equal";
+      Comparison_Kind["SignedLessThan"] = "SignedLessThan";
+      Comparison_Kind["SignedLessThanOrEqual"] = "SignedLessThanOrEqual";
+      Comparison_Kind["UnsignedLessThan"] = "UnsignedLessThan";
+      Comparison_Kind["UnsignedLessThanOrEqual"] = "UnsignedLessThanOrEqual";
+  })(Comparison_Kind || (Comparison_Kind = {}));
+  class CompactOperationPrinter_Comparison extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          const options = this.parseOptions(properties, 2);
+          this.kind = toEnum(Comparison_Kind, options[0]);
+          this.rep = toEnum(RegisterRepresentation, options[1]);
+      }
+      Print(id, input) {
+          let symbol;
+          let subscript = "";
+          switch (this.kind) {
+              case Comparison_Kind.Equal:
+                  symbol = "==";
+                  break;
+              case Comparison_Kind.SignedLessThan:
+                  symbol = "<";
+                  subscript = "s";
+                  break;
+              case Comparison_Kind.SignedLessThanOrEqual:
+                  symbol = "<=";
+                  subscript = "s";
+                  break;
+              case Comparison_Kind.UnsignedLessThan:
+                  symbol = "<";
+                  subscript = "u";
+                  break;
+              case Comparison_Kind.UnsignedLessThanOrEqual:
+                  symbol = "<=";
+                  subscript = "u";
+                  break;
+          }
+          if (subscript.length > 0)
+              subscript += ",";
+          subscript += rrString(this.rep);
+          return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
+      }
+  }
   class CompactOperationPrinter_Load extends CompactOperationPrinter {
       constructor(operation, properties) {
           super(operation);
           this.maybeUnaligned = false;
           this.withTrapHandler = false;
-          this.trapOnNull = false;
           this.elementSizeLog2 = 0;
           this.offset = 0;
           const options = this.parseOptions(properties);
@@ -1722,10 +1767,10 @@
               offsetStr = ` + ${this.offset}`;
           else if (this.offset < 0)
               offsetStr = ` - ${-this.offset}`;
-          if (this.GetInputCount() == 1) {
+          if (this.GetInputCount() === 1) {
               return prefix + ` [${input(0)}${this.sub(this.taggedBase ? "t" : "r")}${offsetStr}]${this.sub(mrString(this.loadedRep))}`;
           }
-          else if (this.GetInputCount() == 2) {
+          else if (this.GetInputCount() === 2) {
               let indexStr = `+ ${input(1)}`;
               if (this.elementSizeLog2 > 0)
                   indexStr += `*${2 ** this.elementSizeLog2}`;
@@ -1733,6 +1778,72 @@
           }
           else {
               throw new CompactOperationError("Unexpected input count in Load operation");
+          }
+      }
+  }
+  var WriteBarrierKind;
+  (function (WriteBarrierKind) {
+      WriteBarrierKind["NoWriteBarrier"] = "NoWriteBarrier";
+      WriteBarrierKind["AssertNoWriteBarrier"] = "AssertNoWriteBarrier";
+      WriteBarrierKind["MapWriteBarrier"] = "MapWriteBarrier";
+      WriteBarrierKind["PointerWriteBarrier"] = "PointerWriteBarrier";
+      WriteBarrierKind["IndirectPointerWriteBarrier"] = "IndirectPointerWriteBarrier";
+      WriteBarrierKind["EphemeronKeyWriteBarrier"] = "EphemeronKeyWriteBarrier";
+      WriteBarrierKind["FullWriteBarrier"] = "FullWriteBarrier";
+  })(WriteBarrierKind || (WriteBarrierKind = {}));
+  class CompactOperationPrinter_Store extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          this.maybeUnaligned = false;
+          this.withTrapHandler = false;
+          this.elementSizeLog2 = 0;
+          this.offset = 0;
+          this.maybeInitializingOrTransitioning = false;
+          const options = this.parseOptions(properties);
+          let idx = 0;
+          this.taggedBase = chooseOption(options[idx++], undefined, "tagged base", "raw") === 0;
+          if (chooseOption(options[idx], 1, "unaligned") === 0) {
+              this.maybeUnaligned = true;
+              ++idx;
+          }
+          if (chooseOption(options[idx], 1, "protected") === 0) {
+              this.withTrapHandler = true;
+              ++idx;
+          }
+          this.storedRep = toEnum(MemoryRepresentation, options[idx++]);
+          this.writeBarrier = toEnum(WriteBarrierKind, options[idx++]);
+          if (idx < options.length && options[idx].startsWith("element size: 2^")) {
+              this.elementSizeLog2 = parseInt(options[idx].substring("element size: 2^".length));
+              ++idx;
+          }
+          if (idx < options.length && options[idx].startsWith("offset: ")) {
+              this.offset = parseInt(options[idx++].substring("offset: ".length));
+          }
+          if (idx < options.length) {
+              if (options[idx] !== "initializing") {
+                  throw new CompactOperationError(`Option "${options[idx]}" expected to be "initializing`);
+              }
+              this.maybeInitializingOrTransitioning = true;
+          }
+      }
+      Print(id, input) {
+          let prefix = `${id}: [${input(0)}${this.sub(this.taggedBase ? "t" : "r")}`;
+          let offsetStr = "";
+          if (this.offset > 0)
+              offsetStr = ` + ${this.offset}`;
+          else if (this.offset < 0)
+              offsetStr = ` - ${-this.offset}`;
+          if (this.GetInputCount() === 2) {
+              return prefix + `${offsetStr}]${this.sub(mrString(this.storedRep))} = ${input(1)}`;
+          }
+          else if (this.GetInputCount() === 3) {
+              let indexStr = `+ ${input(1)}`;
+              if (this.elementSizeLog2 > 0)
+                  indexStr += `*${2 ** this.elementSizeLog2}`;
+              return prefix + `${indexStr}${offsetStr}]${this.sub(mrString(this.storedRep))}] = ${input(1)}`;
+          }
+          else {
+              throw new CompactOperationError("Unexpected input count in Store operation");
           }
       }
   }
@@ -1833,10 +1944,14 @@
                       return new CompactOperationPrinter_Constant(this, properties);
                   case Opcode.WordBinop:
                       return new CompactOperationPrinter_WordBinop(this, properties);
+                  case Opcode.Comparison:
+                      return new CompactOperationPrinter_Comparison(this, properties);
                   case Opcode.Shift:
                       return new CompactOperationPrinter_Shift(this, properties);
                   case Opcode.Load:
                       return new CompactOperationPrinter_Load(this, properties);
+                  case Opcode.Store:
+                      return new CompactOperationPrinter_Store(this, properties);
                   default:
                       return null;
               }
