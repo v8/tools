@@ -1389,12 +1389,91 @@
   (function (Opcode) {
       Opcode["Constant"] = "Constant";
       Opcode["WordBinop"] = "WordBinop";
+      Opcode["Shift"] = "Shift";
+      Opcode["Load"] = "Load";
+      Opcode["Store"] = "Store";
   })(Opcode || (Opcode = {}));
+  var RegisterRepresentation;
+  (function (RegisterRepresentation) {
+      RegisterRepresentation["Word32"] = "Word32";
+      RegisterRepresentation["Word64"] = "Word64";
+      RegisterRepresentation["Float32"] = "Float32";
+      RegisterRepresentation["Float64"] = "Float64";
+      RegisterRepresentation["Tagged"] = "Tagged";
+      RegisterRepresentation["Compressed"] = "Compressed";
+      RegisterRepresentation["Simd128"] = "Simd128";
+      RegisterRepresentation["Simd256"] = "Simd256";
+  })(RegisterRepresentation || (RegisterRepresentation = {}));
+  function rrString(rep) {
+      switch (rep) {
+          case RegisterRepresentation.Word32: return "w32";
+          case RegisterRepresentation.Word64: return "w64";
+          case RegisterRepresentation.Float32: return "f32";
+          case RegisterRepresentation.Float64: return "f64";
+          case RegisterRepresentation.Tagged: return "t";
+          case RegisterRepresentation.Compressed: return "c";
+          case RegisterRepresentation.Simd128: return "s128";
+          case RegisterRepresentation.Simd256: return "s256";
+      }
+  }
   var WordRepresentation;
   (function (WordRepresentation) {
       WordRepresentation["Word32"] = "Word32";
       WordRepresentation["Word64"] = "Word64";
   })(WordRepresentation || (WordRepresentation = {}));
+  function wrString(rep) {
+      switch (rep) {
+          case WordRepresentation.Word32: return "w32";
+          case WordRepresentation.Word64: return "w64";
+      }
+  }
+  var MemoryRepresentation;
+  (function (MemoryRepresentation) {
+      MemoryRepresentation["Int8"] = "Int8";
+      MemoryRepresentation["Uint8"] = "Uint8";
+      MemoryRepresentation["Int16"] = "Int16";
+      MemoryRepresentation["Uint16"] = "Uint16";
+      MemoryRepresentation["Int32"] = "Int32";
+      MemoryRepresentation["Uint32"] = "Uint32";
+      MemoryRepresentation["Int64"] = "Int64";
+      MemoryRepresentation["Uint64"] = "Uint64";
+      MemoryRepresentation["Float16"] = "Float16";
+      MemoryRepresentation["Float32"] = "Float32";
+      MemoryRepresentation["Float64"] = "Float64";
+      MemoryRepresentation["AnyTagged"] = "AnyTagged";
+      MemoryRepresentation["TaggedPointer"] = "TaggedPointer";
+      MemoryRepresentation["TaggedSigned"] = "TaggedSigned";
+      MemoryRepresentation["UncompressedTaggedPointer"] = "UncompressedTaggedPointer";
+      MemoryRepresentation["ProtectedPointer"] = "ProtectedPointer";
+      MemoryRepresentation["IndirectPointer"] = "IndirectPointer";
+      MemoryRepresentation["SandboxedPointer"] = "SandboxedPointer";
+      MemoryRepresentation["Simd128"] = "Simd128";
+      MemoryRepresentation["Simd256"] = "Simd256";
+  })(MemoryRepresentation || (MemoryRepresentation = {}));
+  function mrString(rep) {
+      switch (rep) {
+          case MemoryRepresentation.Int8: return "i8";
+          case MemoryRepresentation.Uint8: return "u8";
+          case MemoryRepresentation.Int16: return "i16";
+          case MemoryRepresentation.Uint16: return "u16";
+          case MemoryRepresentation.Int32: return "i32";
+          case MemoryRepresentation.Uint32: return "u32";
+          case MemoryRepresentation.Int64: return "i64";
+          case MemoryRepresentation.Uint64: return "u64";
+          case MemoryRepresentation.Float16: return "f16";
+          case MemoryRepresentation.Float32: return "f32";
+          case MemoryRepresentation.Float64: return "f64";
+          case MemoryRepresentation.AnyTagged: return "t";
+          case MemoryRepresentation.TaggedPointer: return "tp";
+          case MemoryRepresentation.TaggedSigned: return "ts";
+          case MemoryRepresentation.UncompressedTaggedPointer: return "utp";
+          case MemoryRepresentation.ProtectedPointer: return "pp";
+          case MemoryRepresentation.IndirectPointer: return "ip";
+          case MemoryRepresentation.SandboxedPointer: return "sp";
+          case MemoryRepresentation.Simd128: return "s128";
+          case MemoryRepresentation.Simd256: return "s256";
+      }
+  }
   function toEnum(type, option) {
       for (const key of Object.keys(type)) {
           if (option === type[key]) {
@@ -1404,13 +1483,29 @@
       }
       throw new CompactOperationError(`Option "${option}" not recognized as ${type}`);
   }
+  function chooseOption(option, otherwise, ...candidates) {
+      for (var i = 0; i < candidates.length; ++i) {
+          if (option === candidates[i])
+              return i;
+      }
+      if (otherwise !== undefined)
+          return otherwise;
+      throw new CompactOperationError(`Option "${option}" is unexpected. Expecing any of: ${candidates}`);
+  }
   class CompactOperationError {
       constructor(message) {
           this.message = message;
       }
   }
   class CompactOperationPrinter {
+      constructor(operation) {
+          this.operation = operation;
+      }
       IsFullyInlined() { return false; }
+      PrintInLine() { return ""; }
+      GetInputCount() {
+          return this.operation.inputs.length;
+      }
       parseOptions(properties, expectedCount = -1) {
           if (!properties.startsWith("[") || !properties.endsWith("]")) {
               throw new CompactOperationError(`Unexpected options format: "${properties}"`);
@@ -1435,8 +1530,8 @@
       Constant_Kind["Word64"] = "word64";
   })(Constant_Kind || (Constant_Kind = {}));
   class CompactOperationPrinter_Constant extends CompactOperationPrinter {
-      constructor(properties) {
-          super();
+      constructor(operation, properties) {
+          super(operation);
           const options = this.parseOptions(properties, 1);
           // Format of {options[0]} is "kind: value".
           let [key, value] = options[0].split(":").map(x => x.trim());
@@ -1454,6 +1549,65 @@
           }
       }
   }
+  var Shift_Kind;
+  (function (Shift_Kind) {
+      Shift_Kind["ShiftRightArithmeticShiftOutZeros"] = "ShiftRightArithmeticShiftOutZeros";
+      Shift_Kind["ShiftRightArithmetic"] = "ShiftRightArithmetic";
+      Shift_Kind["ShiftRightLogical"] = "ShiftRightLogical";
+      Shift_Kind["ShiftLeft"] = "ShiftLeft";
+      Shift_Kind["RotateRight"] = "RotateRight";
+      Shift_Kind["RotateLeft"] = "RotateLeft";
+  })(Shift_Kind || (Shift_Kind = {}));
+  class CompactOperationPrinter_Shift extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          const options = this.parseOptions(properties, 2);
+          this.kind = toEnum(Shift_Kind, options[0]);
+          this.rep = toEnum(WordRepresentation, options[1]);
+      }
+      Print(id, input) {
+          let symbol;
+          let subscript = "";
+          switch (this.kind) {
+              case Shift_Kind.ShiftRightArithmeticShiftOutZeros:
+                  symbol = ">>";
+                  subscript = "a0";
+                  break;
+              case Shift_Kind.ShiftRightArithmetic:
+                  symbol = ">>";
+                  subscript = "a";
+                  break;
+              case Shift_Kind.ShiftRightLogical:
+                  symbol = ">>";
+                  subscript = "l";
+                  break;
+              case Shift_Kind.ShiftLeft:
+                  symbol = "<<";
+                  subscript = "l";
+                  break;
+              case Shift_Kind.RotateRight:
+                  symbol = ">>";
+                  subscript = "ror";
+                  break;
+              case Shift_Kind.RotateLeft:
+                  symbol = "<<";
+                  subscript = "rol";
+                  break;
+          }
+          if (subscript.length > 0)
+              subscript += ",";
+          switch (this.rep) {
+              case WordRepresentation.Word32:
+                  subscript += "w32";
+                  break;
+              case WordRepresentation.Word64:
+                  subscript += "w64";
+                  break;
+          }
+          return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
+      }
+      PrintInLine() { return ""; }
+  }
   var WordBinop_Kind;
   (function (WordBinop_Kind) {
       WordBinop_Kind["Add"] = "Add";
@@ -1470,8 +1624,8 @@
       WordBinop_Kind["UnsignedMod"] = "UnsignedMod";
   })(WordBinop_Kind || (WordBinop_Kind = {}));
   class CompactOperationPrinter_WordBinop extends CompactOperationPrinter {
-      constructor(properties) {
-          super();
+      constructor(operation, properties) {
+          super(operation);
           const options = this.parseOptions(properties, 2);
           this.kind = toEnum(WordBinop_Kind, options[0]);
           this.rep = toEnum(WordRepresentation, options[1]);
@@ -1525,17 +1679,62 @@
           }
           if (subscript.length > 0)
               subscript += ",";
-          switch (this.rep) {
-              case WordRepresentation.Word32:
-                  subscript += "w32";
-                  break;
-              case WordRepresentation.Word64:
-                  subscript += "w64";
-                  break;
-          }
+          subscript += wrString(this.rep);
           return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
       }
-      PrintInLine() { return ""; }
+  }
+  class CompactOperationPrinter_Load extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          this.maybeUnaligned = false;
+          this.withTrapHandler = false;
+          this.trapOnNull = false;
+          this.elementSizeLog2 = 0;
+          this.offset = 0;
+          const options = this.parseOptions(properties);
+          let idx = 0;
+          this.taggedBase = chooseOption(options[idx++], undefined, "tagged base", "raw") === 0;
+          if (chooseOption(options[idx], 1, "unaligned") === 0) {
+              this.maybeUnaligned = true;
+              ++idx;
+          }
+          if (chooseOption(options[idx], 1, "protected") === 0) {
+              this.withTrapHandler = true;
+              ++idx;
+          }
+          this.loadedRep = toEnum(MemoryRepresentation, options[idx++]);
+          this.resultRep = toEnum(RegisterRepresentation, options[idx++]);
+          if (idx < options.length && options[idx].startsWith("element size: 2^")) {
+              this.elementSizeLog2 = parseInt(options[idx].substring("element size: 2^".length));
+              ++idx;
+          }
+          if (idx < options.length) {
+              if (!options[idx].startsWith("offset: ")) {
+                  throw new CompactOperationError(`Option "${options[idx]}" expected to start with "offset: "`);
+              }
+              this.offset = parseInt(options[idx].substring("offset: ".length));
+          }
+      }
+      Print(id, input) {
+          const prefix = `v${id} =${this.sub(rrString(this.resultRep))}`;
+          let offsetStr = "";
+          if (this.offset > 0)
+              offsetStr = ` + ${this.offset}`;
+          else if (this.offset < 0)
+              offsetStr = ` - ${-this.offset}`;
+          if (this.GetInputCount() == 1) {
+              return prefix + ` [${input(0)}${this.sub(this.taggedBase ? "t" : "r")}${offsetStr}]${this.sub(mrString(this.loadedRep))}`;
+          }
+          else if (this.GetInputCount() == 2) {
+              let indexStr = `+ ${input(1)}`;
+              if (this.elementSizeLog2 > 0)
+                  indexStr += `*${2 ** this.elementSizeLog2}`;
+              return prefix + ` [${input(0)}${this.sub(this.taggedBase ? "t" : "r")}${indexStr}${offsetStr}]${this.sub(mrString(this.loadedRep))}`;
+          }
+          else {
+              throw new CompactOperationError("Unexpected input count in Load operation");
+          }
+      }
   }
   class TurboshaftGraphOperation extends Node$1 {
       constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects) {
@@ -1631,9 +1830,13 @@
           try {
               switch (this.title) {
                   case Opcode.Constant:
-                      return new CompactOperationPrinter_Constant(properties);
+                      return new CompactOperationPrinter_Constant(this, properties);
                   case Opcode.WordBinop:
-                      return new CompactOperationPrinter_WordBinop(properties);
+                      return new CompactOperationPrinter_WordBinop(this, properties);
+                  case Opcode.Shift:
+                      return new CompactOperationPrinter_Shift(this, properties);
+                  case Opcode.Load:
+                      return new CompactOperationPrinter_Load(this, properties);
                   default:
                       return null;
               }
@@ -15303,7 +15506,7 @@
               this.minGraphX = Math.min(this.minGraphX, block.x);
               this.maxGraphNodeX = Math.max(this.maxGraphNodeX, block.x + block.getWidth());
               this.minGraphY = Math.min(this.minGraphY, block.y - NODE_INPUT_WIDTH);
-              this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showCustomData)
+              this.maxGraphY = Math.max(this.maxGraphY, block.y + block.getHeight(showCustomData, false)
                   + NODE_INPUT_WIDTH);
           }
           this.maxGraphX = this.maxGraphNodeX + this.maxBackEdgeNumber * MINIMUM_EDGE_SEPARATION;
@@ -15333,7 +15536,7 @@
       getRanksMaxBlockHeight(showCustomData) {
           const ranksMaxBlockHeight = new Array();
           for (const block of this.blocks()) {
-              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.getHeight(showCustomData));
+              ranksMaxBlockHeight[block.rank] = Math.max(ranksMaxBlockHeight[block.rank] ?? 0, block.getHeight(showCustomData, false));
           }
           return ranksMaxBlockHeight;
       }
