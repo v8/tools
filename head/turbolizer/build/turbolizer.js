@@ -1840,7 +1840,7 @@
               let indexStr = `+ ${input(1)}`;
               if (this.elementSizeLog2 > 0)
                   indexStr += `*${2 ** this.elementSizeLog2}`;
-              return prefix + `${indexStr}${offsetStr}]${this.sub(mrString(this.storedRep))}] = ${input(1)}`;
+              return prefix + `${indexStr}${offsetStr}]${this.sub(mrString(this.storedRep))} = ${input(2)}`;
           }
           else {
               throw new CompactOperationError("Unexpected input count in Store operation");
