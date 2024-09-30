@@ -2,6 +2,8 @@
   'use strict';
 
   // Copyright 2014 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   const MAX_RANK_SENTINEL = 0;
   const BEZIER_CONSTANT = 0.3;
   const TURBOSHAFT_NODE_X_INDENT = 25;
@@ -298,7 +300,9 @@
   }
 
   // Copyright 2014 the V8 project authors. All rights reserved.
-  class Node$1 {
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  let Node$1 = class Node {
       constructor(id, displayLabel) {
           this.id = id;
           this.displayLabel = displayLabel;
@@ -378,7 +382,7 @@
       toString() {
           return `N${this.id}`;
       }
-  }
+  };
   var OutputVisibilityType;
   (function (OutputVisibilityType) {
       OutputVisibilityType[OutputVisibilityType["NoVisibleNodes"] = 0] = "NoVisibleNodes";
@@ -387,6 +391,8 @@
   })(OutputVisibilityType || (OutputVisibilityType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class GraphNode extends Node$1 {
       constructor(nodeLabel) {
           super(nodeLabel.id, nodeLabel.getDisplayLabel());
@@ -489,6 +495,8 @@
   }
 
   // Copyright 2014 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class Edge {
       constructor(target, index, source) {
           this.target = target;
@@ -550,6 +558,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class GraphEdge extends Edge {
       constructor(target, index, source, type) {
           super(target, index, source);
@@ -561,6 +571,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class InstructionsPhase extends Phase {
       constructor(name = "") {
           super(name, PhaseType.Instructions);
@@ -890,6 +902,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class GraphPhase extends Phase {
       constructor(name, dataJson, nodeMap, sources, inlinings) {
           super(name, PhaseType.Graph);
@@ -988,6 +1002,8 @@
   })(GraphStateType || (GraphStateType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class DisassemblyPhase extends Phase {
       constructor(name, data, blockIdToOffsetJson) {
           super(name, PhaseType.Disassembly);
@@ -1016,6 +1032,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SchedulePhase extends Phase {
       constructor(name, dataJson) {
           super(name, PhaseType.Schedule);
@@ -1133,6 +1151,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SequencePhase extends Phase {
       constructor(name, blocksJSON, registerAllocationJSON) {
           super(name, PhaseType.Sequence);
@@ -1362,6 +1382,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftCustomDataPhase extends Phase {
       constructor(name, dataTarget, dataJSON) {
           super(name, PhaseType.TurboshaftCustomData);
@@ -1384,6 +1406,8 @@
   })(DataTarget || (DataTarget = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   const SUBSCRIPT_DY = "50px";
   var Opcode;
   (function (Opcode) {
@@ -1967,6 +1991,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraphBlock extends Node$1 {
       constructor(id, type, deferred, predecessors) {
           super(id, `${type} ${id}${deferred ? " (deferred)" : ""}`);
@@ -2028,6 +2054,8 @@
   })(TurboshaftGraphBlockType || (TurboshaftGraphBlockType = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraphEdge extends Edge {
       constructor(target, index, source) {
           super(target, index, source);
@@ -2042,6 +2070,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraphPhase extends Phase {
       constructor(name, dataJson, nodeMap, sources, inlinings) {
           super(name, PhaseType.TurboshaftGraph);
@@ -2196,6 +2226,8 @@
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SourceResolver {
       constructor() {
           // Maps source ids to source objects.
@@ -2935,6 +2967,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SelectionMapsHandler {
       constructor(view, idToHtmlElementsMap) {
           this.view = view;
@@ -3223,6 +3257,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   const toolboxHTML$1 = `<div id="disassembly-toolbox">
     <form>
       <label><input id="show-instruction-address" type="checkbox" name="instruction-address">Show addresses</label>
@@ -11873,6 +11909,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class Graph extends MovableContainer {
       constructor(graphPhase) {
           super(graphPhase);
@@ -11942,6 +11980,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class LayoutOccupation {
       constructor(graph) {
           this.graph = graph;
@@ -12138,6 +12178,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class GraphLayout {
       constructor(graph) {
           this.graph = graph;
@@ -12354,6 +12396,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class MovableView extends PhaseView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer);
@@ -12640,6 +12684,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class GraphView extends MovableView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
@@ -13292,6 +13338,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class ScheduleView extends TextView {
       constructor(parent, broker) {
           super(parent, broker);
@@ -13463,6 +13511,8 @@
   }
 
   // Copyright 2020 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   // This class holds references to the HTMLElements that represent each cell.
   class Grid {
       constructor(canvas) {
@@ -15192,6 +15242,8 @@
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class SequenceView extends TextView {
       constructor(parent, broker) {
           super(parent, broker);
@@ -15569,6 +15621,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraph extends MovableContainer {
       constructor(graphPhase) {
           super(graphPhase);
@@ -15658,6 +15712,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraphLayout {
       constructor(graph) {
           this.graph = graph;
@@ -15830,6 +15886,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class TurboshaftGraphView extends MovableView {
       constructor(idOrContainer, broker, showPhaseByName, toolbox) {
           super(idOrContainer, broker, showPhaseByName, toolbox);
@@ -16598,6 +16656,8 @@
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   const toolboxHTML = `
 <div class="graph-toolbox">
   <select id="phase-select">
@@ -16749,6 +16809,8 @@
   }
 
   // Copyright 2015 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class CodeView extends View {
       constructor(parent, broker, sourceFunction, sourceResolver, codeMode) {
           super(parent);
@@ -17094,6 +17156,8 @@
   }
 
   // Copyright 2019 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class Snapper {
       constructor(resizer) {
           this.resizer = resizer;
@@ -17445,6 +17509,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class InfoView extends View {
       constructor(idOrContainer) {
           super(idOrContainer);
@@ -17460,6 +17526,8 @@
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class HistoryView extends View {
       constructor(id, broker, sourceResolver, showPhaseByName) {
           super(id);
@@ -17908,6 +17976,8 @@
   })(HistoryChange || (HistoryChange = {}));
 
   // Copyright 2022 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   class BytecodeSourceView extends View {
       constructor(parent, broker, sourceFunction, sourceResolver, codeMode) {
           super(parent);
@@ -18044,6 +18114,8 @@
   }
 
   // Copyright 2017 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
   window.onload = function () {
       let multiview;
       let disassemblyView;
