@@ -1417,6 +1417,7 @@
       Opcode["Shift"] = "Shift";
       Opcode["Load"] = "Load";
       Opcode["Store"] = "Store";
+      Opcode["DeoptimizeIf"] = "DeoptimizeIf";
   })(Opcode || (Opcode = {}));
   var RegisterRepresentation;
   (function (RegisterRepresentation) {
@@ -1573,6 +1574,17 @@
               case Constant_Kind.Word64: return `${this.value}${this.sub("w64")}`;
           }
       }
+  }
+  class CompactOperationPrinter_DeoptimizeIf extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          const options = this.parseOptions(properties);
+          this.negated = options[0] == "negated";
+      }
+      Print(n, input) {
+          return `DeoptimizeIf(${this.negated ? "!" : ""}${input(0)}, ${input(1)})`;
+      }
+      PrintInLine() { return ""; }
   }
   var Shift_Kind;
   (function (Shift_Kind) {
@@ -1976,6 +1988,8 @@
                       return new CompactOperationPrinter_Load(this, properties);
                   case Opcode.Store:
                       return new CompactOperationPrinter_Store(this, properties);
+                  case Opcode.DeoptimizeIf:
+                      return new CompactOperationPrinter_DeoptimizeIf(this, properties);
                   default:
                       return null;
               }
