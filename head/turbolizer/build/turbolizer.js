@@ -1581,8 +1581,8 @@
           const options = this.parseOptions(properties);
           this.negated = options[0] == "negated";
       }
-      Print(n, input) {
-          return `DeoptimizeIf(${this.negated ? "!" : ""}${input(0)}, ${input(1)})`;
+      Print(id, input) {
+          return `${id}: DeoptimizeIf(${this.negated ? "!" : ""}${input(0)}, ${input(1)})`;
       }
       PrintInLine() { return ""; }
   }
