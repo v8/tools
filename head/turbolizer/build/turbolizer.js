@@ -1418,7 +1418,15 @@
       Opcode["Load"] = "Load";
       Opcode["Store"] = "Store";
       Opcode["DeoptimizeIf"] = "DeoptimizeIf";
+      Opcode["Goto"] = "Goto";
+      Opcode["Branch"] = "Branch";
   })(Opcode || (Opcode = {}));
+  var BranchHint;
+  (function (BranchHint) {
+      BranchHint["None"] = "None";
+      BranchHint["True"] = "True";
+      BranchHint["False"] = "False";
+  })(BranchHint || (BranchHint = {}));
   var RegisterRepresentation;
   (function (RegisterRepresentation) {
       RegisterRepresentation["Word32"] = "Word32";
@@ -1430,6 +1438,14 @@
       RegisterRepresentation["Simd128"] = "Simd128";
       RegisterRepresentation["Simd256"] = "Simd256";
   })(RegisterRepresentation || (RegisterRepresentation = {}));
+  function escapeHTML(str) {
+      return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+  }
   function rrString(rep) {
       switch (rep) {
           case RegisterRepresentation.Word32: return "w32";
@@ -1554,6 +1570,8 @@
   (function (Constant_Kind) {
       Constant_Kind["Word32"] = "word32";
       Constant_Kind["Word64"] = "word64";
+      Constant_Kind["HeapObject"] = "heap object";
+      Constant_Kind["External"] = "external";
   })(Constant_Kind || (Constant_Kind = {}));
   class CompactOperationPrinter_Constant extends CompactOperationPrinter {
       constructor(operation, properties) {
@@ -1563,15 +1581,66 @@
           let [key, value] = options[0].split(":").map(x => x.trim());
           this.kind = toEnum(Constant_Kind, key);
           this.value = value;
+          // We try to strip the address away if we have something else.
+          let index = this.value.search(/\s|</);
+          if (this.value.startsWith("0x") && index > 0) {
+              this.value = this.value.substring(index);
+          }
       }
       IsFullyInlined() {
-          return true;
+          return this.kind == Constant_Kind.Word32 || this.kind == Constant_Kind.Word64;
       }
-      Print(n, input) { return ""; }
+      Print(id, input) {
+          switch (this.kind) {
+              case Constant_Kind.Word32:
+              case Constant_Kind.Word64:
+                  // Those are fully inlined.
+                  return "";
+              case Constant_Kind.HeapObject:
+              case Constant_Kind.External:
+                  return `v${id} = ${escapeHTML(this.value)}`;
+          }
+      }
       PrintInLine() {
           switch (this.kind) {
               case Constant_Kind.Word32: return `${this.value}${this.sub("w32")}`;
               case Constant_Kind.Word64: return `${this.value}${this.sub("w64")}`;
+              case Constant_Kind.HeapObject:
+              case Constant_Kind.External:
+                  // Not inlined.
+                  return "";
+          }
+      }
+  }
+  class CompactOperationPrinter_Goto_Branch extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          this.opcode = toEnum(Opcode, operation.title);
+          if (this.opcode == Opcode.Goto) {
+              const options = this.parseOptions(properties, 2);
+              this.true_block = options[0];
+              // options[1] is back_edge flag and we don't use it here.
+          }
+          else {
+              const options = this.parseOptions(properties, 3);
+              this.true_block = options[0];
+              this.false_block = options[1];
+              this.hint = toEnum(BranchHint, options[2]);
+          }
+      }
+      Print(id, input) {
+          if (this.opcode == Opcode.Goto) {
+              return `${id}: Goto ${this.true_block}`;
+          }
+          else {
+              switch (this.hint) {
+                  case BranchHint.None:
+                      return `${id}: Branch(${input(0)}) ${this.true_block}, ${this.false_block}`;
+                  case BranchHint.True:
+                      return `${id}: Branch(${input(0)}) [${this.true_block}], ${this.false_block}`;
+                  case BranchHint.False:
+                      return `${id}: Branch(${input(0)}) ${this.true_block}, [${this.false_block}]`;
+              }
           }
       }
   }
@@ -1584,7 +1653,6 @@
       Print(id, input) {
           return `${id}: DeoptimizeIf(${this.negated ? "!" : ""}${input(0)}, ${input(1)})`;
       }
-      PrintInLine() { return ""; }
   }
   var Shift_Kind;
   (function (Shift_Kind) {
@@ -1643,7 +1711,6 @@
           }
           return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
       }
-      PrintInLine() { return ""; }
   }
   var WordBinop_Kind;
   (function (WordBinop_Kind) {
@@ -1990,6 +2057,9 @@
                       return new CompactOperationPrinter_Store(this, properties);
                   case Opcode.DeoptimizeIf:
                       return new CompactOperationPrinter_DeoptimizeIf(this, properties);
+                  case Opcode.Goto:
+                  case Opcode.Branch:
+                      return new CompactOperationPrinter_Goto_Branch(this, properties);
                   default:
                       return null;
               }
