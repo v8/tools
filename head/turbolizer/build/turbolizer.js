@@ -3788,7 +3788,7 @@
 
   function dispatch() {
     for (var i = 0, n = arguments.length, _ = {}, t; i < n; ++i) {
-      if (!(t = arguments[i] + "") || (t in _)) throw new Error("illegal type: " + t);
+      if (!(t = arguments[i] + "") || (t in _) || /[\s.]/.test(t)) throw new Error("illegal type: " + t);
       _[t] = [];
     }
     return new Dispatch(_);
@@ -3954,31 +3954,14 @@
     return new Selection$1(subgroups, parents);
   }
 
-  var matcher = function(selector) {
+  function matcher(selector) {
     return function() {
       return this.matches(selector);
     };
-  };
-
-  if (typeof document !== "undefined") {
-    var element$1 = document.documentElement;
-    if (!element$1.matches) {
-      var vendorMatches = element$1.webkitMatchesSelector
-          || element$1.msMatchesSelector
-          || element$1.mozMatchesSelector
-          || element$1.oMatchesSelector;
-      matcher = function(selector) {
-        return function() {
-          return vendorMatches.call(this, selector);
-        };
-      };
-    }
   }
 
-  var matcher$1 = matcher;
-
   function selection_filter(match) {
-    if (typeof match !== "function") match = matcher$1(match);
+    if (typeof match !== "function") match = matcher(match);
 
     for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) {
       for (var group = groups[j], n = group.length, subgroup = subgroups[j] = [], node, i = 0; i < n; ++i) {
@@ -4140,6 +4123,14 @@
     return new Selection$1(this._exit || this._groups.map(sparse), this._parents);
   }
 
+  function selection_join(onenter, onupdate, onexit) {
+    var enter = this.enter(), update = this, exit = this.exit();
+    enter = typeof onenter === "function" ? onenter(enter) : enter.append(onenter + "");
+    if (onupdate != null) update = onupdate(update);
+    if (onexit == null) exit.remove(); else onexit(exit);
+    return enter && update ? enter.merge(update).order() : update;
+  }
+
   function selection_merge(selection) {
 
     for (var groups0 = this._groups, groups1 = selection._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
@@ -4162,7 +4153,7 @@
     for (var groups = this._groups, j = -1, m = groups.length; ++j < m;) {
       for (var group = groups[j], i = group.length - 1, next = group[i], node; --i >= 0;) {
         if (node = group[i]) {
-          if (next && next !== node.nextSibling) next.parentNode.insertBefore(node, next);
+          if (next && node.compareDocumentPosition(next) ^ 4) next.parentNode.insertBefore(node, next);
           next = node;
         }
       }
@@ -4538,11 +4529,13 @@
   }
 
   function selection_cloneShallow() {
-    return this.parentNode.insertBefore(this.cloneNode(false), this.nextSibling);
+    var clone = this.cloneNode(false), parent = this.parentNode;
+    return parent ? parent.insertBefore(clone, this.nextSibling) : clone;
   }
 
   function selection_cloneDeep() {
-    return this.parentNode.insertBefore(this.cloneNode(true), this.nextSibling);
+    var clone = this.cloneNode(true), parent = this.parentNode;
+    return parent ? parent.insertBefore(clone, this.nextSibling) : clone;
   }
 
   function selection_clone(deep) {
@@ -4715,6 +4708,7 @@
     data: selection_data,
     enter: selection_enter,
     exit: selection_exit,
+    join: selection_join,
     merge: selection_merge,
     order: selection_order,
     sort: selection_sort,
@@ -4876,7 +4870,7 @@
 
   // Ignore right-click, since that should open the context menu.
   function defaultFilter$1() {
-    return !event.button;
+    return !event.ctrlKey && !event.button;
   }
 
   function defaultContainer() {
@@ -4888,7 +4882,7 @@
   }
 
   function defaultTouchable$1() {
-    return "ontouchstart" in this;
+    return navigator.maxTouchPoints || ("ontouchstart" in this);
   }
 
   function drag() {
@@ -6532,7 +6526,7 @@
   }
 
   function transition_filter(match) {
-    if (typeof match !== "function") match = matcher$1(match);
+    if (typeof match !== "function") match = matcher(match);
 
     for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) {
       for (var group = groups[j], n = group.length, subgroup = subgroups[j] = [], node, i = 0; i < n; ++i) {
@@ -6931,13 +6925,18 @@
     return polyInOut;
   }))(exponent$1);
 
+  // tpmt is two power minus ten times t scaled to [0,1]
+  function tpmt(x) {
+    return (Math.pow(2, -10 * x) - 0.0009765625) * 1.0009775171065494;
+  }
+
   var overshoot = 1.70158;
 
   ((function custom(s) {
     s = +s;
 
     function backIn(t) {
-      return t * t * ((s + 1) * t - s);
+      return (t = +t) * t * (s * (t - 1) + t);
     }
 
     backIn.overshoot = custom;
@@ -6949,7 +6948,7 @@
     s = +s;
 
     function backOut(t) {
-      return --t * t * ((s + 1) * t + s) + 1;
+      return --t * t * ((t + 1) * s + t) + 1;
     }
 
     backOut.overshoot = custom;
@@ -6977,7 +6976,7 @@
     var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau$2);
 
     function elasticIn(t) {
-      return a * Math.pow(2, 10 * --t) * Math.sin((s - t) / p);
+      return a * tpmt(-(--t)) * Math.sin((s - t) / p);
     }
 
     elasticIn.amplitude = function(a) { return custom(a, p * tau$2); };
@@ -6990,7 +6989,7 @@
     var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau$2);
 
     function elasticOut(t) {
-      return 1 - a * Math.pow(2, -10 * (t = +t)) * Math.sin((t + s) / p);
+      return 1 - a * tpmt(t = +t) * Math.sin((t + s) / p);
     }
 
     elasticOut.amplitude = function(a) { return custom(a, p * tau$2); };
@@ -7004,8 +7003,8 @@
 
     function elasticInOut(t) {
       return ((t = t * 2 - 1) < 0
-          ? a * Math.pow(2, 10 * t) * Math.sin((s - t) / p)
-          : 2 - a * Math.pow(2, -10 * t) * Math.sin((s + t) / p)) / 2;
+          ? a * tpmt(-t) * Math.sin((s - t) / p)
+          : 2 - a * tpmt(t) * Math.sin((s + t) / p)) / 2;
     }
 
     elasticInOut.amplitude = function(a) { return custom(a, p * tau$2); };
@@ -7135,7 +7134,7 @@
       }
     },
     arc: function(x, y, r, a0, a1, ccw) {
-      x = +x, y = +y, r = +r;
+      x = +x, y = +y, r = +r, ccw = !!ccw;
       var dx = r * Math.cos(a0),
           dy = r * Math.sin(a0),
           x0 = x + dx,
@@ -7184,7 +7183,7 @@
 
   function Map$1() {}
 
-  Map$1.prototype = map.prototype = {
+  Map$1.prototype = map$1.prototype = {
     constructor: Map$1,
     has: function(key) {
       return (prefix + key) in this;
@@ -7232,7 +7231,7 @@
     }
   };
 
-  function map(object, f) {
+  function map$1(object, f) {
     var map = new Map$1;
 
     // Copy constructor.
@@ -7256,7 +7255,7 @@
 
   function Set$1() {}
 
-  var proto = map.prototype;
+  var proto = map$1.prototype;
 
   Set$1.prototype = {
     constructor: Set$1,
@@ -7282,7 +7281,7 @@
 
   function objectConverter(columns) {
     return new Function("d", "return {" + columns.map(function(name, i) {
-      return JSON.stringify(name) + ": d[" + i + "]";
+      return JSON.stringify(name) + ": d[" + i + "] || \"\"";
     }).join(",") + "}");
   }
 
@@ -7307,6 +7306,30 @@
     });
 
     return columns;
+  }
+
+  function pad$1(value, width) {
+    var s = value + "", length = s.length;
+    return length < width ? new Array(width - length + 1).join(0) + s : s;
+  }
+
+  function formatYear$1(year) {
+    return year < 0 ? "-" + pad$1(-year, 6)
+      : year > 9999 ? "+" + pad$1(year, 6)
+      : pad$1(year, 4);
+  }
+
+  function formatDate(date) {
+    var hours = date.getUTCHours(),
+        minutes = date.getUTCMinutes(),
+        seconds = date.getUTCSeconds(),
+        milliseconds = date.getUTCMilliseconds();
+    return isNaN(date) ? "Invalid Date"
+        : formatYear$1(date.getUTCFullYear()) + "-" + pad$1(date.getUTCMonth() + 1, 2) + "-" + pad$1(date.getUTCDate(), 2)
+        + (milliseconds ? "T" + pad$1(hours, 2) + ":" + pad$1(minutes, 2) + ":" + pad$1(seconds, 2) + "." + pad$1(milliseconds, 3) + "Z"
+        : seconds ? "T" + pad$1(hours, 2) + ":" + pad$1(minutes, 2) + ":" + pad$1(seconds, 2) + "Z"
+        : minutes || hours ? "T" + pad$1(hours, 2) + ":" + pad$1(minutes, 2) + "Z"
+        : "");
   }
 
   function dsvFormat(delimiter) {
@@ -7371,13 +7394,22 @@
       return rows;
     }
 
-    function format(rows, columns) {
-      if (columns == null) columns = inferColumns(rows);
-      return [columns.map(formatValue).join(delimiter)].concat(rows.map(function(row) {
+    function preformatBody(rows, columns) {
+      return rows.map(function(row) {
         return columns.map(function(column) {
           return formatValue(row[column]);
         }).join(delimiter);
-      })).join("\n");
+      });
+    }
+
+    function format(rows, columns) {
+      if (columns == null) columns = inferColumns(rows);
+      return [columns.map(formatValue).join(delimiter)].concat(preformatBody(rows, columns)).join("\n");
+    }
+
+    function formatBody(rows, columns) {
+      if (columns == null) columns = inferColumns(rows);
+      return preformatBody(rows, columns).join("\n");
     }
 
     function formatRows(rows) {
@@ -7388,23 +7420,30 @@
       return row.map(formatValue).join(delimiter);
     }
 
-    function formatValue(text) {
-      return text == null ? ""
-          : reFormat.test(text += "") ? "\"" + text.replace(/"/g, "\"\"") + "\""
-          : text;
+    function formatValue(value) {
+      return value == null ? ""
+          : value instanceof Date ? formatDate(value)
+          : reFormat.test(value += "") ? "\"" + value.replace(/"/g, "\"\"") + "\""
+          : value;
     }
 
     return {
       parse: parse,
       parseRows: parseRows,
       format: format,
-      formatRows: formatRows
+      formatBody: formatBody,
+      formatRows: formatRows,
+      formatRow: formatRow,
+      formatValue: formatValue
     };
   }
 
   dsvFormat(",");
 
   dsvFormat("\t");
+
+  // https://github.com/d3/d3-dsv/issues/45
+  new Date("2019-01-01T00:00").getHours() || new Date("2019-07-01T00:00").getHours();
 
   function tree_add(d) {
     var x = +this._x.call(null, d),
@@ -7477,9 +7516,8 @@
       if (y > y1) y1 = y;
     }
 
-    // If there were no (valid) points, inherit the existing extent.
-    if (x1 < x0) x0 = this._x0, x1 = this._x1;
-    if (y1 < y0) y0 = this._y0, y1 = this._y1;
+    // If there were no (valid) points, abort.
+    if (x0 > x1 || y0 > y1) return this;
 
     // Expand the tree to cover the new points.
     this.cover(x0, y0).cover(x1, y1);
@@ -7509,40 +7547,25 @@
     }
 
     // Otherwise, double repeatedly to cover.
-    else if (x0 > x || x > x1 || y0 > y || y > y1) {
+    else {
       var z = x1 - x0,
           node = this._root,
           parent,
           i;
 
-      switch (i = (y < (y0 + y1) / 2) << 1 | (x < (x0 + x1) / 2)) {
-        case 0: {
-          do parent = new Array(4), parent[i] = node, node = parent;
-          while (z *= 2, x1 = x0 + z, y1 = y0 + z, x > x1 || y > y1);
-          break;
-        }
-        case 1: {
-          do parent = new Array(4), parent[i] = node, node = parent;
-          while (z *= 2, x0 = x1 - z, y1 = y0 + z, x0 > x || y > y1);
-          break;
-        }
-        case 2: {
-          do parent = new Array(4), parent[i] = node, node = parent;
-          while (z *= 2, x1 = x0 + z, y0 = y1 - z, x > x1 || y0 > y);
-          break;
-        }
-        case 3: {
-          do parent = new Array(4), parent[i] = node, node = parent;
-          while (z *= 2, x0 = x1 - z, y0 = y1 - z, x0 > x || y0 > y);
-          break;
+      while (x0 > x || x >= x1 || y0 > y || y >= y1) {
+        i = (y < y0) << 1 | (x < x0);
+        parent = new Array(4), parent[i] = node, node = parent, z *= 2;
+        switch (i) {
+          case 0: x1 = x0 + z, y1 = y0 + z; break;
+          case 1: x0 = x1 - z, y1 = y0 + z; break;
+          case 2: x1 = x0 + z, y0 = y1 - z; break;
+          case 3: x0 = x1 - z, y0 = y1 - z; break;
         }
       }
 
       if (this._root && this._root.length) this._root = node;
     }
-
-    // If the quadtree covers the point already, just return.
-    else return this;
 
     this._x0 = x0;
     this._y0 = y0;
@@ -7816,10 +7839,16 @@
   treeProto.x = tree_x;
   treeProto.y = tree_y;
 
+  function formatDecimal(x) {
+    return Math.abs(x = Math.round(x)) >= 1e21
+        ? x.toLocaleString("en").replace(/,/g, "")
+        : x.toString(10);
+  }
+
   // Computes the decimal coefficient and exponent of the specified number x with
   // significant digits p, where x is positive and p is in [1, 21] or undefined.
-  // For example, formatDecimal(1.23) returns ["123", 0].
-  function formatDecimal(x, p) {
+  // For example, formatDecimalParts(1.23) returns ["123", 0].
+  function formatDecimalParts(x, p) {
     if ((i = (x = p ? x.toExponential(p - 1) : x.toExponential()).indexOf("e")) < 0) return null; // NaN, ±Infinity
     var i, coefficient = x.slice(0, i);
 
@@ -7832,7 +7861,7 @@
   }
 
   function exponent(x) {
-    return x = formatDecimal(Math.abs(x)), x ? x[1] : NaN;
+    return x = formatDecimalParts(Math.abs(x)), x ? x[1] : NaN;
   }
 
   function formatGroup(grouping, thousands) {
@@ -7866,24 +7895,35 @@
   var re = /^(?:(.)?([<>=^]))?([+\-( ])?([$#])?(0)?(\d+)?(,)?(\.\d+)?(~)?([a-z%])?$/i;
 
   function formatSpecifier(specifier) {
-    return new FormatSpecifier(specifier);
+    if (!(match = re.exec(specifier))) throw new Error("invalid format: " + specifier);
+    var match;
+    return new FormatSpecifier({
+      fill: match[1],
+      align: match[2],
+      sign: match[3],
+      symbol: match[4],
+      zero: match[5],
+      width: match[6],
+      comma: match[7],
+      precision: match[8] && match[8].slice(1),
+      trim: match[9],
+      type: match[10]
+    });
   }
 
   formatSpecifier.prototype = FormatSpecifier.prototype; // instanceof
 
   function FormatSpecifier(specifier) {
-    if (!(match = re.exec(specifier))) throw new Error("invalid format: " + specifier);
-    var match;
-    this.fill = match[1] || " ";
-    this.align = match[2] || ">";
-    this.sign = match[3] || "-";
-    this.symbol = match[4] || "";
-    this.zero = !!match[5];
-    this.width = match[6] && +match[6];
-    this.comma = !!match[7];
-    this.precision = match[8] && +match[8].slice(1);
-    this.trim = !!match[9];
-    this.type = match[10] || "";
+    this.fill = specifier.fill === undefined ? " " : specifier.fill + "";
+    this.align = specifier.align === undefined ? ">" : specifier.align + "";
+    this.sign = specifier.sign === undefined ? "-" : specifier.sign + "";
+    this.symbol = specifier.symbol === undefined ? "" : specifier.symbol + "";
+    this.zero = !!specifier.zero;
+    this.width = specifier.width === undefined ? undefined : +specifier.width;
+    this.comma = !!specifier.comma;
+    this.precision = specifier.precision === undefined ? undefined : +specifier.precision;
+    this.trim = !!specifier.trim;
+    this.type = specifier.type === undefined ? "" : specifier.type + "";
   }
 
   FormatSpecifier.prototype.toString = function() {
@@ -7892,9 +7932,9 @@
         + this.sign
         + this.symbol
         + (this.zero ? "0" : "")
-        + (this.width == null ? "" : Math.max(1, this.width | 0))
+        + (this.width === undefined ? "" : Math.max(1, this.width | 0))
         + (this.comma ? "," : "")
-        + (this.precision == null ? "" : "." + Math.max(0, this.precision | 0))
+        + (this.precision === undefined ? "" : "." + Math.max(0, this.precision | 0))
         + (this.trim ? "~" : "")
         + this.type;
   };
@@ -7905,7 +7945,7 @@
       switch (s[i]) {
         case ".": i0 = i1 = i; break;
         case "0": if (i0 === 0) i0 = i; i1 = i; break;
-        default: if (i0 > 0) { if (!+s[i]) break out; i0 = 0; } break;
+        default: if (!+s[i]) break out; if (i0 > 0) i0 = 0; break;
       }
     }
     return i0 > 0 ? s.slice(0, i0) + s.slice(i1 + 1) : s;
@@ -7914,7 +7954,7 @@
   var prefixExponent;
 
   function formatPrefixAuto(x, p) {
-    var d = formatDecimal(x, p);
+    var d = formatDecimalParts(x, p);
     if (!d) return x + "";
     var coefficient = d[0],
         exponent = d[1],
@@ -7923,11 +7963,11 @@
     return i === n ? coefficient
         : i > n ? coefficient + new Array(i - n + 1).join("0")
         : i > 0 ? coefficient.slice(0, i) + "." + coefficient.slice(i)
-        : "0." + new Array(1 - i).join("0") + formatDecimal(x, Math.max(0, p + i - 1))[0]; // less than 1y!
+        : "0." + new Array(1 - i).join("0") + formatDecimalParts(x, Math.max(0, p + i - 1))[0]; // less than 1y!
   }
 
   function formatRounded(x, p) {
-    var d = formatDecimal(x, p);
+    var d = formatDecimalParts(x, p);
     if (!d) return x + "";
     var coefficient = d[0],
         exponent = d[1];
@@ -7940,7 +7980,7 @@
     "%": function(x, p) { return (x * 100).toFixed(p); },
     "b": function(x) { return Math.round(x).toString(2); },
     "c": function(x) { return x + ""; },
-    "d": function(x) { return Math.round(x).toString(10); },
+    "d": formatDecimal,
     "e": function(x, p) { return x.toExponential(p); },
     "f": function(x, p) { return x.toFixed(p); },
     "g": function(x, p) { return x.toPrecision(p); },
@@ -7956,14 +7996,18 @@
     return x;
   }
 
-  var prefixes = ["y","z","a","f","p","n","µ","m","","k","M","G","T","P","E","Z","Y"];
+  var map = Array.prototype.map,
+      prefixes = ["y","z","a","f","p","n","µ","m","","k","M","G","T","P","E","Z","Y"];
 
   function formatLocale$1(locale) {
-    var group = locale.grouping && locale.thousands ? formatGroup(locale.grouping, locale.thousands) : identity$1,
-        currency = locale.currency,
-        decimal = locale.decimal,
-        numerals = locale.numerals ? formatNumerals(locale.numerals) : identity$1,
-        percent = locale.percent || "%";
+    var group = locale.grouping === undefined || locale.thousands === undefined ? identity$1 : formatGroup(map.call(locale.grouping, Number), locale.thousands + ""),
+        currencyPrefix = locale.currency === undefined ? "" : locale.currency[0] + "",
+        currencySuffix = locale.currency === undefined ? "" : locale.currency[1] + "",
+        decimal = locale.decimal === undefined ? "." : locale.decimal + "",
+        numerals = locale.numerals === undefined ? identity$1 : formatNumerals(map.call(locale.numerals, String)),
+        percent = locale.percent === undefined ? "%" : locale.percent + "",
+        minus = locale.minus === undefined ? "-" : locale.minus + "",
+        nan = locale.nan === undefined ? "NaN" : locale.nan + "";
 
     function newFormat(specifier) {
       specifier = formatSpecifier(specifier);
@@ -7983,15 +8027,15 @@
       if (type === "n") comma = true, type = "g";
 
       // The "" type, and any invalid type, is an alias for ".12~g".
-      else if (!formatTypes[type]) precision == null && (precision = 12), trim = true, type = "g";
+      else if (!formatTypes[type]) precision === undefined && (precision = 12), trim = true, type = "g";
 
       // If zero fill is specified, padding goes after sign and before digits.
       if (zero || (fill === "0" && align === "=")) zero = true, fill = "0", align = "=";
 
       // Compute the prefix and suffix.
       // For SI-prefix, the suffix is lazily computed.
-      var prefix = symbol === "$" ? currency[0] : symbol === "#" && /[boxX]/.test(type) ? "0" + type.toLowerCase() : "",
-          suffix = symbol === "$" ? currency[1] : /[%p]/.test(type) ? percent : "";
+      var prefix = symbol === "$" ? currencyPrefix : symbol === "#" && /[boxX]/.test(type) ? "0" + type.toLowerCase() : "",
+          suffix = symbol === "$" ? currencySuffix : /[%p]/.test(type) ? percent : "";
 
       // What format function should we use?
       // Is this an integer type?
@@ -8003,7 +8047,7 @@
       // or clamp the specified precision to the supported range.
       // For significant precision, it must be in [1, 21].
       // For fixed precision, it must be in [0, 20].
-      precision = precision == null ? 6
+      precision = precision === undefined ? 6
           : /[gprs]/.test(type) ? Math.max(1, Math.min(21, precision))
           : Math.max(0, Math.min(20, precision));
 
@@ -8018,18 +8062,20 @@
         } else {
           value = +value;
 
+          // Determine the sign. -0 is not less than 0, but 1 / -0 is!
+          var valueNegative = value < 0 || 1 / value < 0;
+
           // Perform the initial formatting.
-          var valueNegative = value < 0;
-          value = formatType(Math.abs(value), precision);
+          value = isNaN(value) ? nan : formatType(Math.abs(value), precision);
 
           // Trim insignificant zeros.
           if (trim) value = formatTrim(value);
 
-          // If a negative value rounds to zero during formatting, treat as positive.
-          if (valueNegative && +value === 0) valueNegative = false;
+          // If a negative value rounds to zero after formatting, and no explicit positive sign is requested, hide the sign.
+          if (valueNegative && +value === 0 && sign !== "+") valueNegative = false;
 
           // Compute the prefix and suffix.
-          valuePrefix = (valueNegative ? (sign === "(" ? sign : "-") : sign === "-" || sign === "(" ? "" : sign) + valuePrefix;
+          valuePrefix = (valueNegative ? (sign === "(" ? sign : minus) : sign === "-" || sign === "(" ? "" : sign) + valuePrefix;
           valueSuffix = (type === "s" ? prefixes[8 + prefixExponent / 3] : "") + valueSuffix + (valueNegative && sign === "(" ? ")" : "");
 
           // Break the formatted value into the integer “value” part that can be
@@ -8096,7 +8142,8 @@
     decimal: ".",
     thousands: ",",
     grouping: [3],
-    currency: ["$", ""]
+    currency: ["$", ""],
+    minus: "-"
   });
 
   function defaultLocale$1(definition) {
@@ -8625,10 +8672,12 @@
   function newInterval(floori, offseti, count, field) {
 
     function interval(date) {
-      return floori(date = new Date(+date)), date;
+      return floori(date = arguments.length === 0 ? new Date : new Date(+date)), date;
     }
 
-    interval.floor = interval;
+    interval.floor = function(date) {
+      return floori(date = new Date(+date)), date;
+    };
 
     interval.ceil = function(date) {
       return floori(date = new Date(date - 1)), offseti(date, 1), floori(date), date;
@@ -8718,7 +8767,7 @@
   var durationWeek = 6048e5;
 
   var second = newInterval(function(date) {
-    date.setTime(Math.floor(date / durationSecond) * durationSecond);
+    date.setTime(date - date.getMilliseconds());
   }, function(date, step) {
     date.setTime(+date + step * durationSecond);
   }, function(start, end) {
@@ -8729,7 +8778,7 @@
   second.range;
 
   var minute = newInterval(function(date) {
-    date.setTime(Math.floor(date / durationMinute) * durationMinute);
+    date.setTime(date - date.getMilliseconds() - date.getSeconds() * durationSecond);
   }, function(date, step) {
     date.setTime(+date + step * durationMinute);
   }, function(start, end) {
@@ -8740,9 +8789,7 @@
   minute.range;
 
   var hour = newInterval(function(date) {
-    var offset = date.getTimezoneOffset() * durationMinute % durationHour;
-    if (offset < 0) offset += durationHour;
-    date.setTime(Math.floor((+date - offset) / durationHour) * durationHour + offset);
+    date.setTime(date - date.getMilliseconds() - date.getSeconds() * durationSecond - date.getMinutes() * durationMinute);
   }, function(date, step) {
     date.setTime(+date + step * durationHour);
   }, function(start, end) {
@@ -8938,8 +8985,8 @@
     return new Date(Date.UTC(d.y, d.m, d.d, d.H, d.M, d.S, d.L));
   }
 
-  function newYear(y) {
-    return {y: y, m: 0, d: 1, H: 0, M: 0, S: 0, L: 0};
+  function newDate(y, m, d) {
+    return {y: y, m: m, d: d, H: 0, M: 0, S: 0, L: 0};
   }
 
   function formatLocale(locale) {
@@ -8972,6 +9019,8 @@
       "d": formatDayOfMonth,
       "e": formatDayOfMonth,
       "f": formatMicroseconds,
+      "g": formatYearISO,
+      "G": formatFullYearISO,
       "H": formatHour24,
       "I": formatHour12,
       "j": formatDayOfYear,
@@ -8979,6 +9028,7 @@
       "m": formatMonthNumber,
       "M": formatMinutes,
       "p": formatPeriod,
+      "q": formatQuarter,
       "Q": formatUnixTimestamp,
       "s": formatUnixTimestampSeconds,
       "S": formatSeconds,
@@ -9004,6 +9054,8 @@
       "d": formatUTCDayOfMonth,
       "e": formatUTCDayOfMonth,
       "f": formatUTCMicroseconds,
+      "g": formatUTCYearISO,
+      "G": formatUTCFullYearISO,
       "H": formatUTCHour24,
       "I": formatUTCHour12,
       "j": formatUTCDayOfYear,
@@ -9011,6 +9063,7 @@
       "m": formatUTCMonthNumber,
       "M": formatUTCMinutes,
       "p": formatUTCPeriod,
+      "q": formatUTCQuarter,
       "Q": formatUnixTimestamp,
       "s": formatUnixTimestampSeconds,
       "S": formatUTCSeconds,
@@ -9036,6 +9089,8 @@
       "d": parseDayOfMonth,
       "e": parseDayOfMonth,
       "f": parseMicroseconds,
+      "g": parseYear,
+      "G": parseFullYear,
       "H": parseHour24,
       "I": parseHour24,
       "j": parseDayOfYear,
@@ -9043,6 +9098,7 @@
       "m": parseMonthNumber,
       "M": parseMinutes,
       "p": parsePeriod,
+      "q": parseQuarter,
       "Q": parseUnixTimestamp,
       "s": parseUnixTimestampSeconds,
       "S": parseSeconds,
@@ -9095,32 +9151,39 @@
       };
     }
 
-    function newParse(specifier, newDate) {
+    function newParse(specifier, Z) {
       return function(string) {
-        var d = newYear(1900),
+        var d = newDate(1900, undefined, 1),
             i = parseSpecifier(d, specifier, string += "", 0),
             week, day$1;
         if (i != string.length) return null;
 
         // If a UNIX timestamp is specified, return it.
         if ("Q" in d) return new Date(d.Q);
+        if ("s" in d) return new Date(d.s * 1000 + ("L" in d ? d.L : 0));
+
+        // If this is utcParse, never use the local timezone.
+        if (Z && !("Z" in d)) d.Z = 0;
 
         // The am-pm flag is 0 for AM, and 1 for PM.
         if ("p" in d) d.H = d.H % 12 + d.p * 12;
+
+        // If the month was not specified, inherit from the quarter.
+        if (d.m === undefined) d.m = "q" in d ? d.q : 0;
 
         // Convert day-of-week and week-of-year to day-of-year.
         if ("V" in d) {
           if (d.V < 1 || d.V > 53) return null;
           if (!("w" in d)) d.w = 1;
           if ("Z" in d) {
-            week = utcDate(newYear(d.y)), day$1 = week.getUTCDay();
+            week = utcDate(newDate(d.y, 0, 1)), day$1 = week.getUTCDay();
             week = day$1 > 4 || day$1 === 0 ? utcMonday.ceil(week) : utcMonday(week);
             week = utcDay.offset(week, (d.V - 1) * 7);
             d.y = week.getUTCFullYear();
             d.m = week.getUTCMonth();
             d.d = week.getUTCDate() + (d.w + 6) % 7;
           } else {
-            week = newDate(newYear(d.y)), day$1 = week.getDay();
+            week = localDate(newDate(d.y, 0, 1)), day$1 = week.getDay();
             week = day$1 > 4 || day$1 === 0 ? monday.ceil(week) : monday(week);
             week = day.offset(week, (d.V - 1) * 7);
             d.y = week.getFullYear();
@@ -9129,7 +9192,7 @@
           }
         } else if ("W" in d || "U" in d) {
           if (!("w" in d)) d.w = "u" in d ? d.u % 7 : "W" in d ? 1 : 0;
-          day$1 = "Z" in d ? utcDate(newYear(d.y)).getUTCDay() : newDate(newYear(d.y)).getDay();
+          day$1 = "Z" in d ? utcDate(newDate(d.y, 0, 1)).getUTCDay() : localDate(newDate(d.y, 0, 1)).getDay();
           d.m = 0;
           d.d = "W" in d ? (d.w + 6) % 7 + d.W * 7 - (day$1 + 5) % 7 : d.w + d.U * 7 - (day$1 + 6) % 7;
         }
@@ -9143,7 +9206,7 @@
         }
 
         // Otherwise, all fields are in local time.
-        return newDate(d);
+        return localDate(d);
       };
     }
 
@@ -9226,6 +9289,10 @@
       return locale_periods[+(d.getHours() >= 12)];
     }
 
+    function formatQuarter(d) {
+      return 1 + ~~(d.getMonth() / 3);
+    }
+
     function formatUTCShortWeekday(d) {
       return locale_shortWeekdays[d.getUTCDay()];
     }
@@ -9246,6 +9313,10 @@
       return locale_periods[+(d.getUTCHours() >= 12)];
     }
 
+    function formatUTCQuarter(d) {
+      return 1 + ~~(d.getUTCMonth() / 3);
+    }
+
     return {
       format: function(specifier) {
         var f = newFormat(specifier += "", formats);
@@ -9253,7 +9324,7 @@
         return f;
       },
       parse: function(specifier) {
-        var p = newParse(specifier += "", localDate);
+        var p = newParse(specifier += "", false);
         p.toString = function() { return specifier; };
         return p;
       },
@@ -9263,7 +9334,7 @@
         return f;
       },
       utcParse: function(specifier) {
-        var p = newParse(specifier, utcDate);
+        var p = newParse(specifier += "", true);
         p.toString = function() { return specifier; };
         return p;
       }
@@ -9336,6 +9407,11 @@
     return n ? (d.Z = n[1] ? 0 : -(n[2] + (n[3] || "00")), i + n[0].length) : -1;
   }
 
+  function parseQuarter(d, string, i) {
+    var n = numberRe.exec(string.slice(i, i + 1));
+    return n ? (d.q = n[0] * 3 - 3, i + n[0].length) : -1;
+  }
+
   function parseMonthNumber(d, string, i) {
     var n = numberRe.exec(string.slice(i, i + 2));
     return n ? (d.m = n[0] - 1, i + n[0].length) : -1;
@@ -9388,7 +9464,7 @@
 
   function parseUnixTimestampSeconds(d, string, i) {
     var n = numberRe.exec(string.slice(i));
-    return n ? (d.Q = (+n[0]) * 1000, i + n[0].length) : -1;
+    return n ? (d.s = +n[0], i + n[0].length) : -1;
   }
 
   function formatDayOfMonth(d, p) {
@@ -9433,12 +9509,16 @@
   }
 
   function formatWeekNumberSunday(d, p) {
-    return pad(sunday.count(year(d), d), p, 2);
+    return pad(sunday.count(year(d) - 1, d), p, 2);
+  }
+
+  function dISO(d) {
+    var day = d.getDay();
+    return (day >= 4 || day === 0) ? thursday(d) : thursday.ceil(d);
   }
 
   function formatWeekNumberISO(d, p) {
-    var day = d.getDay();
-    d = (day >= 4 || day === 0) ? thursday(d) : thursday.ceil(d);
+    d = dISO(d);
     return pad(thursday.count(year(d), d) + (year(d).getDay() === 4), p, 2);
   }
 
@@ -9447,14 +9527,25 @@
   }
 
   function formatWeekNumberMonday(d, p) {
-    return pad(monday.count(year(d), d), p, 2);
+    return pad(monday.count(year(d) - 1, d), p, 2);
   }
 
   function formatYear(d, p) {
     return pad(d.getFullYear() % 100, p, 2);
   }
 
+  function formatYearISO(d, p) {
+    d = dISO(d);
+    return pad(d.getFullYear() % 100, p, 2);
+  }
+
   function formatFullYear(d, p) {
+    return pad(d.getFullYear() % 10000, p, 4);
+  }
+
+  function formatFullYearISO(d, p) {
+    var day = d.getDay();
+    d = (day >= 4 || day === 0) ? thursday(d) : thursday.ceil(d);
     return pad(d.getFullYear() % 10000, p, 4);
   }
 
@@ -9507,12 +9598,16 @@
   }
 
   function formatUTCWeekNumberSunday(d, p) {
-    return pad(utcSunday.count(utcYear(d), d), p, 2);
+    return pad(utcSunday.count(utcYear(d) - 1, d), p, 2);
+  }
+
+  function UTCdISO(d) {
+    var day = d.getUTCDay();
+    return (day >= 4 || day === 0) ? utcThursday(d) : utcThursday.ceil(d);
   }
 
   function formatUTCWeekNumberISO(d, p) {
-    var day = d.getUTCDay();
-    d = (day >= 4 || day === 0) ? utcThursday(d) : utcThursday.ceil(d);
+    d = UTCdISO(d);
     return pad(utcThursday.count(utcYear(d), d) + (utcYear(d).getUTCDay() === 4), p, 2);
   }
 
@@ -9521,14 +9616,25 @@
   }
 
   function formatUTCWeekNumberMonday(d, p) {
-    return pad(utcMonday.count(utcYear(d), d), p, 2);
+    return pad(utcMonday.count(utcYear(d) - 1, d), p, 2);
   }
 
   function formatUTCYear(d, p) {
     return pad(d.getUTCFullYear() % 100, p, 2);
   }
 
+  function formatUTCYearISO(d, p) {
+    d = UTCdISO(d);
+    return pad(d.getUTCFullYear() % 100, p, 2);
+  }
+
   function formatUTCFullYear(d, p) {
+    return pad(d.getUTCFullYear() % 10000, p, 4);
+  }
+
+  function formatUTCFullYearISO(d, p) {
+    var day = d.getUTCDay();
+    d = (day >= 4 || day === 0) ? utcThursday(d) : utcThursday.ceil(d);
     return pad(d.getUTCFullYear() % 10000, p, 4);
   }
 
@@ -16502,9 +16608,14 @@
                   .html(node.buildOperationText(state.compactView))
                   .append("title")
                   .text(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
+              // node.getHeight() == 0 iff node is fully inlined in compact view, so we
+              // don't want this to be visible.
+              const isVisible = !node.block.collapsed && showCustomData &&
+                  node.getHeight(showCustomData, state.compactView) > 0;
               nodeSvg
                   .select(".inline-node-custom-data")
-                  .attr("visibility", !node.block.collapsed && showCustomData ? "visible" : "hidden");
+                  .attr("dy", nodeY + node.labelBox.height)
+                  .attr("visibility", isVisible ? "visible" : "hidden");
           });
       }
       updateInlineNodesCustomData() {
