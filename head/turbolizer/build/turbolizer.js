@@ -1366,12 +1366,13 @@
       }
   }
   class BytecodeSource {
-      constructor(sourceId, inliningIds, functionName, data, constantPool) {
+      constructor(sourceId, inliningIds, functionName, data, constantPool, feedbackVector) {
           this.sourceId = sourceId;
           this.inliningIds = inliningIds;
           this.functionName = functionName;
           this.data = data;
           this.constantPool = constantPool;
+          this.feedbackVector = feedbackVector;
       }
   }
   class BytecodeSourceData {
@@ -2381,7 +2382,7 @@
                   if (inlining.sourceId == source.sourceId)
                       inliningIds.push(index);
               }
-              this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, inliningIds, source.functionName, data, bytecodeSource.constantPool));
+              this.bytecodeSources.set(numSourceId, new BytecodeSource(source.sourceId, inliningIds, source.functionName, data, bytecodeSource.constantPool, source.feedbackVector));
           }
       }
       setFinalNodeOrigins(nodeOriginsJson) {
@@ -18220,18 +18221,31 @@
               sourceList.appendChild(currentLine);
           }
           codePre.appendChild(sourceList);
-          if (!view.source.constantPool)
-              return;
-          const constantList = createElement("ol", "linenums constants");
-          const constantListHeader = createElement("li", "");
-          view.insertLineContent(constantListHeader, `Constant pool (size = ${view.source.constantPool.length})`);
-          constantList.appendChild(constantListHeader);
-          for (const [idx, constant] of view.source.constantPool.entries()) {
-              const currentLine = createElement("li", `C${idx}`);
-              view.insertLineContent(currentLine, `${idx}: ${constant}`);
-              constantList.appendChild(currentLine);
+          if (view.source.constantPool) {
+              const constantList = createElement("ol", "linenums constants");
+              const constantListHeader = createElement("li", "");
+              view.insertLineContent(constantListHeader, `Constant pool (size = ${view.source.constantPool.length})`);
+              constantList.appendChild(constantListHeader);
+              for (const [idx, constant] of view.source.constantPool.entries()) {
+                  const currentLine = createElement("li", `C${idx}`);
+                  view.insertLineContent(currentLine, `${idx}: ${constant}`);
+                  constantList.appendChild(currentLine);
+              }
+              codePre.appendChild(constantList);
           }
-          codePre.appendChild(constantList);
+          if (view.source.feedbackVector) {
+              // TODO(nicohartmann): We could use a different element here, but it's
+              // the simplest way to display that with a consistent style by just
+              // reusing the existing structure and css classes.
+              const feedbackList = createElement("ol", "linenums feedback");
+              const feedbackListHeader = createElement("li", "");
+              view.insertLineContent(feedbackListHeader, "Feedback Vector");
+              feedbackList.appendChild(feedbackListHeader);
+              const currentLine = createElement("li", "C0");
+              view.insertLineContent(currentLine, view.source.feedbackVector);
+              feedbackList.appendChild(currentLine);
+              codePre.appendChild(feedbackList);
+          }
       }
       initializeBytecodeOffsetSelectionHandler() {
           const view = this;
