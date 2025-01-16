@@ -1421,6 +1421,7 @@
       Opcode["DeoptimizeIf"] = "DeoptimizeIf";
       Opcode["Goto"] = "Goto";
       Opcode["Branch"] = "Branch";
+      Opcode["TaggedBitcast"] = "TaggedBitcast";
   })(Opcode || (Opcode = {}));
   var BranchHint;
   (function (BranchHint) {
@@ -1571,7 +1572,10 @@
   (function (Constant_Kind) {
       Constant_Kind["Word32"] = "word32";
       Constant_Kind["Word64"] = "word64";
+      Constant_Kind["Float32"] = "float32";
+      Constant_Kind["Float64"] = "float64";
       Constant_Kind["HeapObject"] = "heap object";
+      Constant_Kind["CompressedHeapObject"] = "compressed heap object";
       Constant_Kind["External"] = "external";
   })(Constant_Kind || (Constant_Kind = {}));
   class CompactOperationPrinter_Constant extends CompactOperationPrinter {
@@ -1589,15 +1593,26 @@
           }
       }
       IsFullyInlined() {
-          return this.kind == Constant_Kind.Word32 || this.kind == Constant_Kind.Word64;
+          switch (this.kind) {
+              case Constant_Kind.Word32:
+              case Constant_Kind.Word64:
+              case Constant_Kind.Float32:
+              case Constant_Kind.Float64:
+                  return true;
+              default:
+                  return false;
+          }
       }
       Print(id, input) {
           switch (this.kind) {
               case Constant_Kind.Word32:
               case Constant_Kind.Word64:
+              case Constant_Kind.Float32:
+              case Constant_Kind.Float64:
                   // Those are fully inlined.
                   return "";
               case Constant_Kind.HeapObject:
+              case Constant_Kind.CompressedHeapObject:
               case Constant_Kind.External:
                   return `v${id} = ${escapeHTML(this.value)}`;
           }
@@ -1606,7 +1621,10 @@
           switch (this.kind) {
               case Constant_Kind.Word32: return `${this.value}${this.sub("w32")}`;
               case Constant_Kind.Word64: return `${this.value}${this.sub("w64")}`;
+              case Constant_Kind.Float32: return `${this.value}${this.sub("f32")}`;
+              case Constant_Kind.Float64: return `${this.value}${this.sub("f64")}`;
               case Constant_Kind.HeapObject:
+              case Constant_Kind.CompressedHeapObject:
               case Constant_Kind.External:
                   // Not inlined.
                   return "";
@@ -1951,6 +1969,40 @@
           }
       }
   }
+  var TaggedBitcastKind;
+  (function (TaggedBitcastKind) {
+      TaggedBitcastKind["Smi"] = "Smi";
+      TaggedBitcastKind["HeapObject"] = "HeapObject";
+      TaggedBitcastKind["TagAndSmiBits"] = "TagAndSmiBits";
+      TaggedBitcastKind["Any"] = "Any";
+  })(TaggedBitcastKind || (TaggedBitcastKind = {}));
+  class CompactOperationPrinter_TaggedBitcast extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          const options = this.parseOptions(properties);
+          this.from = toEnum(RegisterRepresentation, options[0]);
+          this.to = toEnum(RegisterRepresentation, options[1]);
+          this.kind = toEnum(TaggedBitcastKind, options[2]);
+      }
+      Print(id, input) {
+          let kind;
+          switch (this.kind) {
+              case TaggedBitcastKind.Smi:
+                  kind = "smi";
+                  break;
+              case TaggedBitcastKind.HeapObject:
+                  kind = "ho";
+                  break;
+              case TaggedBitcastKind.TagAndSmiBits:
+                  kind = "t+bits";
+                  break;
+              case TaggedBitcastKind.Any:
+                  kind = "any";
+                  break;
+          }
+          return `v${id} = bitcast&lt;${kind}${this.sub(rrString(this.to))}&gt;(${input(0)}${this.sub(rrString(this.from))})`;
+      }
+  }
   class TurboshaftGraphOperation extends Node$1 {
       constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects) {
           super(id);
@@ -2061,6 +2113,8 @@
                   case Opcode.Goto:
                   case Opcode.Branch:
                       return new CompactOperationPrinter_Goto_Branch(this, properties);
+                  case Opcode.TaggedBitcast:
+                      return new CompactOperationPrinter_TaggedBitcast(this, properties);
                   default:
                       return null;
               }
