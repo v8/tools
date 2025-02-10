@@ -17,8 +17,6 @@ jobs:
   build:
     name: Build and Deploy V8 Tools
     runs-on: ubuntu-latest
-    container:
-      image: docker://python:3.10-alpine
     steps:
       - uses: actions/setup-python@v5
         with:
