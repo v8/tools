@@ -16,7 +16,7 @@ found in the LICENSE file. -->
   <nav>
     <ul>
       <li><a href="https://v8.dev/tools">Tools</a></li>
-      <li class="current"><a href="https:/v8.dev/tools/versions">Tools Versions</a></li>
+      <li class="current"><a href="https://v8.dev/tools/versions">Tools Versions</a></li>
       <li><a href="https://v8.dev">Main Page</a></li>
     </ul>
   </nav>
@@ -80,7 +80,7 @@ found in the LICENSE file. -->
       const versionNumber = version.substring(1);
       const option = document.createElement("option");
       const li = document.createElement('li')
-      li.innerHTML = `<a href="./${version}">v${versionNumber}</a>`;
+      li.innerHTML = `<a href="./${version}/">v${versionNumber}</a>`;
       latestVersionsNode.appendChild(li);
     }
   }

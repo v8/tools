@@ -138,7 +138,7 @@ for version, branch, sha in BRANCHES:
           # We don't need to deploy the cached node_modules folder
           run('rm', '-rf', turbolizer_dir / "node_modules")
         except Exception as e:
-          print(f'Error occured: {e}')
+          print(f'Error occurred: {e}')
 
 INDEX_HTML = OUT_DIR / "index.html"
 with Step("Update versions.txt"):
