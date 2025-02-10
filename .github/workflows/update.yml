@@ -17,33 +17,24 @@ jobs:
   build:
     name: Build and Deploy V8 Tools
     runs-on: ubuntu-latest
+    container:
+      image: docker://python:3.10-alpine
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11' 
-      - uses: actions/setup-node@v4
-
       - name: Install Dependencies
         run: apk add git openssh-client rsync tar zstd npm
-
       - name: Mark the github workspace as safe directory
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
-
       - name: Checkout main Branch
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v3
       - name: Checkout gh-pages
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           ref: gh-pages
           path: gen
-
       - name: Build V8 Tools
         run: python3 -u update.py
-
       - name: Prevent auto-deploy
         run: touch -a gen/.nojekyll
-
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
         with:
