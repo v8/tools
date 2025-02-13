@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
 
       - name: Install Dependencies
-        run: apk add git openssh-client rsync tar zstd npm
+        run: sudo apt install -y git openssh-client rsync tar zstd npm
 
       - name: Mark the github workspace as safe directory
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
