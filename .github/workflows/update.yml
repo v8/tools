@@ -23,9 +23,6 @@ jobs:
           python-version: '3.11' 
       - uses: actions/setup-node@v4
 
-      - name: Install Dependencies
-        run: sudo apt install -y openssh-client rsync tar zstd
-
       - name: Checkout main Branch
         uses: actions/checkout@v4
 
