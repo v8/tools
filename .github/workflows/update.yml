@@ -24,13 +24,13 @@ jobs:
       - uses: actions/setup-node@v4
 
       - name: Install Dependencies
-        run: sudo apt install -y git openssh-client rsync tar zstd npm
-
-      - name: Mark the github workspace as safe directory
-        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+        run: sudo apt install -y openssh-client rsync tar zstd
 
       - name: Checkout main Branch
         uses: actions/checkout@v4
+
+      - name: Mark the github workspace as safe directory
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
 
       - name: Checkout gh-pages
         uses: actions/checkout@v4
