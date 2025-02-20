@@ -1422,6 +1422,7 @@
       Opcode["Goto"] = "Goto";
       Opcode["Branch"] = "Branch";
       Opcode["TaggedBitcast"] = "TaggedBitcast";
+      Opcode["Phi"] = "Phi";
   })(Opcode || (Opcode = {}));
   var BranchHint;
   (function (BranchHint) {
@@ -1806,6 +1807,16 @@
           return `v${id} = ${input(0)} ${symbol}${this.sub(subscript)} ${input(1)}`;
       }
   }
+  class CompactOperationPrinter_Phi extends CompactOperationPrinter {
+      constructor(operation, properties) {
+          super(operation);
+          const options = this.parseOptions(properties, 1);
+          this.rep = toEnum(RegisterRepresentation, options[0]);
+      }
+      Print(id, input) {
+          return `v${id} = φ${this.sub(rrString(this.rep))} (${[...Array(this.GetInputCount())].map((_, i) => input(i)).join(',')})`;
+      }
+  }
   var Comparison_Kind;
   (function (Comparison_Kind) {
       Comparison_Kind["Equal"] = "Equal";
@@ -2115,6 +2126,8 @@
                       return new CompactOperationPrinter_Goto_Branch(this, properties);
                   case Opcode.TaggedBitcast:
                       return new CompactOperationPrinter_TaggedBitcast(this, properties);
+                  case Opcode.Phi:
+                      return new CompactOperationPrinter_Phi(this, properties);
                   default:
                       return null;
               }
