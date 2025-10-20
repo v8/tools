@@ -24,7 +24,7 @@ found in the LICENSE file. -->
   <main id=main>
     <h2>Latest Versions </h2>
     <p>
-      Open the most recent tools for <a href="./head">HEAD</a>.
+      Open the most recent tools for <a href="./head/">HEAD</a>.
       <ul id="latestVersions">
       </ul>
     </p>
@@ -88,7 +88,7 @@ found in the LICENSE file. -->
   function gotoVersion(selectNode) {
     const version = selectNode.options[selectNode.selectedIndex].value;
     if (version.length > 0) {
-      window.location.href = `./${version}`;
+      window.location.href = `./${version}/`;
     }
   }
 </script>
