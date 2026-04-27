@@ -59,6 +59,7 @@ export class Processor extends LogReader {
   _lastTickLogEntry;
 
   _cppEntriesProvider;
+  silenceScriptErrors = false;
 
   _chunkRemainder = '';
   _lineNumber = 1;
@@ -304,7 +305,7 @@ export class Processor extends LogReader {
     if ((majorVersion == this.MAJOR_VERSION &&
          minorVersion <= this.MINOR_VERSION) ||
         (majorVersion < this.MAJOR_VERSION)) {
-      window.alert(
+      console.warn(
           `Unsupported version ${majorVersion}.${minorVersion}. \n` +
           `Please use the matching tool for given the V8 version.`);
     }
@@ -318,8 +319,9 @@ export class Processor extends LogReader {
     this._profile.addScriptSource(-1, name, '');
 
     if (this._cppEntriesProvider == undefined) {
-      await this._setupCppEntriesProvider();
+      await this._setupRemoteCppEntriesProvider();
     }
+    if (this._cppEntriesProvider == undefined) return;
 
     await this._cppEntriesProvider.parseVmSymbols(
         name, startAddr, endAddr, aslrSlide, (fName, fStart, fEnd) => {
@@ -328,7 +330,10 @@ export class Processor extends LogReader {
         });
   }
 
-  async _setupCppEntriesProvider() {
+  async _setupRemoteCppEntriesProvider() {
+    if (typeof fetch !== 'function') {
+      return;
+    }
     // Probe the local symbol server for the platform:
     const url = new URL('http://localhost:8000/v8/info/platform')
     let platform = {name: 'linux'};
@@ -512,6 +517,7 @@ export class Processor extends LogReader {
   formatProfileEntry(profileEntry, line, column) {
     if (!profileEntry) return '<unknown>';
     if (profileEntry.type === 'Builtin') return profileEntry.name;
+    if (!profileEntry.sfi) return profileEntry.name || '<unknown>';
     const name = profileEntry.sfi.getName();
     const array = this._formatPCRegexp.exec(name);
     const formatted =
@@ -612,7 +618,7 @@ export class Processor extends LogReader {
   getScript(url) {
     const script = this._profile.getScript(url);
     // TODO create placeholder script for empty urls.
-    if (script === undefined) {
+    if (script === undefined && !this.silenceScriptErrors) {
       console.error(`Could not find script for url: '${url}'`)
     }
     return script;

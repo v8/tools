@@ -35,6 +35,9 @@ define(Array.prototype, 'last', function() {
 // Map Log Events
 
 export class MapLogEntry extends LogEntry {
+  static get typeName() {
+    return 'map';
+  }
   constructor(id, time) {
     if (!time) throw new Error('Invalid time');
     // Use MapLogEntry.type getter instead of property, since we only know the
