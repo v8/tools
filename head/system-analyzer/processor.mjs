@@ -59,7 +59,7 @@ export class Processor extends LogReader {
   _lastTickLogEntry;
 
   _cppEntriesProvider;
-  silenceScriptErrors = false;
+  verbose = false;
 
   _chunkRemainder = '';
   _lineNumber = 1;
@@ -209,8 +209,16 @@ export class Processor extends LogReader {
   }
 
   printError(str) {
-    console.error(str);
+    this.error(str);
     throw str
+  }
+
+  warn(...args) {
+    if (this.verbose) console.warn(...args);
+  }
+
+  error(...args) {
+    console.error(...args);
   }
 
   processChunk(chunk) {
@@ -256,7 +264,7 @@ export class Processor extends LogReader {
       }
       this._updateProgress();
     } catch (e) {
-      console.error(`Could not parse log line ${
+      this.error(`Could not parse log line ${
           this._lineNumber}, trying to continue: ${e}`);
     }
   }
@@ -272,7 +280,7 @@ export class Processor extends LogReader {
         i++;
       }
     } catch (e) {
-      console.error(
+      this.error(
           `Error occurred during parsing line ${i}` +
           ', trying to continue: ' + e);
     }
@@ -282,7 +290,7 @@ export class Processor extends LogReader {
   async finalize() {
     await this._chunkConsumer.consumeAll();
     if (this._profile.warnings.size > 0) {
-      console.warn('Found profiler warnings:', this._profile.warnings);
+      this.warn('Found profiler warnings:', this._profile.warnings);
     }
     // TODO(cbruni): print stats;
     this._mapTimeline.transitions = new Map();
@@ -305,7 +313,7 @@ export class Processor extends LogReader {
     if ((majorVersion == this.MAJOR_VERSION &&
          minorVersion <= this.MINOR_VERSION) ||
         (majorVersion < this.MAJOR_VERSION)) {
-      console.warn(
+      this.warn(
           `Unsupported version ${majorVersion}.${minorVersion}. \n` +
           `Please use the matching tool for given the V8 version.`);
     }
@@ -345,8 +353,8 @@ export class Processor extends LogReader {
       }
       platform = await response.json();
     } catch (e) {
-      console.warn(`Local symbol server is not running on ${url}`);
-      console.warn(e);
+      this.warn(`Local symbol server is not running on ${url}`);
+      this.warn(e);
     }
     let CppEntriesProvider = RemoteLinuxCppEntriesProvider;
     if (platform.name === 'darwin') {
@@ -415,7 +423,7 @@ export class Processor extends LogReader {
       optimization_tier, invocation_count, profiler_ticks, fbv_string) {
     const profCodeEntry = this._profile.findEntry(instructionStart);
     if (!profCodeEntry) {
-      console.warn('Didn\'t find code for FBV', {fbv_string, instructionStart});
+      this.warn('Didn\'t find code for FBV', {fbv_string, instructionStart});
       return;
     }
     const fbv = new FeedbackVectorEntry(
@@ -574,7 +582,7 @@ export class Processor extends LogReader {
     let edge = new Edge(type, name, reason, time, from_, to_);
     if (to_.parent !== undefined && to_.parent === from_) {
       // Fix bug where we double log transitions.
-      console.warn('Fixing up double transition');
+      this.warn('Fixing up double transition');
       to_.edge.updateFrom(edge);
     } else {
       edge.finishSetup();
@@ -610,7 +618,7 @@ export class Processor extends LogReader {
     if (id === '0x000000000000') return undefined;
     const map = MapLogEntry.get(id, time);
     if (map !== undefined) return map;
-    console.warn(`No map details provided: id=${id}`);
+    this.warn(`No map details provided: id=${id}`);
     // Manually patch in a map to continue running.
     return this.createMapEntry(id, time);
   }
@@ -618,8 +626,8 @@ export class Processor extends LogReader {
   getScript(url) {
     const script = this._profile.getScript(url);
     // TODO create placeholder script for empty urls.
-    if (script === undefined && !this.silenceScriptErrors) {
-      console.error(`Could not find script for url: '${url}'`)
+    if (script === undefined) {
+      this.error(`Could not find script for url: '${url}'`)
     }
     return script;
   }
@@ -643,7 +651,7 @@ export class Processor extends LogReader {
         return;
       }
     }
-    console.error('Couldn\'t find matching timer event start', {type, time});
+    this.error('Couldn\'t find matching timer event start', {type, time});
   }
 
   get icTimeline() {

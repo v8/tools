@@ -316,7 +316,7 @@ class Command {
     this.limitStart = undefined;
     this.limitEnd = undefined;
     this.limitLast = 0;
-    this.silenceScriptErrors = false;
+    this.verbose = false;
   }
 
   static get help() {
@@ -375,8 +375,9 @@ class Command {
         this.details = true;
         continue;
       }
-      if (arg === '--silence-script-errors') {
-        this.silenceScriptErrors = true;
+
+      if (arg === '--verbose') {
+        this.verbose = true;
         continue;
       }
     }
@@ -398,7 +399,7 @@ class Command {
 
   parseLimit(arg) {
     const limitVal = arg.substring('--limit='.length);
-    let match = limitVal.match(/^(-?\d+)[:.]{1,3}(-?\d+)$/);
+    const match = limitVal.match(/^(-?\d+)[:.]{1,3}(-?\d+)$/);
     if (match) {
       this.limitStart = parseInt(match[1]);
       this.limitEnd = parseInt(match[2]);
@@ -470,7 +471,7 @@ class Command {
     if (!keys) return results;
 
     return results.map(entry => {
-      const reduced = {};
+      const reduced = {__proto__: null};
       keys.forEach(key => {
         reduced[key] = entry[key];
       });
@@ -480,7 +481,7 @@ class Command {
 
   async processStdInLog(rawArgs) {
     const processor = new Processor();
-    processor.silenceScriptErrors = this.silenceScriptErrors;
+    processor.verbose = this.verbose;
 
     printErr('Processing log from stdin...');
 
@@ -578,8 +579,10 @@ class StatsCommand extends Command {
 
   static get help() {
     return 'Print statistics of all events found in the log.\n\n' +
-        'Prints aggregated statistics of all events found in the log, including the total number of loaded scripts, compiled functions, code objects created, Inline Cache (IC) events, maps, deoptimizations, profiler ticks, and timers.\n\n' +
-        EventFilter.help;
+        'Prints aggregated statistics of all events found in the log, ' +
+        'including the total number of loaded scripts, compiled functions, ' +
+        'code objects created, Inline Cache (IC) events, maps, ' +
+        'deoptimizations, profiler ticks, and timers.\n\n' + EventFilter.help;
   }
 
   run(args) {
@@ -663,18 +666,20 @@ class StatsCommand extends Command {
   }
 }
 
-class IcCommand extends Command {
+class IcListCommand extends Command {
   static get commandName() {
-    return 'ic';
+    return 'ic-list';
   }
   static get aliases() {
-    return ['ics'];
+    return [];
   }
 
   static get help() {
-    return 'List detailed information about Inline Cache events.\n\n' +
-        'ICs are used by V8 to optimize property accesses. The output shows the time of the event, the type of operation, the function name, the state transition (e.g., monomorphic to polymorphic), the key accessed, and the map ID.\n\n' +
-        EventFilter.help;
+    return 'List detailed information about individual Inline Cache events.\n\n' +
+        'ICs are used by V8 to optimize property accesses. The output shows ' +
+        'the time of the event, the type of operation, the function name, ' +
+        'the state transition (e.g., monomorphic to polymorphic), the key ' +
+        'accessed, and the map ID.\n\n' + EventFilter.help;
   }
 
   static get basicKeys() {
@@ -703,8 +708,9 @@ class ScriptCommand extends Command {
 
   static get help() {
     return 'List all loaded scripts.\n\n' +
-        'The output shows the unique script ID, the URL or filename, and the size of the source code in characters. In details mode, it also lists the source code lines.\n\n' +
-        EventFilter.help;
+        'The output shows the unique script ID, the URL or filename, and ' +
+        'the size of the source code in characters. In details mode, it ' +
+        'also lists the source code lines.\n\n' + EventFilter.help;
   }
 
   static get basicKeys() {
@@ -717,7 +723,7 @@ class ScriptCommand extends Command {
       if (!this.filter.filterScript(script)) return;
       const detail = script.toDetailJSON();
 
-      const stats = {};
+      const stats = {__proto__: null};
       script.entries.forEach(entry => {
         const key = entry.typeName;
         stats[key] = (stats[key] || 0) + 1;
@@ -746,8 +752,10 @@ class CodeCommand extends Command {
 
   static get help() {
     return 'List all created code objects.\n\n' +
-        'Lists all code objects created by V8 (e.g., full code, bytecode, handlers). The output shows the time of creation, the event type, the optimization tier (kind), the function or handler name, the size in bytes, and the script ID.\n\n' +
-        CodeFilter.help;
+        'Lists all code objects created by V8 (e.g., full code, bytecode, ' +
+        'handlers). The output shows the time of creation, the event type, ' +
+        'the optimization tier (kind), the function or handler name, the ' +
+        'size in bytes, and the script ID.\n\n' + CodeFilter.help;
   }
 
   static get basicKeys() {
@@ -812,8 +820,11 @@ class DeoptCommand extends Command {
 
   static get help() {
     return 'List all deoptimizations.\n\n' +
-        'Deoptimizations happen when V8\'s optimistic assumptions are violated, forcing it to fall back to less optimized code. The output shows the time, the deopt type (e.g., eager, lazy), the reason, the location in the source file, the function name, and the script ID.\n\n' +
-        EventFilter.help;
+        'Deoptimizations happen when V8\'s optimistic assumptions are ' +
+        'violated, forcing it to fall back to less optimized code. The ' +
+        'output shows the time, the deopt type (e.g., eager, lazy), the ' +
+        'reason, the location in the source file, the function name, and ' +
+        'the script ID.\n\n' + EventFilter.help;
   }
 
   static get basicKeys() {
@@ -849,8 +860,10 @@ class FunctionCommand extends Command {
 
   static get help() {
     return 'List all compiled functions.\n\n' +
-        'A function can have multiple code variants (e.g., bytecode and optimized machine code). The output shows the pure function name, the script ID, the number of variants, and a breakdown of the code types created for it.\n\n' +
-        CodeFilter.help;
+        'A function can have multiple code variants (e.g., bytecode and ' +
+        'optimized machine code). The output shows the pure function name, ' +
+        'the script ID, the number of variants, and a breakdown of the ' +
+        'code types created for it.\n\n' + CodeFilter.help;
   }
 
   static get basicKeys() {
@@ -885,16 +898,132 @@ class FunctionCommand extends Command {
   }
 }
 
+class IcCommand extends Command {
+  static get commandName() {
+    return 'ic';
+  }
+  static get aliases() {
+    return ['ics', 'ic-stats'];
+  }
+
+  static get help() {
+    return 'Print statistics of Inline Cache events.\n\n' +
+        'Aggregates IC events by specified keys (default: functionName) ' +
+        'and shows counts for other keys.\n\n' + EventFilter.help + '\n' +
+        '  --group-by=<key1,key2,...> Keys to group by (valid: type, ' +
+        'functionName, state, key, map)';
+  }
+
+  static VALID_KEYS = ['type', 'state', 'functionName', 'key', 'map'];
+  static NON_DETAILS_LIMIT = 10;
+
+  static get basicKeys() {
+    return ['count', ...this.VALID_KEYS];
+  }
+
+  run(args) {
+    const VALID_KEYS = this.constructor.VALID_KEYS;
+    let groupBy = VALID_KEYS[0];
+    for (const arg of args) {
+      if (arg.startsWith('--group-by=')) {
+        groupBy = arg.substring('--group-by='.length);
+      }
+    }
+
+    const groupByKeys = [...new Set(groupBy.split(',').map(s => s.trim()))];
+
+    groupByKeys.forEach(k => {
+      if (!VALID_KEYS.includes(k)) {
+        throw new Error(`Invalid group-by key: ${k}. Valid keys are: ${
+            VALID_KEYS.join(', ')}`);
+      }
+    });
+
+    const stats = new Map();
+
+    this.processor.icTimeline.forEach(entry => {
+      if (!this.filter.filterIc(entry, this.processor)) return;
+
+      const detail = entry.toDetailJSON();
+
+      const groupValues = groupByKeys.map(k => detail[k] || '<unknown>');
+      const groupKey = JSON.stringify(groupValues);
+
+      let groupStats = stats.get(groupKey);
+      if (!groupStats) {
+        groupStats = {__proto__: null, count: 0};
+        groupByKeys.forEach((k, i) => {
+          groupStats[k] = groupValues[i];
+        });
+        VALID_KEYS.forEach(k => {
+          if (!groupByKeys.includes(k)) {
+            groupStats[k] = {__proto__: null};
+          }
+        });
+        stats.set(groupKey, groupStats);
+      }
+
+      groupStats.count++;
+
+      VALID_KEYS.forEach(k => {
+        if (!groupByKeys.includes(k)) {
+          const val = detail[k] || '<unknown>';
+          groupStats[k][val] = (groupStats[k][val] || 0) + 1;
+        }
+      });
+    });
+
+    let results = Array.from(stats.values());
+
+    // Default sort by count descending if no sort specified
+    if (!this.sortField) {
+      results.sort((a, b) => b.count - a.count);
+    }
+
+    // Apply details logic
+    if (!this.details) {
+      results = results.map(group => {
+        const reducedGroup = {__proto__: null, count: group.count};
+        groupByKeys.forEach(k => {
+          reducedGroup[k] = group[k];
+        });
+
+        VALID_KEYS.forEach(k => {
+          if (!groupByKeys.includes(k)) {
+            const subMap = group[k];
+            const sortedEntries =
+                Object.entries(subMap)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, this.constructor.NON_DETAILS_LIMIT);
+
+            const reducedSubMap = {__proto__: null};
+            sortedEntries.forEach(([key, val]) => {
+              reducedSubMap[key] = val;
+            });
+            reducedGroup[k] = reducedSubMap;
+          }
+        });
+        return reducedGroup;
+      });
+    }
+
+    return results;
+  }
+}
+
 const COMMANDS = Object.freeze([
   StatsCommand,
-  IcCommand,
   ScriptCommand,
   CodeCommand,
   FunctionCommand,
   DeoptCommand,
+  IcCommand,
+  IcListCommand,
 ]);
 
-const COMMANDS_LOOKUP = {};
+const COMMANDS_LOOKUP = {
+  __proto__: null
+};
 for (const cls of COMMANDS) {
   COMMANDS_LOOKUP[cls.commandName] = cls;
   for (const alias of cls.aliases) {
@@ -949,11 +1078,12 @@ if (globalThis.arguments) {
 
 export {
   StatsCommand,
-  IcCommand,
   ScriptCommand,
   CodeCommand,
   DeoptCommand,
   FunctionCommand,
+  IcCommand,
+  IcListCommand,
   COMMANDS,
   COMMANDS_LOOKUP
 };
