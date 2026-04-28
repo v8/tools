@@ -22,6 +22,7 @@ class EventFilter {
     this.timeRange = null;
     this.line = undefined;
     this.column = undefined;
+    this.map = null;
   }
 
   static get help() {
@@ -29,8 +30,10 @@ class EventFilter {
   --script=<name>      Filter by script URL or name
   --script-id=<id>     Filter by script ID
   --file=<path>[:line[:col]] Filter by file path and optional line/column
+  --location=<path>[:line[:col]] Alias for --file
   --function=<name>    Filter by function name
-  --time=<range>       Filter by time range (e.g., 1000..5000, 1000:5000)`;
+  --time=<range>       Filter by time range (e.g., 1000..5000, 1000:5000)
+  --map=<id>          Filter by map ID`;
   }
 
   parse(args) {
@@ -40,6 +43,7 @@ class EventFilter {
       if (this.parseFile(arg)) continue;
       if (this.parseFunctionName(arg)) continue;
       if (this.parseTimeRange(arg)) continue;
+      if (this.parseMap(arg)) continue;
     }
   }
 
@@ -47,33 +51,49 @@ class EventFilter {
     return this.script !== null || this.scriptId !== null ||
         this.functionName !== null || this.file !== null ||
         this.lineRange !== null || this.timeRange !== null ||
-        this.line !== undefined || this.column !== undefined;
+        this.line !== undefined || this.column !== undefined ||
+        this.map !== null;
   }
 
   parseScript(arg) {
     if (!arg.startsWith('--script=')) return false;
-    if (this.file || this.scriptId !== null) {
-      throw new Error('Cannot use both --script and --file or --script-id');
+    const val = arg.substring('--script='.length);
+
+    if (/^\d+$/.test(val)) {
+      this._parseScriptId(val);
+    } else {
+      if (this.scriptId !== null || this.file) {
+        throw new Error('Cannot use both --script and --script-id or --file');
+      }
+      this.script = val;
     }
-    this.script = arg.substring('--script='.length);
     return true;
   }
 
   parseScriptId(arg) {
     if (!arg.startsWith('--script-id=')) return false;
-    if (this.script || this.file) {
-      throw new Error('Cannot use both --script-id and --script or --file');
-    }
-    this.scriptId = parseInt(arg.substring('--script-id='.length));
+    this._parseScriptId(arg.substring('--script-id='.length));
     return true;
   }
 
-  parseFile(arg) {
-    if (!arg.startsWith('--file=')) return false;
-    if (this.script || this.scriptId !== null) {
-      throw new Error('Cannot use both --file and --script or --script-id');
+  _parseScriptId(val) {
+    if (this.script || this.file) {
+      throw new Error('Cannot use both --script-id and --script or --file');
     }
-    const filter = arg.substring('--file='.length);
+    this.scriptId = parseInt(val);
+  }
+
+  parseFile(arg) {
+    const isFile = arg.startsWith('--file=');
+    const isLocation = arg.startsWith('--location=');
+    if (!isFile && !isLocation) return false;
+
+    if (this.script || this.scriptId !== null) {
+      throw new Error(
+          'Cannot use both --file/--location and --script or --script-id');
+    }
+    const prefix = isFile ? '--file=' : '--location=';
+    const filter = arg.substring(prefix.length);
 
     // Check for path:line:column
     let match = filter.match(/(.+):(\d+):(\d+)$/);
@@ -102,6 +122,12 @@ class EventFilter {
 
     // Fallback to just path
     this.file = filter;
+    return true;
+  }
+
+  parseMap(arg) {
+    if (!arg.startsWith('--map=')) return false;
+    this.map = arg.substring('--map='.length);
     return true;
   }
 
@@ -230,6 +256,10 @@ class EventFilter {
       if (entry.time < this.timeRange.start || entry.time > this.timeRange.end)
         return false;
     }
+    if (this.map) {
+      const entryMap = entry.map?.id || entry.map || entry.mapId || entry.id;
+      if (entryMap !== this.map) return false;
+    }
     return true;
   }
 }
@@ -303,6 +333,91 @@ class DeoptFilter extends EventFilter {
   }
 }
 
+class IcEventFilter extends EventFilter {
+  constructor() {
+    super();
+    this.icType = null;
+    this.key = null;
+    this.state = null;
+    this.oldStateFilter = null;
+    this.newStateFilter = null;
+  }
+
+  static get help() {
+    return EventFilter.help +
+        `\n  --type=<type>        Filter by IC type (e.g., LoadIC, StoreIC)` +
+        `\n  --ic-type=<type>     Alias for --type` +
+        `\n  --key=<name>        Filter by property key` +
+        `\n  --state=<state>      Filter by IC state transition (e.g., 01, 0:1, "1 0", 0-1)`;
+  }
+
+  parse(args) {
+    super.parse(args);
+    for (const arg of args) {
+      if (this.parseIcType(arg)) continue;
+      if (this.parseKey(arg)) continue;
+      if (this.parseState(arg)) continue;
+    }
+  }
+
+  hasFilters() {
+    return super.hasFilters() || this.icType !== null || this.key !== null ||
+        this.state !== null || this.oldStateFilter !== null ||
+        this.newStateFilter !== null;
+  }
+
+  parseIcType(arg) {
+    const isType = arg.startsWith('--type=');
+    const isIcType = arg.startsWith('--ic-type=');
+    if (!isType && !isIcType) return false;
+    const prefix = isType ? '--type=' : '--ic-type=';
+    this.icType = arg.substring(prefix.length);
+    return true;
+  }
+
+  parseKey(arg) {
+    if (!arg.startsWith('--key=')) return false;
+    this.key = arg.substring('--key='.length);
+    return true;
+  }
+
+  parseState(arg) {
+    if (!arg.startsWith('--state=')) return false;
+    const stateVal = arg.substring('--state='.length);
+
+    const match =
+        stateVal.match(/^([a-zA-Z0-9^.])\s*[:.\s-→]*\s*([a-zA-Z0-9^.])$/);
+    if (match) {
+      this.oldStateFilter = match[1];
+      this.newStateFilter = match[2];
+    } else {
+      this.state = stateVal;
+    }
+    return true;
+  }
+
+  matchesIc(entry) {
+    if (this.icType) {
+      if (entry.type !== this.icType) return false;
+    }
+    if (this.key) {
+      if (entry.key !== this.key) return false;
+    }
+    if (this.oldStateFilter) {
+      if (entry.oldState !== this.oldStateFilter) return false;
+    }
+    if (this.newStateFilter) {
+      if (entry.newState !== this.newStateFilter) return false;
+    }
+    if (this.state) {
+      const entryState =
+          entry.state || (entry.oldState + ' → ' + entry.newState);
+      if (!entryState.includes(this.state)) return false;
+    }
+    return true;
+  }
+}
+
 // Class Hierarchy for Commands
 class Command {
   constructor(processor = null) {
@@ -359,7 +474,7 @@ class Command {
         this.parseSort(arg);
         continue;
       }
-      if (arg.startsWith('--limit=')) {
+      if (arg.startsWith('--limit=') || arg.startsWith('-n=')) {
         this.parseLimit(arg);
         continue;
       }
@@ -398,7 +513,7 @@ class Command {
   }
 
   parseLimit(arg) {
-    const limitVal = arg.substring('--limit='.length);
+    const limitVal = arg.substring(arg.indexOf('=') + 1);
     const match = limitVal.match(/^(-?\d+)[:.]{1,3}(-?\d+)$/);
     if (match) {
       this.limitStart = parseInt(match[1]);
@@ -667,9 +782,15 @@ class StatsCommand extends Command {
 }
 
 class IcListCommand extends Command {
+  constructor(processor = null) {
+    super(processor);
+    this.filter = new IcEventFilter();
+  }
+
   static get commandName() {
     return 'ic-list';
   }
+
   static get aliases() {
     return [];
   }
@@ -679,7 +800,7 @@ class IcListCommand extends Command {
         'ICs are used by V8 to optimize property accesses. The output shows ' +
         'the time of the event, the type of operation, the function name, ' +
         'the state transition (e.g., monomorphic to polymorphic), the key ' +
-        'accessed, and the map ID.\n\n' + EventFilter.help;
+        'accessed, and the map ID.\n\n' + IcEventFilter.help;
   }
 
   static get basicKeys() {
@@ -691,6 +812,7 @@ class IcListCommand extends Command {
 
     this.processor.icTimeline.forEach(entry => {
       if (!this.filter.filterIc(entry, this.processor)) return;
+      if (!this.filter.matchesIc(entry)) return;
       events.push(entry.toDetailJSON());
     });
 
@@ -702,6 +824,7 @@ class ScriptCommand extends Command {
   static get commandName() {
     return 'script';
   }
+
   static get aliases() {
     return ['scripts'];
   }
@@ -741,6 +864,7 @@ class CodeCommand extends Command {
   static get commandName() {
     return 'code';
   }
+
   static get aliases() {
     return ['codes'];
   }
@@ -805,10 +929,135 @@ class CodeCommand extends Command {
   }
 }
 
-class DeoptCommand extends Command {
+class GroupStatsCommand extends Command {
+  static get groupKeys() {
+    throw new Error('Subclass responsibility');
+  }
+
+  static get basicKeys() {
+    return ['count', ...this.groupKeys];
+  }
+
+  get timeline() {
+    throw new Error('Subclass responsibility');
+  }
+
+  filterEntry(entry) {
+    return true;
+  }
+
+  getEntryDetails(entry) {
+    const detail = entry.toDetailJSON();
+    if (!detail.location && detail.sourcePosition?.file) {
+      detail.location = detail.sourcePosition.file;
+    }
+    if (!detail.location) {
+      detail.location = '<unknown>';
+    }
+
+    detail.script = detail.script || entry.script?.url || '<unknown>';
+    detail.scriptId ??= entry.script?.id ?? '<unknown>';
+
+    return detail;
+  }
+
+  run(args) {
+    const groupKeys = this.constructor.groupKeys;
+    let groupBy = groupKeys[0];
+    for (const arg of args) {
+      for (const flagName of ['--group-by=', '--group=', '-g=']) {
+        if (arg.startsWith(flagName)) {
+          groupBy = arg.substring(flagName.length);
+        }
+      }
+    }
+
+    const groupByKeys = [...new Set(groupBy.split(',').map(s => s.trim()))];
+
+    groupByKeys.forEach(k => {
+      if (!groupKeys.includes(k)) {
+        throw new Error(`Invalid group-by key: ${k}. Valid keys are: ${
+            groupKeys.join(', ')}`);
+      }
+    });
+
+    const stats = new Map();
+
+    this.timeline.forEach(entry => {
+      if (!this.filterEntry(entry)) return;
+
+      const detail = this.getEntryDetails(entry);
+
+      const groupValues = groupByKeys.map(k => detail[k] || '<unknown>');
+      const groupKey = JSON.stringify(groupValues);
+
+      let groupStats = stats.get(groupKey);
+      if (!groupStats) {
+        groupStats = {__proto__: null, count: 0};
+        groupByKeys.forEach((k, i) => {
+          groupStats[k] = groupValues[i];
+        });
+        groupKeys.forEach(k => {
+          if (!groupByKeys.includes(k)) {
+            groupStats[k] = {__proto__: null};
+          }
+        });
+        stats.set(groupKey, groupStats);
+      }
+
+      groupStats.count++;
+
+      groupKeys.forEach(k => {
+        if (!groupByKeys.includes(k)) {
+          const val = detail[k] || '<unknown>';
+          groupStats[k][val] = (groupStats[k][val] || 0) + 1;
+        }
+      });
+    });
+
+    let results = Array.from(stats.values());
+
+    // Default sort by count descending if no sort specified
+    if (!this.sortField) {
+      results.sort((a, b) => b.count - a.count);
+    }
+
+    // Apply details logic
+    if (!this.details) {
+      results = results.map(group => {
+        const reducedGroup = {__proto__: null, count: group.count};
+        groupByKeys.forEach(k => {
+          reducedGroup[k] = group[k];
+        });
+
+        groupKeys.forEach(k => {
+          if (!groupByKeys.includes(k)) {
+            const subMap = group[k];
+            const sortedEntries =
+                Object.entries(subMap)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, this.constructor.NON_DETAILS_LIMIT || 10);
+
+            const reducedSubMap = {__proto__: null};
+            sortedEntries.forEach(([key, val]) => {
+              reducedSubMap[key] = val;
+            });
+            reducedGroup[k] = reducedSubMap;
+          }
+        });
+        return reducedGroup;
+      });
+    }
+
+    return results;
+  }
+}
+
+class DeoptCommand extends GroupStatsCommand {
   static get commandName() {
     return 'deopt';
   }
+
   static get aliases() {
     return ['deopts'];
   }
@@ -819,29 +1068,26 @@ class DeoptCommand extends Command {
   }
 
   static get help() {
-    return 'List all deoptimizations.\n\n' +
-        'Deoptimizations happen when V8\'s optimistic assumptions are ' +
-        'violated, forcing it to fall back to less optimized code. The ' +
-        'output shows the time, the deopt type (e.g., eager, lazy), the ' +
-        'reason, the location in the source file, the function name, and ' +
-        'the script ID.\n\n' + EventFilter.help;
+    return 'Print statistics of deoptimizations.\n\n' +
+        'Aggregates deoptimizations by specified keys (default: type) ' +
+        'and shows counts for other keys.\n\n' + EventFilter.help + '\n' +
+        `  --group-by=<key1,key2,...> Keys to group by (valid: ${
+               this.groupKeys.join(', ')})`;
   }
 
-  static get basicKeys() {
-    return ['time', 'type', 'reason', 'location', 'functionName', 'scriptId'];
+  static get groupKeys() {
+    return ['type', 'reason', 'location', 'functionName', 'scriptId', 'script'];
+  }
+  static NON_DETAILS_LIMIT = 10;
+
+  get timeline() {
+    return this.processor.deoptTimeline;
   }
 
-  run(args) {
-    const results = [];
-    this.processor.deoptTimeline.forEach(entry => {
-      const script = this.processor.getProfileEntryScript(entry.entry);
-      if (!this.filter._matchesCommon(entry, script)) return;
-      if (!this.filter.matchesDeoptType(entry)) return;
-
-      results.push(entry.toDetailJSON());
-    });
-
-    return results;
+  filterEntry(entry) {
+    const script = this.processor.getProfileEntryScript(entry.entry);
+    return this.filter._matchesCommon(entry, script) &&
+        this.filter.matchesDeoptType(entry);
   }
 }
 
@@ -849,8 +1095,9 @@ class FunctionCommand extends Command {
   static get commandName() {
     return 'function';
   }
+
   static get aliases() {
-    return ['functions'];
+    return ['functions', 'fn', 'fns'];
   }
 
   constructor(processor = null) {
@@ -898,10 +1145,16 @@ class FunctionCommand extends Command {
   }
 }
 
-class IcCommand extends Command {
+class IcCommand extends GroupStatsCommand {
+  constructor(processor = null) {
+    super(processor);
+    this.filter = new IcEventFilter();
+  }
+
   static get commandName() {
     return 'ic';
   }
+
   static get aliases() {
     return ['ics', 'ic-stats'];
   }
@@ -909,105 +1162,60 @@ class IcCommand extends Command {
   static get help() {
     return 'Print statistics of Inline Cache events.\n\n' +
         'Aggregates IC events by specified keys (default: functionName) ' +
-        'and shows counts for other keys.\n\n' + EventFilter.help + '\n' +
-        '  --group-by=<key1,key2,...> Keys to group by (valid: type, ' +
-        'functionName, state, key, map)';
+        'and shows counts for other keys.\n\n' + IcEventFilter.help + '\n' +
+        `  --group-by=<key1,key2,...> Keys to group by (valid: ${
+               this.groupKeys.join(', ')})`;
   }
 
-  static VALID_KEYS = ['type', 'state', 'functionName', 'key', 'map'];
+  static get groupKeys() {
+    return [
+      'type', 'state', 'functionName', 'key', 'map', 'script', 'location'
+    ];
+  }
   static NON_DETAILS_LIMIT = 10;
 
-  static get basicKeys() {
-    return ['count', ...this.VALID_KEYS];
+  get timeline() {
+    return this.processor.icTimeline;
   }
 
-  run(args) {
-    const VALID_KEYS = this.constructor.VALID_KEYS;
-    let groupBy = VALID_KEYS[0];
-    for (const arg of args) {
-      if (arg.startsWith('--group-by=')) {
-        groupBy = arg.substring('--group-by='.length);
-      }
-    }
+  filterEntry(entry) {
+    return this.filter.filterIc(entry, this.processor) &&
+        this.filter.matchesIc(entry);
+  }
+}
 
-    const groupByKeys = [...new Set(groupBy.split(',').map(s => s.trim()))];
+class MapCommand extends GroupStatsCommand {
+  static get commandName() {
+    return 'map';
+  }
 
-    groupByKeys.forEach(k => {
-      if (!VALID_KEYS.includes(k)) {
-        throw new Error(`Invalid group-by key: ${k}. Valid keys are: ${
-            VALID_KEYS.join(', ')}`);
-      }
-    });
+  static get aliases() {
+    return ['maps', 'map-stats'];
+  }
 
-    const stats = new Map();
+  static get help() {
+    return 'Print statistics of Map events.\n\n' +
+        'Aggregates Map events by specified keys (default: type) ' +
+        'and shows counts for other keys.\n\n' + EventFilter.help + '\n' +
+        `  --group-by=<key1,key2,...> Keys to group by (valid: ${
+               this.groupKeys.join(', ')})`;
+  }
 
-    this.processor.icTimeline.forEach(entry => {
-      if (!this.filter.filterIc(entry, this.processor)) return;
+  static get groupKeys() {
+    return ['type', 'reason', 'property', 'functionName', 'script', 'location'];
+  }
+  static NON_DETAILS_LIMIT = 10;
 
-      const detail = entry.toDetailJSON();
+  get timeline() {
+    return this.processor.mapTimeline;
+  }
 
-      const groupValues = groupByKeys.map(k => detail[k] || '<unknown>');
-      const groupKey = JSON.stringify(groupValues);
+  filterEntry(entry) {
+    return this.filter._matchesCommon(entry, null);
+  }
 
-      let groupStats = stats.get(groupKey);
-      if (!groupStats) {
-        groupStats = {__proto__: null, count: 0};
-        groupByKeys.forEach((k, i) => {
-          groupStats[k] = groupValues[i];
-        });
-        VALID_KEYS.forEach(k => {
-          if (!groupByKeys.includes(k)) {
-            groupStats[k] = {__proto__: null};
-          }
-        });
-        stats.set(groupKey, groupStats);
-      }
-
-      groupStats.count++;
-
-      VALID_KEYS.forEach(k => {
-        if (!groupByKeys.includes(k)) {
-          const val = detail[k] || '<unknown>';
-          groupStats[k][val] = (groupStats[k][val] || 0) + 1;
-        }
-      });
-    });
-
-    let results = Array.from(stats.values());
-
-    // Default sort by count descending if no sort specified
-    if (!this.sortField) {
-      results.sort((a, b) => b.count - a.count);
-    }
-
-    // Apply details logic
-    if (!this.details) {
-      results = results.map(group => {
-        const reducedGroup = {__proto__: null, count: group.count};
-        groupByKeys.forEach(k => {
-          reducedGroup[k] = group[k];
-        });
-
-        VALID_KEYS.forEach(k => {
-          if (!groupByKeys.includes(k)) {
-            const subMap = group[k];
-            const sortedEntries =
-                Object.entries(subMap)
-                    .sort((a, b) => b[1] - a[1])
-                    .slice(0, this.constructor.NON_DETAILS_LIMIT);
-
-            const reducedSubMap = {__proto__: null};
-            sortedEntries.forEach(([key, val]) => {
-              reducedSubMap[key] = val;
-            });
-            reducedGroup[k] = reducedSubMap;
-          }
-        });
-        return reducedGroup;
-      });
-    }
-
-    return results;
+  getEntryDetails(entry) {
+    return entry.toDetailJSON();
   }
 }
 
@@ -1019,6 +1227,7 @@ const COMMANDS = Object.freeze([
   DeoptCommand,
   IcCommand,
   IcListCommand,
+  MapCommand,
 ]);
 
 const COMMANDS_LOOKUP = {
@@ -1048,15 +1257,19 @@ function handleHelp(commandName, args) {
 }
 
 export async function main(args = []) {
+  const hasHelp = args.includes('--help') || args.includes('help');
+
+  if (hasHelp) {
+    // Find the first argument that is a valid command name
+    const commandName = args.find(a => COMMANDS_LOOKUP[a]);
+    handleHelp(commandName, args);
+    return;
+  }
+
   const commandName = args[0];
   if (!commandName) {
     throw new Error(`No subcommand provided. Valid commands are: ${
         COMMANDS.map(c => c.commandName).join(', ')}`);
-  }
-
-  if (commandName === 'help' || commandName === '--help') {
-    handleHelp(args[1], args);
-    return;
   }
 
   const CommandClass = COMMANDS_LOOKUP[commandName];

@@ -59,7 +59,6 @@ export class Processor extends LogReader {
   _lastTickLogEntry;
 
   _cppEntriesProvider;
-  verbose = false;
 
   _chunkRemainder = '';
   _lineNumber = 1;
@@ -213,10 +212,6 @@ export class Processor extends LogReader {
     throw str
   }
 
-  warn(...args) {
-    if (this.verbose) console.warn(...args);
-  }
-
   error(...args) {
     console.error(...args);
   }
@@ -296,7 +291,7 @@ export class Processor extends LogReader {
     this._mapTimeline.transitions = new Map();
     let id = 0;
     this._mapTimeline.forEach(map => {
-      if (map.isRoot()) id = map.finalizeRootMap(id + 1);
+      if (map.isRoot()) id = map.finalizeRootMap(id + 1, this);
       if (map.edge && map.edge.name) {
         const edge = map.edge;
         const list = this._mapTimeline.transitions.get(edge.name);
@@ -585,7 +580,7 @@ export class Processor extends LogReader {
       this.warn('Fixing up double transition');
       to_.edge.updateFrom(edge);
     } else {
-      edge.finishSetup();
+      edge.finishSetup(this);
     }
   }
 
