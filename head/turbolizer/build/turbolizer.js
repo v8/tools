@@ -182,7 +182,9 @@
           this.type = type;
       }
       isGraph() {
-          return this.type == PhaseType.Graph || this.type == PhaseType.TurboshaftGraph;
+          return this.type == PhaseType.Graph ||
+              this.type == PhaseType.TurboshaftGraph ||
+              this.type == PhaseType.MaglevGraph;
       }
       isDynamic() {
           return this.isGraph() || this.type == PhaseType.Schedule || this.type == PhaseType.Sequence;
@@ -192,6 +194,7 @@
   (function (PhaseType) {
       PhaseType["Graph"] = "graph";
       PhaseType["TurboshaftGraph"] = "turboshaft_graph";
+      PhaseType["MaglevGraph"] = "maglev_graph";
       PhaseType["TurboshaftCustomData"] = "turboshaft_custom_data";
       PhaseType["Disassembly"] = "disassembly";
       PhaseType["Instructions"] = "instructions";
@@ -550,7 +553,7 @@
           return path;
       }
       isVisible() {
-          return this.visible && this.source.visible && this.target.visible;
+          return this.visible && this.source && this.source.visible && this.target && this.target.visible;
       }
       toString() {
           return `${this.source.id},${this.index},${this.target.id}`;
@@ -979,6 +982,10 @@
           for (const edge of edgesJSON) {
               const target = this.nodeIdToNodeMap[edge.target];
               const source = this.nodeIdToNodeMap[edge.source];
+              if (!target || !source) {
+                  console.warn(`Edge from ${edge.source} to ${edge.target} has missing source or target.`);
+                  continue;
+              }
               const newEdge = new GraphEdge(target, edge.index, source, edge.type);
               this.data.edges.push(newEdge);
               target.inputs.push(newEdge);
@@ -2015,7 +2022,7 @@
       }
   }
   class TurboshaftGraphOperation extends Node$1 {
-      constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects) {
+      constructor(id, title, block, sourcePosition, bytecodePosition, origin, opEffects, properties = "") {
           super(id);
           this.title = title;
           this.block = block;
@@ -2023,6 +2030,7 @@
           this.bytecodePosition = bytecodePosition;
           this.origin = origin;
           this.opEffects = opEffects;
+          this.properties = properties;
           this.visible = true;
           this.compactPrinter = null;
       }
@@ -2046,6 +2054,9 @@
       }
       getTitle() {
           let title = `${this.id} ${this.title}`;
+          if (this.properties) {
+              title += `\nProperties:\n${this.properties}`;
+          }
           title += `\nEffects: ${this.opEffects}`;
           if (this.origin) {
               title += `\nOrigin: ${this.origin.toString()}`;
@@ -2146,13 +2157,14 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class TurboshaftGraphBlock extends Node$1 {
-      constructor(id, type, deferred, predecessors) {
+      constructor(id, type, deferred, predecessors, exception = false) {
           super(id, `${type} ${id}${deferred ? " (deferred)" : ""}`);
           this.type = type;
           this.deferred = deferred;
           this.predecessors = predecessors ?? new Array();
           this.nodes = new Array();
           this.visible = true;
+          this.exception = exception;
       }
       getHeight(showCustomData, compactView) {
           if (this.collapsed)
@@ -2209,9 +2221,10 @@
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class TurboshaftGraphEdge extends Edge {
-      constructor(target, index, source) {
+      constructor(target, index, source, type = "value") {
           super(target, index, source);
-          this.visible = target.visible && source.visible;
+          this.type = type;
+          this.visible = (target && target.visible) && (source && source.visible);
       }
       isBackEdge() {
           if (this.target instanceof TurboshaftGraphBlock) {
@@ -2219,14 +2232,55 @@
           }
           return this.target.rank < this.source.rank;
       }
+      isVisible() {
+          if (!super.isVisible())
+              return false;
+          if (this.source instanceof TurboshaftGraphOperation && this.source.block.collapsed)
+              return false;
+          if (this.target instanceof TurboshaftGraphOperation && this.target.block.collapsed)
+              return false;
+          return true;
+      }
+      generatePath(graph, extendHeight, compactView = false) {
+          if (this.source instanceof TurboshaftGraphOperation &&
+              this.target instanceof TurboshaftGraphOperation &&
+              this.type === "control") {
+              const source = this.source;
+              const target = this.target;
+              const sourceBlock = source.block;
+              const targetBlock = target.block;
+              const exitLeft = targetBlock.x < sourceBlock.x;
+              const startX = exitLeft ? source.x : source.x + source.getWidth();
+              const startY = source.y + source.getHeight(extendHeight, compactView) / 2;
+              const isCatchBlockTarget = targetBlock.exception;
+              let endX, endY;
+              if (isCatchBlockTarget) {
+                  const controlInputs = target.inputs.filter(edge => edge.type === "control" && edge.source instanceof TurboshaftGraphOperation);
+                  const i = controlInputs.indexOf(this);
+                  const total = controlInputs.length;
+                  const inputX = targetBlock.getWidth() - (NODE_INPUT_WIDTH / 2) +
+                      (i - total + 1) * NODE_INPUT_WIDTH;
+                  endX = targetBlock.x + inputX;
+                  endY = targetBlock.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - ARROW_HEAD_HEIGHT;
+              }
+              else {
+                  endX = target.x + target.getInputX(this.index);
+                  endY = target.y - 2 * DEFAULT_NODE_BUBBLE_RADIUS - ARROW_HEAD_HEIGHT;
+              }
+              const dx = exitLeft ? -50 : 50;
+              const dy = 50;
+              return `M ${startX} ${startY}\nC ${startX + dx} ${startY},\n${endX} ${endY - dy},\n${endX} ${endY}`;
+          }
+          return super.generatePath(graph, extendHeight, compactView);
+      }
   }
 
   // Copyright 2022 the V8 project authors. All rights reserved.
   // Use of this source code is governed by a BSD-style license that can be
   // found in the LICENSE file.
   class TurboshaftGraphPhase extends Phase {
-      constructor(name, dataJson, nodeMap, sources, inlinings) {
-          super(name, PhaseType.TurboshaftGraph);
+      constructor(name, dataJson, nodeMap, sources, inlinings, type = PhaseType.TurboshaftGraph) {
+          super(name, type);
           this.stateType = GraphStateType$1.NeedToFullRebuild;
           this.instructionsPhase = new InstructionsPhase();
           this.customData = new TurboshaftCustomData();
@@ -2254,14 +2308,20 @@
       }
       parseBlocksFromJSON(blocksJson) {
           for (const blockJson of blocksJson) {
-              const block = new TurboshaftGraphBlock(blockJson.id, blockJson.type, blockJson.deferred, blockJson.predecessors);
+              const block = new TurboshaftGraphBlock(blockJson.id, blockJson.type, blockJson.deferred, blockJson.predecessors, blockJson.exception);
               this.data.blocks.push(block);
               this.blockIdToBlockMap[block.identifier()] = block;
           }
           for (const block of this.blockIdToBlockMap) {
+              if (!block)
+                  continue;
               for (const [idx, predecessor] of block.predecessors.entries()) {
                   const source = this.blockIdToBlockMap[predecessor];
-                  const edge = new TurboshaftGraphEdge(block, idx, source);
+                  if (!source) {
+                      console.warn(`Predecessor block ${predecessor} of block ${block.id} not found.`);
+                      continue;
+                  }
+                  const edge = new TurboshaftGraphEdge(block, idx, source, "control");
                   block.inputs.push(edge);
                   source.outputs.push(edge);
               }
@@ -2293,7 +2353,7 @@
                       }
                   }
               }
-              const node = new TurboshaftGraphOperation(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_effects);
+              const node = new TurboshaftGraphOperation(nodeJson.id, nodeJson.title, block, sourcePosition, bytecodePosition, origin, nodeJson.op_effects, nodeJson.properties);
               block.nodes.push(node);
               this.data.nodes.push(node);
               this.nodeIdToNodeMap[node.identifier()] = node;
@@ -2324,7 +2384,12 @@
           for (const edgeJson of edgesJson) {
               const target = this.nodeIdToNodeMap[edgeJson.target];
               const source = this.nodeIdToNodeMap[edgeJson.source];
-              const edge = new TurboshaftGraphEdge(target, -1, source);
+              if (!target || !source) {
+                  console.warn(`Edge from ${edgeJson.source} to ${edgeJson.target} has missing source or target.`);
+                  continue;
+              }
+              const index = target.inputs.length;
+              const edge = new TurboshaftGraphEdge(target, index, source, edgeJson.type);
               this.data.edges.push(edge);
               target.inputs.push(edge);
               source.outputs.push(edge);
@@ -2528,6 +2593,15 @@
                       selectedDynamicPhases.push(turboshaftGraphPhase);
                       lastTurboshaftGraphPhase = turboshaftGraphPhase;
                       lastGraphPhase = turboshaftGraphPhase;
+                      break;
+                  case PhaseType.MaglevGraph:
+                      const castedMaglevGraph = genericPhase;
+                      const maglevGraphPhase = new TurboshaftGraphPhase(castedMaglevGraph.name, castedMaglevGraph.data, nodeMap, this.sources, this.inlinings, PhaseType.MaglevGraph);
+                      this.phaseNames.set(maglevGraphPhase.name, this.phases.length);
+                      this.phases.push(maglevGraphPhase);
+                      selectedDynamicPhases.push(maglevGraphPhase);
+                      lastTurboshaftGraphPhase = maglevGraphPhase;
+                      lastGraphPhase = maglevGraphPhase;
                       break;
                   case PhaseType.TurboshaftCustomData:
                       const castedCustomData = camelize(genericPhase);
@@ -16208,6 +16282,7 @@
       updateGraphVisibility() {
           if (!this.graph)
               return;
+          this.updateNodesPositions();
           this.updateVisibleBlocksAndEdges();
           this.visibleNodes = this.visibleBlocks.selectAll(".turboshaft-node");
           this.visibleBubbles = selectAll("circle");
@@ -16455,23 +16530,44 @@
           this.toolbox.appendChild(checkBox);
       }
       updateBlockLocation(block) {
+          let currentY = block.labelBox.height;
+          const showCustomData = this.nodesCustomDataShowed();
+          for (const node of block.nodes) {
+              node.x = block.x + TURBOSHAFT_NODE_X_INDENT;
+              node.y = block.y + currentY;
+              currentY += node.getHeight(showCustomData, this.state?.compactView);
+          }
           this.visibleBlocks
               .selectAll(".turboshaft-block")
               .filter(b => b == block)
               .attr("transform", block => `translate(${block.x},${block.y})`);
           this.visibleEdges
               .selectAll("path")
-              .filter(edge => edge.target === block || edge.source === block)
+              .filter(edge => {
+              const targetBlock = edge.target instanceof TurboshaftGraphBlock ? edge.target : edge.target.block;
+              const sourceBlock = edge.source instanceof TurboshaftGraphBlock ? edge.source : edge.source.block;
+              return targetBlock === block || sourceBlock === block;
+          })
+              .each(edge => {
+              if (edge.source instanceof TurboshaftGraphOperation &&
+                  edge.target instanceof TurboshaftGraphOperation &&
+                  edge.type === "control") {
+                  this.updateNodeOutputBubble(edge.source);
+              }
+          })
               .attr("d", edge => edge.generatePath(this.graph, this.nodesCustomDataShowed(), this.state.compactView));
       }
       updateVisibleBlocksAndEdges() {
           const view = this;
           const iconsPath = "img/turboshaft/";
           // select existing edges
-          const filteredEdges = [...view.graph.blocksEdges(_ => view.graph.isRendered())];
+          const filteredBlockEdges = [...view.graph.blocksEdges(edge => view.graph.isRendered() && !edge.target.exception)];
+          const filteredNodeControlEdges = [...view.graph.nodesEdges(edge => view.graph.isRendered() && edge.type === "control")];
+          const allFilteredEdges = filteredBlockEdges
+              .concat(filteredNodeControlEdges);
           const selEdges = view.visibleEdges
               .selectAll("path")
-              .data(filteredEdges, edge => edge.toString());
+              .data(allFilteredEdges, edge => edge.toString());
           // remove old edges
           selEdges.exit().remove();
           // add new edges
@@ -16485,7 +16581,9 @@
               if (!event.shiftKey) {
                   view.blockSelectionHandler.clear();
               }
-              view.blockSelectionHandler.select([edge.source, edge.target], true, false);
+              const sourceBlock = edge.source instanceof TurboshaftGraphBlock ? edge.source : edge.source.block;
+              const targetBlock = edge.target instanceof TurboshaftGraphBlock ? edge.target : edge.target.block;
+              view.blockSelectionHandler.select([sourceBlock, targetBlock], true, false);
           })
               .attr("adjacentToHover", "false");
           const newAndOldEdges = newEdges.merge(selEdges);
@@ -16602,7 +16700,14 @@
           newNodes.each(function (node) {
               const nodeSvg = select(this);
               nodeSvg
-                  .attr("id", node.id)
+                  .attr("id", node.id);
+              if (node.title === "*FrameState") {
+                  nodeSvg.classed("frame-state-node", true);
+              }
+              else if (node.title.startsWith("*VirtualObject")) {
+                  nodeSvg.classed("virtual-object-node", true);
+              }
+              nodeSvg
                   .append("text")
                   .attr("dx", TURBOSHAFT_NODE_X_INDENT)
                   .classed("inline-node-label", true)
@@ -16611,6 +16716,32 @@
                   .html(node.buildOperationText(state.compactView))
                   .append("title")
                   .text(`${node.getTitle()}${customData.getTitle(node.id, DataTarget.Nodes)}`);
+              const controlInputs = node.inputs.filter(edge => edge.type === "control" && edge.source instanceof TurboshaftGraphOperation);
+              const controlOutputs = node.outputs.filter(edge => edge.type === "control" && edge.target instanceof TurboshaftGraphOperation);
+              const isCatchBlockTarget = block.exception;
+              for (let i = 0; i < controlInputs.length; i++) {
+                  const edge = controlInputs[i];
+                  const bubbleX = isCatchBlockTarget
+                      ? view.getCatchBlockInputX(block, i, controlInputs.length)
+                      : TURBOSHAFT_NODE_X_INDENT + node.getInputX(node.inputs.indexOf(edge));
+                  const bubbleY = isCatchBlockTarget
+                      ? -DEFAULT_NODE_BUBBLE_RADIUS
+                      : nodeY;
+                  nodeSvg.append("circle")
+                      .classed("filledBubbleStyle", true)
+                      .attr("id", `nib,${edge.toString()}`)
+                      .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                      .attr("transform", `translate(${bubbleX},${bubbleY})`);
+              }
+              if (controlOutputs.length > 0) {
+                  const bubbleX = TURBOSHAFT_NODE_X_INDENT + node.getWidth() + DEFAULT_NODE_BUBBLE_RADIUS;
+                  const bubbleY = nodeY + node.labelBox.height / 2;
+                  nodeSvg.append("circle")
+                      .classed("filledBubbleStyle", true)
+                      .attr("id", `nob,${node.id}`)
+                      .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
+                      .attr("transform", `translate(${bubbleX},${bubbleY})`);
+              }
               nodeSvg
                   .on("mouseenter", (node) => {
                   view.visibleNodes.data(node.inputs.map(edge => edge.source), source => source.toString())
@@ -16652,6 +16783,20 @@
           newNodes.merge(selNodes)
               .classed("selected", node => state.selection.isSelected(node));
       }
+      updateNodesPositions() {
+          const state = this.state;
+          const showCustomData = this.nodesCustomDataShowed();
+          for (const block of this.graph.blocks()) {
+              if (!block.visible || block.collapsed)
+                  continue;
+              let currentY = block.labelBox.height;
+              for (const node of block.nodes) {
+                  node.x = block.x + TURBOSHAFT_NODE_X_INDENT;
+                  node.y = block.y + currentY;
+                  currentY += node.getHeight(showCustomData, state?.compactView);
+              }
+          }
+      }
       updateInlineNodes() {
           const view = this;
           const state = this.state;
@@ -16684,6 +16829,34 @@
                   .select(".inline-node-custom-data")
                   .attr("dy", nodeY + node.labelBox.height)
                   .attr("visibility", isVisible ? "visible" : "hidden");
+              const relativeTopY = totalHeight - node.getHeight(showCustomData, state?.compactView) + node.block.labelBox.height;
+              const relativeMiddleY = relativeTopY + node.labelBox.height / 2;
+              const controlInputs = node.inputs.filter(edge => edge.type === "control" && edge.source instanceof TurboshaftGraphOperation);
+              nodeSvg.selectAll("[id^='nib,']").each(function () {
+                  const edgeStr = this.id.substring(4);
+                  const edge = controlInputs.find(e => e.toString() === edgeStr);
+                  if (!edge)
+                      return;
+                  const i = controlInputs.indexOf(edge);
+                  const index = node.inputs.indexOf(edge);
+                  const isCatchBlockTarget = node.block.exception;
+                  const bubbleX = isCatchBlockTarget
+                      ? view.getCatchBlockInputX(node.block, i, controlInputs.length)
+                      : TURBOSHAFT_NODE_X_INDENT + node.getInputX(index);
+                  const bubbleY = isCatchBlockTarget
+                      ? -DEFAULT_NODE_BUBBLE_RADIUS
+                      : relativeTopY;
+                  this.setAttribute("transform", `translate(${bubbleX},${bubbleY})`);
+                  this.setAttribute("visibility", !node.block.collapsed ? "visible" : "hidden");
+              });
+              nodeSvg.selectAll("[id^='nob,']").each(function () {
+                  const exitLeft = view.isExceptionEdgeExitingLeft(node);
+                  const bubbleX = exitLeft
+                      ? TURBOSHAFT_NODE_X_INDENT - DEFAULT_NODE_BUBBLE_RADIUS
+                      : TURBOSHAFT_NODE_X_INDENT + node.getWidth() + DEFAULT_NODE_BUBBLE_RADIUS;
+                  this.setAttribute("transform", `translate(${bubbleX},${relativeMiddleY})`);
+                  this.setAttribute("visibility", !node.block.collapsed ? "visible" : "hidden");
+              });
           });
       }
       updateInlineNodesCustomData() {
@@ -16704,15 +16877,19 @@
       }
       appendInputAndOutputBubbles(svg, block) {
           for (let i = 0; i < block.inputs.length; i++) {
+              const edge = block.inputs[i];
+              if (edge.target.exception)
+                  continue;
               const x = block.getInputX(i);
               const y = -DEFAULT_NODE_BUBBLE_RADIUS;
               svg.append("circle")
                   .classed("filledBubbleStyle", true)
-                  .attr("id", `ib,${block.inputs[i].toString()}`)
+                  .attr("id", `ib,${edge.toString()}`)
                   .attr("r", DEFAULT_NODE_BUBBLE_RADIUS)
                   .attr("transform", `translate(${x},${y})`);
           }
-          if (block.outputs.length > 0) {
+          const hasVisibleOutput = block.outputs.some(edge => !edge.target.exception);
+          if (hasVisibleOutput) {
               const x = block.getOutputX();
               const y = block.getHeight(this.nodesCustomDataShowed(), this.state?.compactView) + DEFAULT_NODE_BUBBLE_RADIUS;
               svg.append("circle")
@@ -16916,6 +17093,37 @@
           this.nodeSelectionHandler.select(selectedNodes, true, false);
           this.updateGraphVisibility();
       }
+      getCatchBlockInputX(block, index, total) {
+          return block.getWidth() - (NODE_INPUT_WIDTH / 2) +
+              (index - total + 1) * NODE_INPUT_WIDTH;
+      }
+      isExceptionEdgeExitingLeft(node) {
+          const controlOutputs = node.outputs.filter(edge => edge.type === "control" && edge.target instanceof TurboshaftGraphOperation);
+          if (controlOutputs.length === 0)
+              return false;
+          const targetBlock = controlOutputs[0].target.block;
+          return targetBlock.x < node.block.x;
+      }
+      updateNodeOutputBubble(node) {
+          const view = this;
+          const block = node.block;
+          const bubble = select(`#nob\\,${node.id}`);
+          if (bubble.empty())
+              return;
+          let currentY = block.labelBox.height;
+          const showCustomData = this.nodesCustomDataShowed();
+          for (const n of block.nodes) {
+              if (n === node)
+                  break;
+              currentY += n.getHeight(showCustomData, this.state?.compactView);
+          }
+          const relativeMiddleY = currentY + node.labelBox.height / 2;
+          const exitLeft = view.isExceptionEdgeExitingLeft(node);
+          const bubbleX = exitLeft
+              ? TURBOSHAFT_NODE_X_INDENT - DEFAULT_NODE_BUBBLE_RADIUS
+              : TURBOSHAFT_NODE_X_INDENT + node.getWidth() + DEFAULT_NODE_BUBBLE_RADIUS;
+          bubble.attr("transform", `translate(${bubbleX},${relativeMiddleY})`);
+      }
   }
 
   // Copyright 2018 the V8 project authors. All rights reserved.
@@ -17000,7 +17208,7 @@
           if (phase.type == PhaseType.Graph) {
               this.displayPhaseView(this.graph, phase, selection);
           }
-          else if (phase.type == PhaseType.TurboshaftGraph) {
+          else if (phase.type == PhaseType.TurboshaftGraph || phase.type == PhaseType.MaglevGraph) {
               this.displayPhaseView(this.turboshaftGraph, phase, selection);
           }
           else if (phase.type == PhaseType.Schedule) {
