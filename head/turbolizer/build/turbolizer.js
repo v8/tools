@@ -2377,6 +2377,8 @@
               }
           }
           for (const block of this.blockIdToBlockMap) {
+              if (!block)
+                  continue;
               block.initCollapsedLabel();
           }
       }
@@ -13725,6 +13727,8 @@
       }
       addBlocks(blocks) {
           for (const block of blocks) {
+              if (!block)
+                  continue;
               const blockEl = this.createElementForBlock(block);
               this.divNode.appendChild(blockEl);
           }
@@ -14135,9 +14139,13 @@
           this.blockBorders = new Set();
           this.blockInstructionCountMap = new Map();
           for (const block of blocks) {
+              if (!block)
+                  continue;
               this.blockInstructionCountMap.set(block.id, block.instructions.length);
-              const maxInstructionInBlock = block.instructions[block.instructions.length - 1].id;
-              this.blockBorders.add(maxInstructionInBlock);
+              if (block.instructions.length > 0) {
+                  const maxInstructionInBlock = block.instructions[block.instructions.length - 1].id;
+                  this.blockBorders.add(maxInstructionInBlock);
+              }
           }
       }
       isInstructionBorder(position) {
@@ -16905,6 +16913,8 @@
               const components = this.id.split(",");
               if (components[0] === "ob") {
                   const from = view.graph.blockMap[components[1]];
+                  if (!from)
+                      return;
                   const x = from.getOutputX();
                   const y = from.getHeight(view.nodesCustomDataShowed(), view.state?.compactView) + DEFAULT_NODE_BUBBLE_RADIUS;
                   this.setAttribute("transform", `translate(${x},${y})`);
@@ -17053,7 +17063,7 @@
       }
       // Hotkeys handlers
       selectAllNodes() {
-          this.nodeSelectionHandler.select(this.graph.nodeMap, true, false);
+          this.nodeSelectionHandler.select([...this.graph.nodes()], true, false);
           this.updateGraphVisibility();
       }
       collapseUnusedBlocks(usedNodes) {
@@ -17069,7 +17079,7 @@
           }
           if (usedBlocks.size == 0)
               return;
-          for (const block of this.graph.blockMap) {
+          for (const block of this.graph.blocks()) {
               block.collapsed = !usedBlocks.has(block);
           }
           this.updateGraphVisibility();
