@@ -18636,7 +18636,7 @@
           disassemblyTabs.clearTabsAndContent();
           // If the JSON isn't properly terminated, assume compiler crashed and
           // add best-guess empty termination
-          if (txtRes[txtRes.length - 2] === ",") {
+          if (txtRes.trimEnd().endsWith(',')) {
               txtRes += '{"name":"disassembly","type":"disassembly","data":""}]}';
           }
           try {
