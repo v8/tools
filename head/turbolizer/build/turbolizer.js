@@ -18655,6 +18655,7 @@
               selectionBroker = new SelectionBroker(sourceResolver);
               const jsonObj = JSON.parse(txtRes);
               const mainFunction = sourceResolver.getMainFunction(jsonObj);
+              document.title = `Turbolizer: ${mainFunction.functionName}`;
               sourceResolver.setInlinings(jsonObj.inlinings);
               sourceResolver.setSourceLineToBytecodePosition(jsonObj.sourceLineToBytecodePosition);
               sourceResolver.setSources(jsonObj.sources, mainFunction);
@@ -18706,6 +18707,22 @@
               return;
           }
       }
+      async function maybeLoadFileFromUrlParam() {
+          const url = new URLSearchParams(window.location.search).get("url");
+          if (!url)
+              return;
+          try {
+              const response = await fetch(url);
+              if (!response.ok) {
+                  throw new Error(`${response.status} ${response.statusText}`);
+              }
+              loadFile(await response.text());
+          }
+          catch (err) {
+              window.alert("Error: Failed to load TurboFan JSON file from URL:\n" +
+                  `${url}\nerror: ${err}`);
+          }
+      }
       function initializeUploadHandlers() {
           // The <input> form #upload-helper with type file can't be a picture.
           // We hence keep it hidden, and forward the click from the picture
@@ -18719,7 +18736,6 @@
               if (uploadFile) {
                   const fileReader = new FileReader();
                   fileReader.onload = () => {
-                      document.title = uploadFile.name.replace(".json", "");
                       const txtRes = fileReader.result;
                       if (typeof txtRes === "string") {
                           loadFile(txtRes);
@@ -18737,6 +18753,7 @@
           });
       }
       initializeUploadHandlers();
+      maybeLoadFileFromUrlParam();
       resizer.updatePanes();
   };
 
