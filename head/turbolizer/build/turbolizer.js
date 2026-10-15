@@ -1927,7 +1927,7 @@
       WriteBarrierKind["AssertNoWriteBarrier"] = "AssertNoWriteBarrier";
       WriteBarrierKind["MapWriteBarrier"] = "MapWriteBarrier";
       WriteBarrierKind["PointerWriteBarrier"] = "PointerWriteBarrier";
-      WriteBarrierKind["TrustedPointerWriteBarrier"] = "TrustedPointerWriteBarrier";
+      WriteBarrierKind["IndirectPointerWriteBarrier"] = "IndirectPointerWriteBarrier";
       WriteBarrierKind["EphemeronKeyWriteBarrier"] = "EphemeronKeyWriteBarrier";
       WriteBarrierKind["FullWriteBarrier"] = "FullWriteBarrier";
   })(WriteBarrierKind || (WriteBarrierKind = {}));
