@@ -1497,7 +1497,7 @@
       MemoryRepresentation["TaggedSigned"] = "TaggedSigned";
       MemoryRepresentation["UncompressedTaggedPointer"] = "UncompressedTaggedPointer";
       MemoryRepresentation["ProtectedPointer"] = "ProtectedPointer";
-      MemoryRepresentation["IndirectPointer"] = "IndirectPointer";
+      MemoryRepresentation["TrustedPointer"] = "TrustedPointer";
       MemoryRepresentation["SandboxedPointer"] = "SandboxedPointer";
       MemoryRepresentation["Simd128"] = "Simd128";
       MemoryRepresentation["Simd256"] = "Simd256";
@@ -1520,7 +1520,7 @@
           case MemoryRepresentation.TaggedSigned: return "ts";
           case MemoryRepresentation.UncompressedTaggedPointer: return "utp";
           case MemoryRepresentation.ProtectedPointer: return "pp";
-          case MemoryRepresentation.IndirectPointer: return "ip";
+          case MemoryRepresentation.TrustedPointer: return "trp";
           case MemoryRepresentation.SandboxedPointer: return "sp";
           case MemoryRepresentation.Simd128: return "s128";
           case MemoryRepresentation.Simd256: return "s256";
