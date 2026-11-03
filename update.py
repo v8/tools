@@ -125,20 +125,23 @@ for version, branch, sha in BRANCHES:
     git('switch', '--force', '--detach', sha)
     git('clean', '--force', '-d')
     source = V8_GIT / 'tools'
-    run('rsync', '--itemize-changes', f'--include-from={ALLOWLIST}',
-        '--exclude=*', '--recursive', '--checksum', f'{source}{os.sep}',
-        f'{branch_dir}{os.sep}')
+    run('rsync', '--itemize-changes', '--exclude=.npmrc',
+        f'--include-from={ALLOWLIST}', '--exclude=*', '--recursive',
+        '--checksum', f'{source}{os.sep}', f'{branch_dir}{os.sep}')
     turbolizer_dir = branch_dir / 'turbolizer'
     if (turbolizer_dir / 'package.json').exists():
       with Step(f'Building turbolizer: {turbolizer_dir}'):
         run('rm', '-rf', turbolizer_dir / 'build')
         try:
-          run('npm', 'install', cwd=turbolizer_dir)
+          run('npm', 'install', '--ignore-scripts', '--no-package-lock',
+              cwd=turbolizer_dir)
           run('npm', 'run-script', 'build', cwd=turbolizer_dir)
-          # We don't need to deploy the cached node_modules folder
-          run('rm', '-rf', turbolizer_dir / "node_modules")
         except Exception as e:
           print(f'Error occurred: {e}')
+        finally:
+          # We don't need to deploy the cached node_modules or build cache folders
+          run('rm', '-rf', turbolizer_dir / 'node_modules',
+              turbolizer_dir / '.rpt2_cache')
 
 INDEX_HTML = OUT_DIR / "index.html"
 with Step("Update versions.txt"):

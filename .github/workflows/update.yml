@@ -14,20 +14,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build and Deploy V8 Tools
+    name: Build V8 Tools
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has_changes: ${{ steps.check_changes.outputs.has_changes }}
     steps:
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11' 
+          python-version: '3.11'
       - uses: actions/setup-node@v4
 
       - name: Checkout main Branch
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Mark the github workspace as safe directory
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
@@ -37,12 +43,56 @@ jobs:
         with:
           ref: gh-pages
           path: gen
+          persist-credentials: false
 
       - name: Build V8 Tools
         run: python3 -u update.py
 
       - name: Prevent auto-deploy
         run: touch -a gen/.nojekyll
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [ -n "$(git -C gen status --porcelain)" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            rm -rf gen/.git gen/.github
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload built tools
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-tools-gen
+          path: gen/
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    name: Deploy V8 Tools
+    needs: build
+    if: needs.build.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main Branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download built tools
+        uses: actions/download-artifact@v4
+        with:
+          name: v8-tools-gen
+          path: gen/
+
+      - name: Sanitize artifact directory
+        run: |
+          rm -rf gen/.git gen/.github
+          find gen -type l -delete
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
