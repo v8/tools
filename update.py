@@ -88,9 +88,15 @@ with Step('List Branches'):
 
 def filter_by_stamp(values):
   version, branch, sha = values
-  stamp = OUT_DIR / version / '.sha'
+  branch_dir = OUT_DIR / version
+  stamp = branch_dir / '.sha'
   if not stamp.exists():
     print(f'{version} needs update: no stamp file {stamp}')
+    return True
+  turbolizer_dir = branch_dir / 'turbolizer'
+  if (turbolizer_dir / 'package.json').exists() and not (
+      turbolizer_dir / 'build' / 'turbolizer.js').exists():
+    print(f'{version} needs update: missing turbolizer build')
     return True
   stamp_mtime = stamp.stat().st_mtime
   if stamp_mtime <= Path(__file__).stat().st_mtime:
@@ -111,8 +117,9 @@ with Step("Fetch Filtered Branches"):
   # Only update the last 3 branches
   BRANCHES = BRANCHES[-3:]
   print(f"BRANCHES {BRANCHES}")
-  git("fetch", "--depth=1", "origin",
-      *(branch for version, branch, sha in BRANCHES))
+  if BRANCHES:
+    git("fetch", "--depth=1", "origin",
+        *(branch for version, branch, sha in BRANCHES))
 
 for version, branch, sha in BRANCHES:
   with Step(f'Generating Branch: {branch}'):
@@ -133,15 +140,15 @@ for version, branch, sha in BRANCHES:
       with Step(f'Building turbolizer: {turbolizer_dir}'):
         run('rm', '-rf', turbolizer_dir / 'build')
         try:
-          run('npm', 'install', '--ignore-scripts', '--no-package-lock',
-              cwd=turbolizer_dir)
+          run('npm', 'ci', '--ignore-scripts', cwd=turbolizer_dir)
           run('npm', 'run-script', 'build', cwd=turbolizer_dir)
         except Exception as e:
           print(f'Error occurred: {e}')
         finally:
           # We don't need to deploy the cached node_modules or build cache folders
           run('rm', '-rf', turbolizer_dir / 'node_modules',
-              turbolizer_dir / '.rpt2_cache')
+              turbolizer_dir / '.rpt2_cache',
+              turbolizer_dir / 'package-lock.json')
 
 INDEX_HTML = OUT_DIR / "index.html"
 with Step("Update versions.txt"):
